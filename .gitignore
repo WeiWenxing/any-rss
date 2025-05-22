@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 环境配置
+.env
+
+# 项目运行时生成的数据
+storage/
+/tmp/site-bot.log
+
+# 系统文件
+.DS_Store
+
