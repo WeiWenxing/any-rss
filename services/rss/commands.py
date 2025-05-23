@@ -22,7 +22,10 @@ async def send_update_notification(
 ) -> None:
     """
     发送Feed更新通知，包括新增条目列表。
-    支持图片直接在消息中显示（每条消息最多3张图片）
+    使用智能消息发送：
+    - 图片为主模式（≥2张图片）：媒体组 + 简洁caption
+    - 文字为主模式（<2张图片）：完整文字内容 + 图片补充
+    - 支持均衡分批，每批最多10张图片，分布更均匀
     """
     chat_id = target_chat or telegram_config["target_chat"]
     if not chat_id:
@@ -168,6 +171,51 @@ async def send_entry_with_media(
             raise
 
 
+def calculate_balanced_batches(total_images: int, max_per_batch: int = 10) -> list[int]:
+    """
+    计算均衡的图片分批方案
+
+    Args:
+        total_images: 总图片数量
+        max_per_batch: 每批最大图片数量
+
+    Returns:
+        list[int]: 每批的图片数量列表
+    """
+    if total_images <= max_per_batch:
+        logging.info(f"图片数量 {total_images} ≤ {max_per_batch}，使用单批方案: [1批{total_images}张]")
+        return [total_images]
+
+    # 计算最少需要多少批
+    min_batches = (total_images + max_per_batch - 1) // max_per_batch
+
+    # 计算平均每批的数量
+    avg_per_batch = total_images // min_batches
+    remainder = total_images % min_batches
+
+    # 构建分批方案
+    batches = []
+    for i in range(min_batches):
+        # 前remainder批多分配1张图片
+        batch_size = avg_per_batch + (1 if i < remainder else 0)
+        batches.append(batch_size)
+
+    # 计算旧方案对比
+    old_batches = [max_per_batch] * (total_images // max_per_batch)
+    if total_images % max_per_batch > 0:
+        old_batches.append(total_images % max_per_batch)
+
+    old_diff = max(old_batches) - min(old_batches) if len(old_batches) > 1 else 0
+    new_diff = max(batches) - min(batches) if len(batches) > 1 else 0
+
+    logging.info(f"智能分批算法: {total_images}张图片")
+    logging.info(f"  旧方案: {old_batches} (最大差异: {old_diff}张)")
+    logging.info(f"  新方案: {batches} (最大差异: {new_diff}张)")
+    logging.info(f"  优化效果: 差异减少 {old_diff - new_diff}张")
+
+    return batches
+
+
 async def send_image_focused_message(
     bot: Bot,
     chat_id: str,
@@ -180,53 +228,92 @@ async def send_image_focused_message(
 ) -> None:
     """
     发送图片为主的消息：媒体组 + 简洁caption
+    每个媒体组都包含caption，显示同一item中的批次信息
+    使用智能分批算法，让图片分布更均匀
     """
     if not images:
+        logging.warning("send_image_focused_message: 没有图片可发送")
         return
+
+    logging.info(f"开始发送图片为主消息: 标题='{title}', 作者='{author}', 图片数量={len(images)}")
 
     # 截断标题（Telegram caption限制1024字符）
     max_title_length = 100
+    original_title = title
     if len(title) > max_title_length:
         title = title[:max_title_length] + "..."
+        logging.info(f"标题过长已截断: '{original_title}' -> '{title}'")
 
-    # 构建简洁的caption
-    caption_parts = []
+    # 计算均衡的分批方案
+    batch_sizes = calculate_balanced_batches(len(images), max_per_batch=10)
+    total_batches = len(batch_sizes)
 
-    # 添加作者（如果有）
-    if author:
-        caption_parts.append(f"#{author}")
+    logging.info(f"将发送 {total_batches} 个媒体组，分批方案: {batch_sizes}")
 
-    # 添加标题
-    caption_parts.append(title)
+    # 按照分批方案发送图片
+    image_index = 0
+    for batch_num, batch_size in enumerate(batch_sizes, 1):
+        # 获取当前批次的图片
+        batch_images = images[image_index:image_index + batch_size]
+        image_index += batch_size
 
-    # 添加序号
-    caption_parts.append(f"📊 {current_index}/{total_count}")
+        logging.info(f"准备发送第 {batch_num}/{total_batches} 批，包含 {batch_size} 张图片")
 
-    # 添加链接（如果有）
-    if link:
-        caption_parts.append(f"🔗 {link}")
+        # 构建当前批次的caption
+        caption_parts = []
 
-    caption = " ".join(caption_parts)
+        # 添加作者（如果有）
+        if author:
+            caption_parts.append(f"#{author}")
+            logging.debug(f"添加作者标签: #{author}")
 
-    # 分批发送图片（每批最多10张）
-    batch_size = 10
-    for i in range(0, len(images), batch_size):
-        batch_images = images[i:i + batch_size]
+        # 添加标题
+        caption_parts.append(title)
+
+        # 添加批次信息（同一item中的第几批）
+        if total_batches > 1:
+            batch_info = f"📊 {batch_num}/{total_batches}"
+            caption_parts.append(batch_info)
+            logging.debug(f"添加批次信息: {batch_info}")
+        else:
+            rss_info = f"📊 {current_index}/{total_count}"
+            caption_parts.append(rss_info)
+            logging.debug(f"添加RSS条目序号: {rss_info}")
+
+        # 添加链接（如果有）
+        if link:
+            caption_parts.append(f"🔗 {link}")
+            logging.debug(f"添加链接: {link}")
+
+        caption = " ".join(caption_parts)
+        logging.info(f"第 {batch_num} 批caption: {caption}")
+
+        # 构建媒体组
         media_list = []
 
-        # 第一张图片包含caption，其余不包含
+        # 每个批次的第一张图片包含caption
         for j, img_url in enumerate(batch_images):
-            if i == 0 and j == 0:  # 只有第一批的第一张图片包含caption
+            if j == 0:  # 每批的第一张图片包含caption
                 media_list.append(InputMediaPhoto(media=img_url, caption=caption))
+                logging.debug(f"第 {batch_num} 批第1张图片(带caption): {img_url}")
             else:
                 media_list.append(InputMediaPhoto(media=img_url))
+                logging.debug(f"第 {batch_num} 批第{j+1}张图片: {img_url}")
 
-        # 发送媒体组
-        await bot.send_media_group(chat_id=chat_id, media=media_list)
+        try:
+            # 发送媒体组
+            await bot.send_media_group(chat_id=chat_id, media=media_list)
+            logging.info(f"✅ 成功发送第 {batch_num}/{total_batches} 批媒体组 ({batch_size}张图片)")
+        except Exception as e:
+            logging.error(f"❌ 发送第 {batch_num} 批媒体组失败: {str(e)}")
+            raise
 
         # 如果还有更多批次，短暂延迟
-        if i + batch_size < len(images):
+        if batch_num < total_batches:
+            logging.debug(f"等待1秒后发送下一批...")
             await asyncio.sleep(1)
+
+    logging.info(f"✅ 图片为主消息发送完成: 共 {total_batches} 批，{len(images)} 张图片")
 
 
 async def send_text_focused_message(
@@ -569,9 +656,28 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if content:
             img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
             images = re.findall(img_pattern, content, re.IGNORECASE)
+            logging.info(f"SHOW命令提取到 {len(images)} 张原始图片")
+
             # 过滤掉明显的小图标和装饰图片
-            images = [img for img in images if not any(keyword in img.lower() 
+            filtered_images = [img for img in images if not any(keyword in img.lower()
                      for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button'])]
+
+            filtered_count = len(images) - len(filtered_images)
+            if filtered_count > 0:
+                logging.info(f"SHOW命令过滤掉 {filtered_count} 张装饰图片，剩余 {len(filtered_images)} 张")
+
+            images = filtered_images
+
+            # 记录前几张图片URL用于调试
+            for i, img_url in enumerate(images[:3], 1):
+                logging.debug(f"SHOW命令图片{i}: {img_url}")
+        else:
+            logging.info("SHOW命令未找到description或summary内容")
+
+        # 判断消息模式
+        is_image_focused = len(images) >= 2
+        mode = "图片为主" if is_image_focused else "文字为主"
+        logging.info(f"SHOW命令消息模式判断: {len(images)}张图片 -> {mode}模式")
 
         # 发送分析信息
         analysis_message = (
@@ -580,16 +686,17 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"📰 标题: {mock_entry['title']}\n"
             f"👤 作者: {mock_entry.get('author', '无')}\n"
             f"🖼️ 图片数量: {len(images)}\n"
-            f"📊 消息模式: {'图片为主' if len(images) >= 2 else '文字为主'}\n"
+            f"📊 消息模式: {mode}\n"
             f"------------------------------------\n"
             f"正在发送实际消息..."
         )
         await update.message.reply_text(analysis_message)
 
         # 使用新的智能消息发送逻辑
+        logging.info(f"SHOW命令开始调用send_entry_with_media，模式: {mode}")
         await send_entry_with_media(context.bot, chat_id, mock_entry, 1, 1)
 
-        logging.info(f"SHOW命令执行成功，已发送条目: {mock_entry.get('title', 'Unknown')}, 图片数量: {len(images)}")
+        logging.info(f"SHOW命令执行成功，已发送条目: {mock_entry.get('title', 'Unknown')}, 图片数量: {len(images)}, 模式: {mode}")
 
     except Exception as e:
         await update.message.reply_text(f"❌ 处理失败: {str(e)}")
