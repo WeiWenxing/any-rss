@@ -1,10 +1,12 @@
 import logging
 import asyncio
+import re
+import time
 from .manager import RSSManager
 from pathlib import Path
 from urllib.parse import urlparse
 from core.config import telegram_config
-from telegram import Update, Bot
+from telegram import Update, Bot, InputMediaPhoto
 from telegram.ext import ContextTypes, CommandHandler, Application
 from datetime import datetime
 
@@ -20,6 +22,7 @@ async def send_update_notification(
 ) -> None:
     """
     发送Feed更新通知，包括新增条目列表。
+    支持图片直接在消息中显示（每条消息最多3张图片）
     """
     chat_id = target_chat or telegram_config["target_chat"]
     if not chat_id:
@@ -58,15 +61,8 @@ async def send_update_notification(
 
             for i, entry in enumerate(new_entries, 1):
                 try:
-                    # 使用统一的消息格式化函数
-                    entry_message = await format_entry_message(entry, i, len(new_entries))
-
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=entry_message,
-                        disable_web_page_preview=False,
-                        parse_mode=None  # 不使用Markdown或HTML解析，避免格式错误
-                    )
+                    # 发送条目消息（包含图片）
+                    await send_entry_with_media(bot, chat_id, entry, i, len(new_entries))
                     logging.info(f"已发送条目 {i}/{len(new_entries)}: {entry.get('title', 'Unknown')}")
 
                     # 控制发送速度，避免flood exceed
@@ -97,6 +93,216 @@ async def send_update_notification(
             logging.info(f"已发送更新结束消息 for {domain}")
     except Exception as e:
         logging.error(f"发送Feed更新消息失败 for {url}: {str(e)}", exc_info=True)
+
+
+async def send_entry_with_media(
+    bot: Bot,
+    chat_id: str,
+    entry: dict,
+    current_index: int,
+    total_count: int
+) -> None:
+    """
+    发送单个条目，智能判断图片为主还是文字为主
+
+    Args:
+        bot: Telegram Bot实例
+        chat_id: 目标聊天ID
+        entry: RSS条目数据
+        current_index: 当前条目序号
+        total_count: 总条目数
+    """
+    try:
+        # 提取基本信息
+        entry_title = entry.get('title', '无标题').strip()
+        entry_link = entry.get('link', '').strip()
+        entry_summary = entry.get('summary', '').strip()
+        entry_description = entry.get('description', '').strip()
+        entry_author = entry.get('author', '').strip()
+
+        # 获取发布时间
+        published_time = ""
+        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+            try:
+                pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                published_time = pub_time.strftime("%Y-%m-%d %H:%M")
+            except:
+                pass
+        elif entry.get('published'):
+            published_time = entry.get('published', '')[:16]
+
+        # 选择描述内容（优先使用description，其次summary）
+        content = entry_description if entry_description else entry_summary
+
+        # 提取图片链接
+        images = []
+        if content:
+            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
+            images = re.findall(img_pattern, content, re.IGNORECASE)
+            # 过滤掉明显的小图标和装饰图片
+            images = [img for img in images if not any(keyword in img.lower()
+                     for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button'])]
+
+        # 判断是图片为主还是文字为主
+        is_image_focused = len(images) >= 2
+
+        if is_image_focused:
+            # 图片为主模式：媒体组 + 简洁caption
+            await send_image_focused_message(bot, chat_id, entry_title, entry_author, entry_link, images, current_index, total_count)
+        else:
+            # 文字为主模式：完整文字内容
+            await send_text_focused_message(bot, chat_id, entry_title, entry_link, content, published_time, images, current_index, total_count)
+
+    except Exception as e:
+        logging.error(f"发送条目媒体消息失败: {str(e)}")
+        # 降级到纯文本消息
+        try:
+            fallback_message = await format_entry_message(entry, current_index, total_count)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=fallback_message,
+                disable_web_page_preview=False
+            )
+        except Exception as fallback_error:
+            logging.error(f"发送降级消息也失败: {str(fallback_error)}")
+            raise
+
+
+async def send_image_focused_message(
+    bot: Bot,
+    chat_id: str,
+    title: str,
+    author: str,
+    link: str,
+    images: list[str],
+    current_index: int,
+    total_count: int
+) -> None:
+    """
+    发送图片为主的消息：媒体组 + 简洁caption
+    """
+    if not images:
+        return
+
+    # 截断标题（Telegram caption限制1024字符）
+    max_title_length = 100
+    if len(title) > max_title_length:
+        title = title[:max_title_length] + "..."
+
+    # 构建简洁的caption
+    caption_parts = []
+
+    # 添加作者（如果有）
+    if author:
+        caption_parts.append(f"#{author}")
+
+    # 添加标题
+    caption_parts.append(title)
+
+    # 添加序号
+    caption_parts.append(f"📊 {current_index}/{total_count}")
+
+    # 添加链接（如果有）
+    if link:
+        caption_parts.append(f"🔗 {link}")
+
+    caption = " ".join(caption_parts)
+
+    # 分批发送图片（每批最多10张）
+    batch_size = 10
+    for i in range(0, len(images), batch_size):
+        batch_images = images[i:i + batch_size]
+        media_list = []
+
+        # 第一张图片包含caption，其余不包含
+        for j, img_url in enumerate(batch_images):
+            if i == 0 and j == 0:  # 只有第一批的第一张图片包含caption
+                media_list.append(InputMediaPhoto(media=img_url, caption=caption))
+            else:
+                media_list.append(InputMediaPhoto(media=img_url))
+
+        # 发送媒体组
+        await bot.send_media_group(chat_id=chat_id, media=media_list)
+
+        # 如果还有更多批次，短暂延迟
+        if i + batch_size < len(images):
+            await asyncio.sleep(1)
+
+
+async def send_text_focused_message(
+    bot: Bot,
+    chat_id: str,
+    title: str,
+    link: str,
+    content: str,
+    published_time: str,
+    images: list[str],
+    current_index: int,
+    total_count: int
+) -> None:
+    """
+    发送文字为主的消息：完整文字内容 + 图片补充
+    """
+    # 构建完整的文字消息
+    text_message = f"🕒 {published_time}\n" if published_time else ""
+    text_message += f"📰 {title}\n"
+
+    if link:
+        text_message += f"🔗 {link}\n"
+
+    if content:
+        # 移除HTML标签但保留文本内容
+        clean_content = re.sub(r'<[^>]+>', '', content)
+        clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
+        clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
+        clean_content = clean_content.replace('&quot;', '"').strip()
+
+        # 限制内容长度
+        if len(clean_content) > 400:
+            clean_content = clean_content[:400] + "..."
+
+        if clean_content:
+            text_message += f"\n📝 {clean_content}\n"
+
+    # 添加序号信息
+    text_message += f"\n📊 {current_index}/{total_count}"
+
+    # 发送消息
+    if images:
+        # 有图片时，发送媒体组消息
+        media_list = []
+        main_images = images[:10]  # 最多10张图片
+
+        # 第一张图片包含文本
+        if main_images:
+            media_list.append(InputMediaPhoto(
+                media=main_images[0],
+                caption=text_message
+            ))
+
+            # 其余图片不包含文本
+            for img_url in main_images[1:]:
+                media_list.append(InputMediaPhoto(media=img_url))
+
+        # 发送主媒体组
+        await bot.send_media_group(chat_id=chat_id, media=media_list)
+
+        # 如果还有更多图片，单独发送
+        if len(images) > 10:
+            extra_images = images[10:]
+            batch_size = 10
+            for i in range(0, len(extra_images), batch_size):
+                batch_images = extra_images[i:i + batch_size]
+                await asyncio.sleep(1)
+                extra_media = [InputMediaPhoto(media=img_url) for img_url in batch_images]
+                await bot.send_media_group(chat_id=chat_id, media=extra_media)
+    else:
+        # 没有图片时，发送纯文本消息
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text_message,
+            disable_web_page_preview=False
+        )
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -357,19 +563,33 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         logging.info(f"BeautifulSoup解析成功，提取到标题: {mock_entry['title']}")
 
-        # 使用现有的消息格式化逻辑
-        formatted_message = await format_entry_message(mock_entry, 1, 1)
+        # 提取图片数量用于分析
+        content = mock_entry.get('description', '') or mock_entry.get('summary', '')
+        images = []
+        if content:
+            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
+            images = re.findall(img_pattern, content, re.IGNORECASE)
+            # 过滤掉明显的小图标和装饰图片
+            images = [img for img in images if not any(keyword in img.lower() 
+                     for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button'])]
 
-        # 发送格式化后的消息
-        await update.message.reply_text(
-            f"🔧 调试结果（BeautifulSoup解析）：\n"
+        # 发送分析信息
+        analysis_message = (
+            f"🔧 SHOW命令分析结果：\n"
             f"------------------------------------\n"
-            f"{formatted_message}\n"
+            f"📰 标题: {mock_entry['title']}\n"
+            f"👤 作者: {mock_entry.get('author', '无')}\n"
+            f"🖼️ 图片数量: {len(images)}\n"
+            f"📊 消息模式: {'图片为主' if len(images) >= 2 else '文字为主'}\n"
             f"------------------------------------\n"
-            f"✅ 消息格式化完成"
+            f"正在发送实际消息..."
         )
+        await update.message.reply_text(analysis_message)
 
-        logging.info(f"SHOW命令执行成功，已格式化条目: {mock_entry.get('title', 'Unknown')}")
+        # 使用新的智能消息发送逻辑
+        await send_entry_with_media(context.bot, chat_id, mock_entry, 1, 1)
+
+        logging.info(f"SHOW命令执行成功，已发送条目: {mock_entry.get('title', 'Unknown')}, 图片数量: {len(images)}")
 
     except Exception as e:
         await update.message.reply_text(f"❌ 处理失败: {str(e)}")
@@ -398,7 +618,6 @@ async def format_entry_message(entry: dict, current_index: int, total_count: int
     published_time = ""
     if hasattr(entry, 'published_parsed') and entry.published_parsed:
         try:
-            import time
             pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
             published_time = pub_time.strftime("%Y-%m-%d %H:%M")
         except:
@@ -409,19 +628,14 @@ async def format_entry_message(entry: dict, current_index: int, total_count: int
     # 选择描述内容（优先使用description，其次summary）
     content = entry_description if entry_description else entry_summary
 
-    # 构建消息
-    entry_message = f"📰 {entry_title}\n"
-
-    if published_time:
-        entry_message += f"🕒 {published_time}\n"
+    # 构建消息（时间在顶部）
+    entry_message = f"🕒 {published_time}\n" if published_time else ""
+    entry_message += f"📰 {entry_title}\n"
 
     if entry_link:
         entry_message += f"🔗 {entry_link}\n"
 
     if content:
-        # 处理HTML标签和图片
-        import re
-
         # 提取图片链接
         img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
         images = re.findall(img_pattern, content, re.IGNORECASE)
@@ -437,7 +651,7 @@ async def format_entry_message(entry: dict, current_index: int, total_count: int
             clean_content = clean_content[:500] + "..."
 
         if clean_content:
-            entry_message += f"📝 {clean_content}\n"
+            entry_message += f"\n📝 {clean_content}\n"
 
         # 添加图片链接
         if images:
