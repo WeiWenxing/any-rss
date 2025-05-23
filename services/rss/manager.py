@@ -4,138 +4,281 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
 import requests
+import feedparser
+import hashlib
 
 
 class RSSManager:
     def __init__(self):
         self.config_dir = Path("storage/rss/config")
-        self.sitemap_dir = Path("storage/rss/sitemaps")  # 存储sitemap的基础目录
+        self.feeds_data_dir = Path("storage/rss/feeds_data")
         self.feeds_file = self.config_dir / "feeds.json"
         self._init_directories()
+
+    def _get_feed_dir(self, url: str) -> Path:
+        """根据URL生成唯一的目录名
+
+        Args:
+            url: Feed的URL
+
+        Returns:
+            Path: 对应的目录路径
+        """
+        # 使用URL的SHA256哈希值作为目录名
+        url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]  # 取前16位作为目录名
+        feed_dir = self.feeds_data_dir / url_hash
+        feed_dir.mkdir(parents=True, exist_ok=True)
+
+        # 保存原始URL到文件
+        url_file = feed_dir / "url.txt"
+        if not url_file.exists():
+            url_file.write_text(url)
+
+        return feed_dir
 
     def _init_directories(self):
         """初始化必要的目录"""
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.sitemap_dir.mkdir(parents=True, exist_ok=True)
+        self.feeds_data_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.feeds_file.exists():
             self.feeds_file.write_text("[]")
 
-    def download_sitemap(self, url: str) -> tuple[bool, str, Path | None, list[str]]:
-        """下载并保存sitemap文件
+    def _is_feed_deleted(self, feed_dir: Path) -> bool:
+        """检查Feed是否被标记为删除
 
         Args:
-            url: sitemap的URL
+            feed_dir: Feed存储目录
 
         Returns:
-            tuple[bool, str, Path | None, list[str]]: (是否成功, 错误信息, 带日期的文件路径, 新增的URL列表)
+            bool: 是否被标记为删除
+        """
+        deleted_file = feed_dir / "deleted.txt"
+        return deleted_file.exists()
+
+    def _mark_feed_deleted(self, feed_dir: Path) -> None:
+        """标记Feed为已删除
+
+        Args:
+            feed_dir: Feed存储目录
+        """
+        deleted_file = feed_dir / "deleted.txt"
+        deleted_file.write_text(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        logging.info(f"已标记Feed目录为删除: {feed_dir}")
+
+    def _unmark_feed_deleted(self, feed_dir: Path) -> None:
+        """取消Feed的删除标记
+
+        Args:
+            feed_dir: Feed存储目录
+        """
+        deleted_file = feed_dir / "deleted.txt"
+        if deleted_file.exists():
+            deleted_file.unlink()
+            logging.info(f"已取消Feed目录的删除标记: {feed_dir}")
+
+    def download_and_parse_feed(
+        self, url: str
+    ) -> tuple[bool, str, str | None, list[dict]]:
+        """下载并解析Feed文件，返回新增的条目列表
+
+        Args:
+            url: Feed的URL
+
+        Returns:
+            tuple[bool, str, str | None, list[dict]]: (是否成功, 错误信息, 原始XML内容, 新增的条目列表)
         """
         try:
-            # 获取域名作为目录名
-            logging.info(f"尝试下载sitemap: {url}")
-            domain = urlparse(url).netloc
-            domain_dir = self.sitemap_dir / domain
-            domain_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"尝试下载并解析Feed: {url}")
+            feed_dir = self._get_feed_dir(url)
+
+            # 检查Feed是否被标记为删除
+            if self._is_feed_deleted(feed_dir):
+                logging.warning(f"Feed已被标记为删除，跳过下载: {url}")
+                return False, "该Feed已被删除", None, []
 
             # 检查今天是否已经更新过
-            last_update_file = domain_dir / "last_update.txt"
+            last_update_file = feed_dir / "last_update.txt"
             today = datetime.now().strftime("%Y%m%d")
-            logging.info(f"今天的日期: {today}")
-
-            # 保存文件
-            current_file = domain_dir / "sitemap-current.xml"
-            latest_file = domain_dir / "sitemap-latest.xml"
-            dated_file = domain_dir / f"{domain}_sitemap_{today}.xml"
 
             if last_update_file.exists():
                 last_date = last_update_file.read_text().strip()
-                logging.info(f"上次更新日期: {last_date}")
                 if last_date == today:
-                    if (
-                        dated_file.exists()
-                        and current_file.exists()
-                        and latest_file.exists()
-                    ):
-                        current_content = current_file.read_text()
-                        latest_content = latest_file.read_text()
-                        new_urls = self.compare_sitemaps(
-                            current_content, latest_content
-                        )
-                        return True, "今天已经更新过此sitemap, 但没发送", dated_file, new_urls
-                    return (
-                        dated_file.exists(),
-                        "今天已经更新过此sitemap",
-                        dated_file,
-                        [],
-                    )
+                    # 如果今天已经更新过，尝试加载之前的XML进行比较
+                    current_feed_file = feed_dir / "feed-current.xml"
+                    latest_feed_file = feed_dir / "feed-latest.xml"
+                    if current_feed_file.exists() and latest_feed_file.exists():
+                        try:
+                            current_xml = current_feed_file.read_text()
+                            latest_xml = latest_feed_file.read_text()
+                            new_entries = self.compare_feeds(current_xml, latest_xml)
+                            # 返回True表示成功，但信息提示今天已更新，并提供已找到的新条目
+                            return (True, "今天已经更新过此Feed", current_xml, new_entries)
+                        except Exception as e:
+                            logging.error(
+                                f"加载或比较已存在的Feed数据失败 for {url}: {str(e)}"
+                            )
+                            # 如果加载或比较失败，继续尝试下载
+                            pass # 继续执行下载逻辑
+                    else:
+                        # 如果文件不完整，继续尝试下载
+                        pass # 继续执行下载逻辑
 
             # 下载新文件
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             }
             response = requests.get(url, timeout=10, headers=headers)
-            response.raise_for_status()
+            response.raise_for_status() # 检查HTTP请求是否成功
 
-            new_urls = []
-            # 如果存在current文件，比较差异
-            if current_file.exists():
-                old_content = current_file.read_text()
-                new_urls = self.compare_sitemaps(response.text, old_content)
-                current_file.replace(latest_file)
+            # 获取原始XML内容
+            xml_content = response.text
 
-            # 保存新文件
-            current_file.write_text(response.text)
-            dated_file.write_text(response.text)  # 临时文件，用于发送到频道后删除
+            # 使用feedparser解析用于验证和比较
+            feed_data = feedparser.parse(xml_content)
+
+            if feed_data.bozo:
+                # feed_data.bozo 不为0通常表示解析有错误
+                logging.warning(
+                    f"Feed解析可能存在问题 for {url}: {feed_data.bozo_exception}"
+                )
+                # 如果是soft error，可以继续；如果是hard error，可能需要返回失败
+                if isinstance(
+                    feed_data.bozo_exception,
+                    (requests.exceptions.RequestException, Exception),
+                ):
+                     return (
+                        False,
+                        f"Feed解析失败或下载错误: {feed_data.bozo_exception}",
+                        None,
+                        [],
+                    )
+
+            # 比较新旧条目
+            new_entries = []
+            current_feed_file = feed_dir / "feed-current.xml"
+            latest_feed_file = feed_dir / "feed-latest.xml"
+
+            # 如果存在current文件，将其内容作为latest
+            if current_feed_file.exists():
+                try:
+                    old_xml = current_feed_file.read_text()
+                    # 比较新下载的XML和之前的XML
+                    new_entries = self.compare_feeds(xml_content, old_xml)
+                    # 将原来的current文件重命名为latest
+                    current_feed_file.replace(latest_feed_file)
+                    logging.info(f"已将旧的current feed文件重命名为latest for {url}")
+                except Exception as e:
+                    logging.error(
+                        f"加载或比较旧的Feed数据失败 for {url} during download: {str(e)}"
+                    )
+                    # 如果加载或比较失败，new_entries将为空，继续保存新的current文件
+
+            # 保存新下载的XML内容到current文件
+            current_feed_file.write_text(xml_content)
+            logging.info(f"新Feed数据已保存到: {current_feed_file} for {url}")
 
             # 更新最后更新日期
             last_update_file.write_text(today)
 
-            logging.info(f"sitemap已保存到: {current_file}")
-            return True, "", dated_file, new_urls  # 只添加新URLs返回
+            return True, "", xml_content, new_entries  # 返回原始XML内容和新增条目
 
         except requests.exceptions.RequestException as e:
-            return False, f"下载失败: {str(e)}", None, []  # 只添加空列表返回
+            logging.error(f"下载Feed失败: {url} 原因: {str(e)}")
+            return False, f"下载失败: {str(e)}", None, []
         except Exception as e:
-            return False, f"保存失败: {str(e)}", None, []  # 只添加空列表返回
+            logging.error(f"处理Feed失败: {url} 原因: {str(e)}", exc_info=True)
+            return False, f"处理失败: {str(e)}", None, []
 
-    def add_feed(self, url: str) -> tuple[bool, str, Path | None, list[str]]:
-        """添加sitemap监控
+    def compare_feeds(self, current_xml: str, old_xml: str) -> list[dict]:
+        """比较新旧Feed XML内容，返回新增的条目列表
 
         Args:
-            url: sitemap的URL
+            current_xml: 当前的Feed XML内容
+            old_xml: 旧的Feed XML内容
 
         Returns:
-            tuple[bool, str, Path | None, list[str]]: (是否成功, 错误信息, 带日期的文件路径, 新增的URL列表)
+            list[dict]: 新增的条目列表
         """
         try:
-            logging.info(f"尝试添加sitemap监控: {url}")
+            # 使用feedparser解析XML
+            current_feed = feedparser.parse(current_xml)
+            old_feed = feedparser.parse(old_xml)
+
+            # 将旧条目转换为集合以便快速查找
+            # 尝试使用条目的 'id' 或 'link' 作为唯一标识
+            old_entries_set = set()
+            for entry in old_feed.entries:
+                # 优先使用id，如果不存在则使用link
+                unique_id = entry.get('id', entry.get('link'))
+                if unique_id:
+                    old_entries_set.add(unique_id)
+                else:
+                    # 如果id和link都不存在，尝试使用标题作为标识（不够可靠）
+                    old_entries_set.add(entry.get('title', str(entry))) # 使用str(entry)作为fallback
+
+            new_entries = []
+            for entry in current_feed.entries:
+                unique_id = entry.get('id', entry.get('link'))
+                # 如果能找到唯一标识，且该标识不在旧条目集合中，则认为是新条目
+                if unique_id and unique_id not in old_entries_set:
+                    new_entries.append(entry)
+                # 如果没有唯一标识，并且整个条目（转为字符串）不在旧条目集合中，也认为是新条目
+                elif not unique_id and str(entry) not in old_entries_set:
+                     new_entries.append(entry)
+
+            logging.info(f"比较Feed完成，发现 {len(new_entries)} 个新条目")
+            return new_entries
+        except Exception as e:
+            logging.error(f"比较Feed条目失败: {str(e)}")
+            return []
+
+    def add_feed(self, url: str) -> tuple[bool, str, str | None, list[dict]]:
+        """添加Feed监控
+
+        Args:
+            url: Feed的URL
+
+        Returns:
+            tuple[bool, str, str | None, list[dict]]: (是否成功, 错误信息, 原始XML内容, 新增的条目列表)
+        """
+        try:
+            logging.info(f"尝试添加Feed监控: {url}")
+
+            # 检查是否存在被标记为删除的目录
+            feed_dir = self._get_feed_dir(url)
+            if self._is_feed_deleted(feed_dir):
+                # 如果存在删除标记，取消标记并恢复订阅
+                self._unmark_feed_deleted(feed_dir)
+                logging.info(f"检测到之前删除的Feed，正在恢复订阅: {url}")
 
             # 验证是否已存在
             feeds = self.get_feeds()
             if url not in feeds:
-                # 如果是新的feed，先尝试下载
-                success, error_msg, dated_file, new_urls = self.download_sitemap(url)
+                # 如果是新的feed，先尝试下载和解析
+                success, error_msg, xml_content, new_entries = self.download_and_parse_feed(url)
                 if not success:
+                    # 如果下载或解析失败，返回错误，不添加到订阅列表
                     return False, error_msg, None, []
 
                 # 添加到监控列表
                 feeds.append(url)
                 self.feeds_file.write_text(json.dumps(feeds, indent=2))
-                logging.info(f"成功添加sitemap监控: {url}")
-                return True, "", dated_file, new_urls
+                logging.info(f"成功添加Feed监控: {url}")
+                # 返回解析成功的结果，包括可能的新增条目（首次添加时通常所有都是新增）
+                return True, "", xml_content, new_entries
             else:
-                # 如果feed已存在，仍然尝试下载（可能是新的一天）
-                success, error_msg, dated_file, new_urls = self.download_sitemap(url)
-                if not success:
-                    return False, error_msg, None, []
-                return True, "已存在的feed更新成功", dated_file, new_urls
+                # 如果feed已存在，仍然尝试下载和解析（可能是新的一天）
+                success, error_msg, xml_content, new_entries = self.download_and_parse_feed(url)
+                # 返回下载和解析的结果
+                return success, error_msg, xml_content, new_entries
 
         except Exception as e:
-            logging.error(f"添加sitemap监控失败: {url}", exc_info=True)
+            logging.error(f"添加Feed监控失败: {url}", exc_info=True)
             return False, f"添加失败: {str(e)}", None, []
 
     def remove_feed(self, url: str) -> tuple[bool, str]:
-        """删除RSS订阅
+        """删除RSS订阅（使用标记方式，不真正删除文件）
 
         Args:
             url: RSS订阅链接
@@ -151,10 +294,24 @@ class RSSManager:
                 logging.warning(f"RSS订阅不存在: {url}")
                 return False, "该RSS订阅不存在"
 
+            # 从订阅列表中移除
             feeds.remove(url)
             logging.info(f"正在写入RSS订阅到文件: {self.feeds_file}")
             self.feeds_file.write_text(json.dumps(feeds, indent=2))
-            logging.info(f"成功删除RSS订阅: {url}")
+            logging.info(f"成功从订阅列表中删除RSS订阅: {url}")
+
+            # 标记对应的存储目录为删除状态，而不是真正删除
+            try:
+                feed_dir = self._get_feed_dir(url)
+                if feed_dir.exists():
+                    self._mark_feed_deleted(feed_dir)
+                    logging.info(f"已标记Feed存储目录为删除: {feed_dir}")
+                else:
+                    logging.info(f"Feed存储目录不存在，无需标记: {feed_dir}")
+            except Exception as e:
+                logging.error(f"标记Feed存储目录删除失败: {feed_dir}, 原因: {str(e)}")
+                # 即使标记失败，也认为订阅删除成功
+
             return True, ""
         except Exception as e:
             logging.error(f"删除RSS订阅失败: {url}", exc_info=True)
@@ -167,28 +324,4 @@ class RSSManager:
             return json.loads(content)
         except Exception as e:
             logging.error("读取feeds文件失败", exc_info=True)
-            return []
-
-    def compare_sitemaps(self, current_content: str, old_content: str) -> list[str]:
-        """比较新旧sitemap，返回新增的URL列表"""
-        try:
-            from xml.etree import ElementTree as ET
-
-            current_root = ET.fromstring(current_content)
-            old_root = ET.fromstring(old_content)
-
-            current_urls = set()
-            old_urls = set()
-
-            ns = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-
-            for url in current_root.findall(".//ns:url/ns:loc", ns):
-                current_urls.add(url.text)
-
-            for url in old_root.findall(".//ns:url/ns:loc", ns):
-                old_urls.add(url.text)
-
-            return list(current_urls - old_urls)
-        except Exception as e:
-            logging.error(f"比较sitemap失败: {str(e)}")
             return []

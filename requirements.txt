@@ -3,3 +3,4 @@ python-telegram-bot
 argparse
 discord
 requests
+feedparser
