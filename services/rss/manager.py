@@ -44,39 +44,6 @@ class RSSManager:
         if not self.feeds_file.exists():
             self.feeds_file.write_text("[]")
 
-    def _is_feed_deleted(self, feed_dir: Path) -> bool:
-        """检查Feed是否被标记为删除
-
-        Args:
-            feed_dir: Feed存储目录
-
-        Returns:
-            bool: 是否被标记为删除
-        """
-        deleted_file = feed_dir / "deleted.txt"
-        return deleted_file.exists()
-
-    def _mark_feed_deleted(self, feed_dir: Path) -> None:
-        """标记Feed为已删除
-
-        Args:
-            feed_dir: Feed存储目录
-        """
-        deleted_file = feed_dir / "deleted.txt"
-        deleted_file.write_text(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        logging.info(f"已标记Feed目录为删除: {feed_dir}")
-
-    def _unmark_feed_deleted(self, feed_dir: Path) -> None:
-        """取消Feed的删除标记
-
-        Args:
-            feed_dir: Feed存储目录
-        """
-        deleted_file = feed_dir / "deleted.txt"
-        if deleted_file.exists():
-            deleted_file.unlink()
-            logging.info(f"已取消Feed目录的删除标记: {feed_dir}")
-
     def download_and_parse_feed(
         self, url: str
     ) -> tuple[bool, str, str | None, list[dict]]:
@@ -91,11 +58,6 @@ class RSSManager:
         try:
             logging.info(f"尝试下载并解析Feed: {url}")
             feed_dir = self._get_feed_dir(url)
-
-            # 检查Feed是否被标记为删除
-            if self._is_feed_deleted(feed_dir):
-                logging.warning(f"Feed已被标记为删除，跳过下载: {url}")
-                return False, "该Feed已被删除", None, []
 
             # 检查今天是否已经更新过
             last_update_file = feed_dir / "last_update.txt"
@@ -233,24 +195,18 @@ class RSSManager:
             logging.error(f"比较Feed条目失败: {str(e)}")
             return []
 
-    def add_feed(self, url: str) -> tuple[bool, str, str | None, list[dict]]:
+    def add_feed(self, url: str, chat_id: str = None) -> tuple[bool, str, str | None, list[dict]]:
         """添加Feed监控
 
         Args:
             url: Feed的URL
+            chat_id: 目标频道ID，如果为None则使用默认频道
 
         Returns:
             tuple[bool, str, str | None, list[dict]]: (是否成功, 错误信息, 原始XML内容, 新增的条目列表)
         """
         try:
-            logging.info(f"尝试添加Feed监控: {url}")
-
-            # 检查是否存在被标记为删除的目录
-            feed_dir = self._get_feed_dir(url)
-            if self._is_feed_deleted(feed_dir):
-                # 如果存在删除标记，取消标记并恢复订阅
-                self._unmark_feed_deleted(feed_dir)
-                logging.info(f"检测到之前删除的Feed，正在恢复订阅: {url}")
+            logging.info(f"尝试添加Feed监控: {url} -> 频道: {chat_id}")
 
             # 验证是否已存在
             feeds = self.get_feeds()
@@ -263,10 +219,10 @@ class RSSManager:
                     # 如果下载或解析失败，返回错误，不添加到订阅列表
                     return False, error_msg, None, []
 
-                # 添加到监控列表
-                feeds.append(url)
+                # 添加到监控列表（URL -> 频道ID映射）
+                feeds[url] = chat_id
                 self.feeds_file.write_text(json.dumps(feeds, indent=2))
-                logging.info(f"成功添加Feed监控: {url}")
+                logging.info(f"成功添加Feed监控: {url} -> 频道: {chat_id}")
 
                 # 对于新添加的Feed，返回所有条目而不是新增条目
                 if xml_content:
@@ -282,7 +238,13 @@ class RSSManager:
                 else:
                     return True, "", xml_content, new_entries
             else:
-                # 如果feed已存在，仍然尝试下载和解析（可能是新的一天）
+                # 如果feed已存在，更新频道ID
+                old_chat_id = feeds[url]
+                feeds[url] = chat_id
+                self.feeds_file.write_text(json.dumps(feeds, indent=2))
+                logging.info(f"更新Feed频道: {url} 从 {old_chat_id} 改为 {chat_id}")
+
+                # 仍然尝试下载和解析（可能是新的一天）
                 success, error_msg, xml_content, new_entries = self.download_and_parse_feed(url)
                 # 返回下载和解析的结果（只返回新增条目）
                 return success, error_msg, xml_content, new_entries
@@ -292,7 +254,7 @@ class RSSManager:
             return False, f"添加失败: {str(e)}", None, []
 
     def remove_feed(self, url: str) -> tuple[bool, str]:
-        """删除RSS订阅（使用标记方式，不真正删除文件）
+        """删除RSS订阅（只删除配置记录，保留文件数据）
 
         Args:
             url: RSS订阅链接
@@ -309,33 +271,52 @@ class RSSManager:
                 return False, "该RSS订阅不存在"
 
             # 从订阅列表中移除
-            feeds.remove(url)
+            chat_id = feeds.pop(url)
             logging.info(f"正在写入RSS订阅到文件: {self.feeds_file}")
             self.feeds_file.write_text(json.dumps(feeds, indent=2))
-            logging.info(f"成功从订阅列表中删除RSS订阅: {url}")
+            logging.info(f"成功从订阅列表中删除RSS订阅: {url} (原频道: {chat_id})")
 
-            # 标记对应的存储目录为删除状态，而不是真正删除
-            try:
-                feed_dir = self._get_feed_dir(url)
-                if feed_dir.exists():
-                    self._mark_feed_deleted(feed_dir)
-                    logging.info(f"已标记Feed存储目录为删除: {feed_dir}")
-                else:
-                    logging.info(f"Feed存储目录不存在，无需标记: {feed_dir}")
-            except Exception as e:
-                logging.error(f"标记Feed存储目录删除失败: {feed_dir}, 原因: {str(e)}")
-                # 即使标记失败，也认为订阅删除成功
+            # 不再标记文件删除，保留所有数据文件
+            logging.info(f"RSS订阅配置已删除，数据文件已保留: {url}")
 
             return True, ""
         except Exception as e:
             logging.error(f"删除RSS订阅失败: {url}", exc_info=True)
             return False, f"删除失败: {str(e)}"
 
-    def get_feeds(self) -> list:
-        """获取所有监控的feeds"""
+    def get_feeds(self) -> dict:
+        """获取所有监控的feeds
+
+        Returns:
+            dict: {url: chat_id} 格式的订阅字典
+        """
         try:
             content = self.feeds_file.read_text()
-            return json.loads(content)
+            data = json.loads(content)
+
+            # 兼容旧格式：如果是列表，转换为字典
+            if isinstance(data, list):
+                logging.info("检测到旧格式的feeds.json，正在转换为新格式")
+                # 将列表转换为字典，使用None作为默认频道ID
+                feeds_dict = {url: None for url in data}
+                # 保存新格式
+                self.feeds_file.write_text(json.dumps(feeds_dict, indent=2))
+                logging.info(f"已转换 {len(data)} 个订阅到新格式")
+                return feeds_dict
+
+            return data
         except Exception as e:
             logging.error("读取feeds文件失败", exc_info=True)
-            return []
+            return {}
+
+    def get_feed_chat_id(self, url: str) -> str | None:
+        """获取指定Feed的目标频道ID
+
+        Args:
+            url: Feed的URL
+
+        Returns:
+            str | None: 频道ID，如果不存在则返回None
+        """
+        feeds = self.get_feeds()
+        return feeds.get(url)

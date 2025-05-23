@@ -516,32 +516,61 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not context.args:
         logging.info("显示ADD命令帮助信息")
         await update.message.reply_text(
-            "请提供RSS/Feed的URL\n"
-            "例如：/add https://example.com/feed.xml\n"
-            "支持标准的RSS 2.0和Atom 1.0格式\n\n"
+            "请提供RSS/Feed的URL和目标频道ID\n"
+            "格式：/add <RSS_URL> <CHAT_ID>\n\n"
+            "例如：\n"
+            "/add https://example.com/feed.xml @my_channel\n"
+            "/add https://example.com/feed.xml -1001234567890\n\n"
+            "支持标准的RSS 2.0和Atom 1.0格式\n"
             "注意：首次添加订阅源时，会展示所有现有内容"
         )
         return
 
-    url = context.args[0]
-    logging.info(f"执行add命令，URL: {url}")
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ 参数不足\n"
+            "请提供RSS URL和目标频道ID\n"
+            "格式：/add <RSS_URL> <CHAT_ID>\n\n"
+            "例如：/add https://example.com/feed.xml @my_channel"
+        )
+        return
 
-    success, error_msg, xml_content, entries = rss_manager.add_feed(url)
+    url = context.args[0]
+    target_chat_id = context.args[1]
+
+    logging.info(f"执行add命令，URL: {url}, 目标频道: {target_chat_id}")
+
+    # 验证频道ID格式
+    if not (target_chat_id.startswith('@') or target_chat_id.startswith('-') or target_chat_id.isdigit()):
+        await update.message.reply_text(
+            "❌ 无效的频道ID格式\n"
+            "支持的格式：\n"
+            "- @channel_name (频道用户名)\n"
+            "- -1001234567890 (频道数字ID)\n"
+            "- 1234567890 (用户数字ID)"
+        )
+        return
+
+    success, error_msg, xml_content, entries = rss_manager.add_feed(url, target_chat_id)
 
     if success:
         if "首次添加" in error_msg:
             await update.message.reply_text(
                 f"✅ 成功添加Feed监控：{url}\n"
+                f"📺 目标频道：{target_chat_id}\n"
                 f"📋 这是首次添加，将展示所有现有内容（共 {len(entries)} 条）"
             )
         elif "今天已经更新过此Feed" in error_msg:
             await update.message.reply_text(f"该Feed已在监控列表中，今天已更新过")
         else:
-            await update.message.reply_text(f"✅ 成功添加Feed监控：{url}")
+            await update.message.reply_text(
+                f"✅ 成功添加Feed监控：{url}\n"
+                f"📺 目标频道：{target_chat_id}"
+            )
 
-        # 发送更新通知
-        await send_update_notification(context.bot, url, entries, xml_content)
-        logging.info(f"已尝试发送更新通知 for {url} after add command")
+        # 发送更新通知到指定频道
+        await send_update_notification(context.bot, url, entries, xml_content, target_chat_id)
+        logging.info(f"已尝试发送更新通知 for {url} to {target_chat_id} after add command")
 
     else:
         logging.error(f"添加Feed监控失败: {url} 原因: {error_msg}")
@@ -588,9 +617,17 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("当前没有RSS订阅")
         return
 
-    feed_list = "\n".join([f"- {feed}" for feed in feeds])
+    # 构建订阅列表，显示URL和对应的频道ID
+    feed_list = []
+    for url, target_chat_id in feeds.items():
+        if target_chat_id:
+            feed_list.append(f"- {url} → {target_chat_id}")
+        else:
+            feed_list.append(f"- {url} → (未设置频道)")
+
+    feed_list_text = "\n".join(feed_list)
     logging.info(f"显示RSS订阅列表，共 {len(feeds)} 个")
-    await update.message.reply_text(f"当前RSS订阅列表：\n{feed_list}")
+    await update.message.reply_text(f"当前RSS订阅列表：\n{feed_list_text}")
 
 
 def register_commands(application: Application) -> None:
@@ -623,9 +660,9 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     success_count = 0
     error_count = 0
 
-    for url in feeds:
+    for url, target_chat_id in feeds.items():
         try:
-            logging.info(f"强制检查订阅源: {url}")
+            logging.info(f"强制检查订阅源: {url} -> 频道: {target_chat_id}")
 
             # 使用download_and_parse_feed方法获取差异内容
             success, error_msg, xml_content, new_entries = rss_manager.download_and_parse_feed(url)
@@ -634,13 +671,11 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 success_count += 1
                 if new_entries:
                     logging.info(f"订阅源 {url} 发现 {len(new_entries)} 个新条目")
-                    # 发送更新通知到频道
-                    await send_update_notification(context.bot, url, new_entries, xml_content)
+                    # 发送更新通知到绑定的频道
+                    await send_update_notification(context.bot, url, new_entries, xml_content, target_chat_id)
                     all_new_entries.extend(new_entries)
                 else:
                     logging.info(f"订阅源 {url} 无新增内容")
-            elif "该Feed已被删除" in error_msg:
-                logging.info(f"订阅源 {url} 已被标记为删除，跳过检查")
             else:
                 error_count += 1
                 logging.warning(f"订阅源 {url} 检查失败: {error_msg}")
@@ -658,7 +693,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
     if all_new_entries:
-        result_message += f"\n\n✅ 所有内容已推送到频道"
+        result_message += f"\n\n✅ 所有内容已推送到对应频道"
         await update.message.reply_text(result_message)
     else:
         result_message += f"\n\n💡 所有订阅源都没有新增内容"

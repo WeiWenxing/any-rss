@@ -32,28 +32,31 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• 智能内容展示（标题、描述、发布时间、图片）\n"
         "• 防刷屏保护机制\n\n"
         "📋 可用命令：\n\n"
-        "🔹 /add <RSS_URL>\n"
-        "   添加RSS/Feed订阅源\n"
+        "🔹 /add <RSS_URL> <CHAT_ID>\n"
+        "   添加RSS/Feed订阅源到指定频道\n"
         "   • 支持标准RSS 2.0和Atom 1.0格式\n"
         "   • 首次添加时会展示所有现有内容\n"
-        "   • 示例：/add https://example.com/feed.xml\n\n"
+        "   • 频道ID格式：@channel_name 或 -1001234567890\n"
+        "   • 示例：/add https://example.com/feed.xml @my_channel\n"
+        "   • 示例：/add https://example.com/feed.xml -1001234567890\n\n"
         "🔹 /del <RSS_URL>\n"
         "   删除RSS/Feed订阅源\n"
         "   • 软删除机制，可重新添加\n"
         "   • 示例：/del https://example.com/feed.xml\n\n"
         "🔹 /list\n"
-        "   查看当前所有订阅源\n"
-        "   • 显示所有已添加的RSS/Feed订阅源列表\n\n"
+        "   查看当前所有订阅源及其绑定频道\n"
+        "   • 显示所有已添加的RSS/Feed订阅源列表\n"
+        "   • 显示每个订阅源对应的目标频道\n\n"
         "🔹 /news\n"
         "   强制检查更新并发送差异内容\n"
         "   • 立即检查所有订阅源的更新\n"
-        "   • 发送新增内容到频道\n"
+        "   • 发送新增内容到对应绑定频道\n"
         "   • 生成关键词汇总报告\n\n"
         "🔹 /help\n"
         "   显示此帮助信息\n\n"
         "🔄 自动功能：\n"
         "• 每小时自动检查所有订阅源\n"
-        "• 发现新内容时自动推送\n"
+        "• 发现新内容时自动推送到绑定频道\n"
         "• 智能去重，避免重复推送\n"
         "• 自动生成关键词汇总\n\n"
         "✨ 内容展示特性：\n"
@@ -62,8 +65,8 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• HTML标签清理和格式化\n"
         "• 智能控制发送速度，避免刷屏\n\n"
         "💡 使用示例：\n"
-        "• /add https://feeds.bbci.co.uk/news/rss.xml\n"
-        "• /add https://rss.cnn.com/rss/edition.rss\n"
+        "• /add https://feeds.bbci.co.uk/news/rss.xml @news_channel\n"
+        "• /add https://rss.cnn.com/rss/edition.rss -1001234567890\n"
         "• /list\n"
         "• /news\n\n"
         "🔧 技术支持：\n"
@@ -135,8 +138,8 @@ async def scheduled_task(token):
 
             # 用于存储所有新增的条目
             all_new_entries = []
-            for url in feeds:
-                logging.info(f"正在检查订阅源: {url}")
+            for url, target_chat_id in feeds.items():
+                logging.info(f"正在检查订阅源: {url} -> 频道: {target_chat_id}")
 
                 # 对于定时任务，我们直接调用download_and_parse_feed而不是add_feed
                 # 这样可以避免首次添加的特殊逻辑
@@ -144,15 +147,13 @@ async def scheduled_task(token):
 
                 if success:
                     if new_entries:
-                        logging.info(f"订阅源 {url} 发现 {len(new_entries)} 个新条目，正在发送通知")
-                        await send_update_notification(bot, url, new_entries, xml_content)
+                        logging.info(f"订阅源 {url} 发现 {len(new_entries)} 个新条目，正在发送通知到 {target_chat_id}")
+                        await send_update_notification(bot, url, new_entries, xml_content, target_chat_id)
                         all_new_entries.extend(new_entries)
                     else:
                         logging.info(f"订阅源 {url} 无新增内容")
                 elif "今天已经更新过此Feed" in error_msg:
                     logging.info(f"订阅源 {url} {error_msg}")
-                elif "该Feed已被删除" in error_msg:
-                    logging.info(f"订阅源 {url} 已被标记为删除，跳过检查")
                 else:
                     logging.warning(f"订阅源 {url} 更新失败: {error_msg}")
 
