@@ -295,6 +295,10 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if not item_xml.strip().startswith('<item'):
             item_xml = f"<item>{item_xml}</item>"
 
+        # 添加调试日志，显示接收到的XML内容
+        logging.info(f"SHOW命令接收到的XML内容长度: {len(item_xml)} 字符")
+        logging.debug(f"SHOW命令XML内容: {item_xml[:500]}...")  # 只显示前500个字符
+
         # 解析XML
         root = ET.fromstring(item_xml)
 
@@ -332,8 +336,22 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logging.info(f"SHOW命令执行成功，已格式化条目: {mock_entry.get('title', 'Unknown')}")
 
     except ET.ParseError as e:
-        await update.message.reply_text(f"❌ XML解析失败: {str(e)}")
-        logging.error(f"SHOW命令XML解析失败: {str(e)}")
+        error_msg = (
+            f"❌ XML解析失败: {str(e)}\n\n"
+            f"📝 调试信息:\n"
+            f"• 接收到的内容长度: {len(item_xml)} 字符\n"
+            f"• 错误位置: {str(e)}\n\n"
+            f"💡 可能的原因:\n"
+            f"• XML标签不匹配\n"
+            f"• 特殊字符未正确转义\n"
+            f"• 内容包含未闭合的标签\n\n"
+            f"🔧 建议:\n"
+            f"• 检查所有标签是否正确闭合\n"
+            f"• 确保特殊字符使用HTML实体编码"
+        )
+        await update.message.reply_text(error_msg)
+        logging.error(f"SHOW命令XML解析失败: {str(e)}", exc_info=True)
+        logging.error(f"问题XML内容: {item_xml}")  # 完整记录问题内容
     except Exception as e:
         await update.message.reply_text(f"❌ 处理失败: {str(e)}")
         logging.error(f"SHOW命令执行失败: {str(e)}", exc_info=True)
