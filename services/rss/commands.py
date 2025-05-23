@@ -70,15 +70,18 @@ async def send_update_notification(
 
                     # 控制发送速度，避免flood exceed
                     # Telegram限制：同一聊天每秒最多1条消息，每分钟最多20条消息
-                    if i % 20 == 0:  # 每20条消息暂停1分钟
-                        logging.info(f"已发送20条消息，暂停60秒避免flood exceed...")
+                    if i % 10 == 0:  # 每10条消息暂停1分钟
+                        logging.info(f"已发送10条消息，暂停60秒避免flood exceed...")
                         await asyncio.sleep(60)
                     else:
-                        await asyncio.sleep(3)  # 每条消息间隔3秒
+                        # 每条消息间隔8秒，确保不会触发flood control
+                        logging.debug(f"等待8秒后发送下一条目...")
+                        await asyncio.sleep(8)
 
                 except Exception as e:
                     logging.error(f"发送条目失败: {entry.get('title', 'Unknown')}, 错误: {str(e)}")
-                    await asyncio.sleep(2)  # 出错后也要等待
+                    # 出错后也要等待，避免连续错误
+                    await asyncio.sleep(5)
                     continue
 
             logging.info(f"已发送 {len(new_entries)} 个条目 for {domain}")
@@ -123,6 +126,8 @@ async def send_entry_with_media(
         entry_description = entry.get('description', '').strip()
         entry_author = entry.get('author', '').strip()
 
+        logging.info(f"处理条目 {current_index}/{total_count}: '{entry_title}'")
+
         # 获取发布时间
         published_time = ""
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
@@ -148,6 +153,9 @@ async def send_entry_with_media(
 
         # 判断是图片为主还是文字为主
         is_image_focused = len(images) >= 2
+        mode = "图片为主" if is_image_focused else "文字为主"
+
+        logging.info(f"条目模式判断: {len(images)}张图片 -> {mode}模式")
 
         if is_image_focused:
             # 图片为主模式：媒体组 + 简洁caption
@@ -156,19 +164,12 @@ async def send_entry_with_media(
             # 文字为主模式：完整文字内容
             await send_text_focused_message(bot, chat_id, entry_title, entry_link, content, published_time, images, current_index, total_count)
 
+        logging.info(f"✅ 条目 {current_index}/{total_count} 发送完成: '{entry_title}' ({mode})")
+
     except Exception as e:
-        logging.error(f"发送条目媒体消息失败: {str(e)}")
-        # 降级到纯文本消息
-        try:
-            fallback_message = await format_entry_message(entry, current_index, total_count)
-            await bot.send_message(
-                chat_id=chat_id,
-                text=fallback_message,
-                disable_web_page_preview=False
-            )
-        except Exception as fallback_error:
-            logging.error(f"发送降级消息也失败: {str(fallback_error)}")
-            raise
+        logging.error(f"❌ 发送条目 {current_index}/{total_count} 失败: '{entry.get('title', 'Unknown')}', 错误: {str(e)}")
+        # 不再使用降级机制，避免重复消息
+        raise
 
 
 def calculate_balanced_batches(total_images: int, max_per_batch: int = 10) -> list[int]:
@@ -270,15 +271,11 @@ async def send_image_focused_message(
         # 添加标题
         caption_parts.append(title)
 
-        # 添加批次信息（同一item中的第几批）
+        # 只在多批次时显示批次信息，不显示RSS条目序号
         if total_batches > 1:
             batch_info = f"📊 {batch_num}/{total_batches}"
             caption_parts.append(batch_info)
             logging.debug(f"添加批次信息: {batch_info}")
-        else:
-            rss_info = f"📊 {current_index}/{total_count}"
-            caption_parts.append(rss_info)
-            logging.debug(f"添加RSS条目序号: {rss_info}")
 
         # 添加链接（如果有）
         if link:
@@ -306,12 +303,23 @@ async def send_image_focused_message(
             logging.info(f"✅ 成功发送第 {batch_num}/{total_batches} 批媒体组 ({batch_size}张图片)")
         except Exception as e:
             logging.error(f"❌ 发送第 {batch_num} 批媒体组失败: {str(e)}")
-            raise
+            # 如果是flood control，等待更长时间后重试
+            if "Flood control exceeded" in str(e):
+                logging.info(f"遇到flood control，等待40秒后重试第 {batch_num} 批...")
+                await asyncio.sleep(40)
+                try:
+                    await bot.send_media_group(chat_id=chat_id, media=media_list)
+                    logging.info(f"✅ 重试成功发送第 {batch_num}/{total_batches} 批媒体组")
+                except Exception as retry_error:
+                    logging.error(f"❌ 重试发送第 {batch_num} 批也失败: {str(retry_error)}")
+                    raise
+            else:
+                raise
 
-        # 如果还有更多批次，短暂延迟
+        # 每批之间增加更长的延迟，避免flood control
         if batch_num < total_batches:
-            logging.debug(f"等待1秒后发送下一批...")
-            await asyncio.sleep(1)
+            logging.debug(f"等待5秒后发送下一批...")
+            await asyncio.sleep(5)
 
     logging.info(f"✅ 图片为主消息发送完成: 共 {total_batches} 批，{len(images)} 张图片")
 
@@ -351,11 +359,12 @@ async def send_text_focused_message(
         if clean_content:
             text_message += f"\n📝 {clean_content}\n"
 
-    # 添加序号信息
-    text_message += f"\n📊 {current_index}/{total_count}"
+    # 不添加RSS条目序号信息
 
     # 发送消息
     if images:
+        logging.info(f"文字为主模式：发送文字内容 + {len(images)}张图片")
+
         # 有图片时，发送媒体组消息
         media_list = []
         main_images = images[:10]  # 最多10张图片
@@ -371,8 +380,24 @@ async def send_text_focused_message(
             for img_url in main_images[1:]:
                 media_list.append(InputMediaPhoto(media=img_url))
 
-        # 发送主媒体组
-        await bot.send_media_group(chat_id=chat_id, media=media_list)
+        try:
+            # 发送主媒体组
+            await bot.send_media_group(chat_id=chat_id, media=media_list)
+            logging.info(f"✅ 成功发送文字为主消息的主媒体组 ({len(main_images)}张图片)")
+        except Exception as e:
+            logging.error(f"❌ 发送文字为主消息失败: {str(e)}")
+            # 如果是flood control，等待后重试
+            if "Flood control exceeded" in str(e):
+                logging.info(f"遇到flood control，等待40秒后重试...")
+                await asyncio.sleep(40)
+                try:
+                    await bot.send_media_group(chat_id=chat_id, media=media_list)
+                    logging.info(f"✅ 重试成功发送文字为主消息")
+                except Exception as retry_error:
+                    logging.error(f"❌ 重试发送文字为主消息也失败: {str(retry_error)}")
+                    raise
+            else:
+                raise
 
         # 如果还有更多图片，单独发送
         if len(images) > 10:
@@ -380,16 +405,58 @@ async def send_text_focused_message(
             batch_size = 10
             for i in range(0, len(extra_images), batch_size):
                 batch_images = extra_images[i:i + batch_size]
-                await asyncio.sleep(1)
-                extra_media = [InputMediaPhoto(media=img_url) for img_url in batch_images]
-                await bot.send_media_group(chat_id=chat_id, media=extra_media)
+                logging.info(f"发送额外图片批次，包含 {len(batch_images)} 张图片")
+
+                # 增加延迟避免flood control
+                await asyncio.sleep(5)
+
+                try:
+                    extra_media = [InputMediaPhoto(media=img_url) for img_url in batch_images]
+                    await bot.send_media_group(chat_id=chat_id, media=extra_media)
+                    logging.info(f"✅ 成功发送额外图片批次 ({len(batch_images)}张)")
+                except Exception as e:
+                    logging.error(f"❌ 发送额外图片批次失败: {str(e)}")
+                    if "Flood control exceeded" in str(e):
+                        logging.info(f"遇到flood control，等待40秒后重试...")
+                        await asyncio.sleep(40)
+                        try:
+                            await bot.send_media_group(chat_id=chat_id, media=extra_media)
+                            logging.info(f"✅ 重试成功发送额外图片批次")
+                        except Exception as retry_error:
+                            logging.error(f"❌ 重试发送额外图片批次也失败: {str(retry_error)}")
+                            # 继续处理下一批，不中断整个流程
+                            continue
+                    else:
+                        # 继续处理下一批，不中断整个流程
+                        continue
     else:
+        logging.info(f"文字为主模式：发送纯文字消息")
+
         # 没有图片时，发送纯文本消息
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text_message,
-            disable_web_page_preview=False
-        )
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text_message,
+                disable_web_page_preview=False
+            )
+            logging.info(f"✅ 成功发送纯文字消息")
+        except Exception as e:
+            logging.error(f"❌ 发送纯文字消息失败: {str(e)}")
+            if "Flood control exceeded" in str(e):
+                logging.info(f"遇到flood control，等待40秒后重试...")
+                await asyncio.sleep(40)
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=text_message,
+                        disable_web_page_preview=False
+                    )
+                    logging.info(f"✅ 重试成功发送纯文字消息")
+                except Exception as retry_error:
+                    logging.error(f"❌ 重试发送纯文字消息也失败: {str(retry_error)}")
+                    raise
+            else:
+                raise
 
 
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
