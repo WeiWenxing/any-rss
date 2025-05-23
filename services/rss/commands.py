@@ -58,65 +58,8 @@ async def send_update_notification(
 
             for i, entry in enumerate(new_entries, 1):
                 try:
-                    # 构造详细的条目消息
-                    entry_title = entry.get('title', '无标题').strip()
-                    entry_link = entry.get('link', '').strip()
-                    entry_summary = entry.get('summary', '').strip()
-                    entry_description = entry.get('description', '').strip()
-
-                    # 获取发布时间
-                    published_time = ""
-                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                        try:
-                            import time
-                            pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                            published_time = pub_time.strftime("%Y-%m-%d %H:%M")
-                        except:
-                            pass
-                    elif entry.get('published'):
-                        published_time = entry.get('published', '')[:16]  # 截取前16个字符
-
-                    # 选择描述内容（优先使用description，其次summary）
-                    content = entry_description if entry_description else entry_summary
-
-                    # 构建消息
-                    entry_message = f"📰 {entry_title}\n"
-
-                    if published_time:
-                        entry_message += f"🕒 {published_time}\n"
-
-                    if entry_link:
-                        entry_message += f"🔗 {entry_link}\n"
-
-                    if content:
-                        # 处理HTML标签和图片
-                        import re
-
-                        # 提取图片链接
-                        img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-                        images = re.findall(img_pattern, content, re.IGNORECASE)
-
-                        # 移除HTML标签但保留文本内容
-                        clean_content = re.sub(r'<[^>]+>', '', content)
-                        clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
-                        clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
-                        clean_content = clean_content.replace('&quot;', '"').strip()
-
-                        # 限制内容长度
-                        if len(clean_content) > 500:
-                            clean_content = clean_content[:500] + "..."
-
-                        if clean_content:
-                            entry_message += f"📝 {clean_content}\n"
-
-                        # 添加图片链接
-                        if images:
-                            entry_message += f"\n🖼️ 图片:\n"
-                            for img_url in images[:3]:  # 最多显示3张图片
-                                entry_message += f"• {img_url}\n"
-
-                    # 添加序号信息
-                    entry_message += f"\n📊 {i}/{len(new_entries)}"
+                    # 使用统一的消息格式化函数
+                    entry_message = await format_entry_message(entry, i, len(new_entries))
 
                     await bot.send_message(
                         chat_id=chat_id,
@@ -124,7 +67,7 @@ async def send_update_notification(
                         disable_web_page_preview=False,
                         parse_mode=None  # 不使用Markdown或HTML解析，避免格式错误
                     )
-                    logging.info(f"已发送条目 {i}/{len(new_entries)}: {entry_title}")
+                    logging.info(f"已发送条目 {i}/{len(new_entries)}: {entry.get('title', 'Unknown')}")
 
                     # 控制发送速度，避免flood exceed
                     # Telegram限制：同一聊天每秒最多1条消息，每分钟最多20条消息
@@ -248,6 +191,7 @@ def register_commands(application: Application) -> None:
     application.add_handler(CommandHandler("del", del_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("news", news_command))
+    application.add_handler(CommandHandler("show", show_command))  # 开发者调试命令
 
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -306,19 +250,8 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
     if all_new_entries:
-        result_message += f"\n\n🎯 正在发送关键词汇总..."
+        result_message += f"\n\n✅ 所有内容已推送到频道"
         await update.message.reply_text(result_message)
-
-        # 发送关键词汇总
-        await asyncio.sleep(5)  # 等待5秒，确保所有消息都发送完成
-        await send_keywords_summary(context.bot, all_new_entries)
-
-        # 发送最终完成消息
-        await asyncio.sleep(2)
-        await update.message.reply_text(
-            f"🎉 所有内容已推送到频道\n"
-            f"📋 关键词汇总已发送"
-        )
     else:
         result_message += f"\n\n💡 所有订阅源都没有新增内容"
         await update.message.reply_text(result_message)
@@ -326,84 +259,156 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logging.info(f"NEWS命令执行完成，共处理 {len(feeds)} 个订阅源，发现 {len(all_new_entries)} 条新内容")
 
 
-async def send_keywords_summary(bot: Bot, all_new_entries: list[dict]) -> None:
-    """
-    发送关键词汇总消息，基于所有新增的Feed条目。
-    """
-    chat_id = telegram_config["target_chat"]
-    if not chat_id:
-        logging.error("未配置发送目标，请检查TELEGRAM_TARGET_CHAT环境变量")
+async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /show 命令 - 开发者专用，用于测试单个RSS条目的消息格式"""
+    user = update.message.from_user
+    chat_id = update.message.chat_id
+    logging.info(f"收到SHOW命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
+
+    if not context.args:
+        await update.message.reply_text(
+            "🔧 开发者调试命令\n\n"
+            "用法：/show <item_xml>\n\n"
+            "示例：\n"
+            "/show <item>\n"
+            "<title>标题</title>\n"
+            "<description>描述内容</description>\n"
+            "<link>链接</link>\n"
+            "<pubDate>发布时间</pubDate>\n"
+            "</item>"
+        )
         return
 
-    if not all_new_entries:
-        logging.info("没有新增条目，跳过关键词汇总")
+    # 获取完整的消息文本，去掉命令部分
+    full_text = update.message.text
+    if full_text.startswith('/show '):
+        item_xml = full_text[6:]  # 去掉 "/show " 前缀
+    else:
+        await update.message.reply_text("❌ 无法解析命令参数")
         return
 
     try:
-        # 提取所有标题和描述文本
-        all_text = []
-        for entry in all_new_entries:
-            title = entry.get('title', '').strip()
-            summary = entry.get('summary', '').strip()
-            description = entry.get('description', '').strip()
+        # 解析XML条目
+        import xml.etree.ElementTree as ET
 
-            if title:
-                all_text.append(title)
+        # 如果没有包含<item>标签，自动添加
+        if not item_xml.strip().startswith('<item'):
+            item_xml = f"<item>{item_xml}</item>"
 
-            # 清理HTML标签
-            import re
-            content = description if description else summary
-            if content:
-                clean_content = re.sub(r'<[^>]+>', '', content)
-                clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
-                clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
-                clean_content = clean_content.replace('&quot;', '"').strip()
-                if clean_content:
-                    all_text.append(clean_content)
+        # 解析XML
+        root = ET.fromstring(item_xml)
 
-        # 合并所有文本
-        combined_text = ' '.join(all_text)
+        # 提取各个字段
+        title = root.find('title')
+        description = root.find('description')
+        link = root.find('link')
+        pub_date = root.find('pubDate')
+        author = root.find('author')
+        guid = root.find('guid')
 
-        if not combined_text.strip():
-            logging.info("没有有效的文本内容，跳过关键词汇总")
-            return
+        # 构造模拟的entry对象（类似feedparser的格式）
+        mock_entry = {
+            'title': title.text if title is not None else '无标题',
+            'description': description.text if description is not None else '',
+            'summary': description.text if description is not None else '',  # 备用字段
+            'link': link.text if link is not None else '',
+            'published': pub_date.text if pub_date is not None else '',
+            'author': author.text if author is not None else '',
+            'id': guid.text if guid is not None else ''
+        }
 
-        # 简单的关键词提取（基于词频）
-        import re
-        from collections import Counter
+        # 使用现有的消息格式化逻辑
+        formatted_message = await format_entry_message(mock_entry, 1, 1)
 
-        # 移除标点符号，分割单词
-        words = re.findall(r'\b\w+\b', combined_text.lower())
-
-        # 过滤掉常见的停用词和短词
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them'}
-        filtered_words = [word for word in words if len(word) > 3 and word not in stop_words]
-
-        # 统计词频
-        word_counts = Counter(filtered_words)
-        top_keywords = word_counts.most_common(10)
-
-        # 构建汇总消息
-        summary_message = (
-            f"📊 今日Feed更新汇总\n"
+        # 发送格式化后的消息
+        await update.message.reply_text(
+            f"🔧 调试结果：\n"
             f"------------------------------------\n"
-            f"📈 共收到 {len(all_new_entries)} 条新内容\n\n"
+            f"{formatted_message}\n"
+            f"------------------------------------\n"
+            f"✅ 消息格式化完成"
         )
 
-        if top_keywords:
-            summary_message += "🔥 热门关键词:\n"
-            for word, count in top_keywords:
-                summary_message += f"• {word} ({count}次)\n"
-        else:
-            summary_message += "🔍 未发现明显的关键词模式\n"
+        logging.info(f"SHOW命令执行成功，已格式化条目: {mock_entry.get('title', 'Unknown')}")
 
-        summary_message += f"\n------------------------------------\n"
-        summary_message += f"⏰ 汇总时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
-        await bot.send_message(
-            chat_id=chat_id, text=summary_message, disable_web_page_preview=True
-        )
-        logging.info(f"已发送关键词汇总，包含 {len(all_new_entries)} 条新内容")
-
+    except ET.ParseError as e:
+        await update.message.reply_text(f"❌ XML解析失败: {str(e)}")
+        logging.error(f"SHOW命令XML解析失败: {str(e)}")
     except Exception as e:
-        logging.error(f"发送关键词汇总失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
+        logging.error(f"SHOW命令执行失败: {str(e)}", exc_info=True)
+
+
+async def format_entry_message(entry: dict, current_index: int, total_count: int) -> str:
+    """
+    格式化单个条目消息
+
+    Args:
+        entry: 条目数据字典
+        current_index: 当前条目序号
+        total_count: 总条目数
+
+    Returns:
+        str: 格式化后的消息文本
+    """
+    # 构造详细的条目消息
+    entry_title = entry.get('title', '无标题').strip()
+    entry_link = entry.get('link', '').strip()
+    entry_summary = entry.get('summary', '').strip()
+    entry_description = entry.get('description', '').strip()
+
+    # 获取发布时间
+    published_time = ""
+    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+        try:
+            import time
+            pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+            published_time = pub_time.strftime("%Y-%m-%d %H:%M")
+        except:
+            pass
+    elif entry.get('published'):
+        published_time = entry.get('published', '')[:16]  # 截取前16个字符
+
+    # 选择描述内容（优先使用description，其次summary）
+    content = entry_description if entry_description else entry_summary
+
+    # 构建消息
+    entry_message = f"📰 {entry_title}\n"
+
+    if published_time:
+        entry_message += f"🕒 {published_time}\n"
+
+    if entry_link:
+        entry_message += f"🔗 {entry_link}\n"
+
+    if content:
+        # 处理HTML标签和图片
+        import re
+
+        # 提取图片链接
+        img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
+        images = re.findall(img_pattern, content, re.IGNORECASE)
+
+        # 移除HTML标签但保留文本内容
+        clean_content = re.sub(r'<[^>]+>', '', content)
+        clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
+        clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
+        clean_content = clean_content.replace('&quot;', '"').strip()
+
+        # 限制内容长度
+        if len(clean_content) > 500:
+            clean_content = clean_content[:500] + "..."
+
+        if clean_content:
+            entry_message += f"📝 {clean_content}\n"
+
+        # 添加图片链接
+        if images:
+            entry_message += f"\n🖼️ 图片:\n"
+            for img_url in images[:3]:  # 最多显示3张图片
+                entry_message += f"• {img_url}\n"
+
+    # 添加序号信息
+    entry_message += f"\n📊 {current_index}/{total_count}"
+
+    return entry_message

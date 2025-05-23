@@ -126,7 +126,6 @@ async def scheduled_task(token):
     from services.rss.commands import (
         rss_manager,
         send_update_notification,
-        send_keywords_summary,
     )
 
     while True:
@@ -157,11 +156,9 @@ async def scheduled_task(token):
                 else:
                     logging.warning(f"订阅源 {url} 更新失败: {error_msg}")
 
-            # 如果有新增条目，发送关键词汇总
+            # 如果有新增条目，记录日志
             if all_new_entries:
-                await asyncio.sleep(10)  # 等待10秒，确保所有消息都发送完成
-                await send_keywords_summary(bot, all_new_entries)
-                logging.info(f"已发送关键词汇总，共 {len(all_new_entries)} 个新条目")
+                logging.info(f"定时任务完成，共发现 {len(all_new_entries)} 个新条目")
 
             logging.info("所有订阅源检查完成，等待下一次检查")
             await asyncio.sleep(3600)  # 保持1小时检查间隔
