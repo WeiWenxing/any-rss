@@ -22,38 +22,53 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /help 命令"""
     help_text = (
-        "🤖 欢迎使用 Any RSS Bot！\n\n"
-        "这是一个通用的 RSS/Feed 监控机器人，支持标准的 RSS 2.0 和 Atom 1.0 格式。\n\n"
+        "🤖 Any RSS Bot - 通用RSS/Feed订阅机器人\n\n"
+        "这是一个通用的RSS/Feed监控机器人，支持标准的RSS 2.0和Atom 1.0格式。\n\n"
         "🎯 主要功能：\n"
-        "• 监控 RSS/Feed 订阅源\n"
+        "• 监控RSS/Feed订阅源\n"
         "• 自动检测新增内容\n"
         "• 推送更新到指定频道\n"
-        "• 生成关键词汇总\n\n"
-        "📋 命令列表：\n\n"
-        "🔹 /add <URL>\n"
-        "   添加新的RSS/Feed订阅\n"
-        "   支持：RSS 2.0、Atom 1.0、RSSHub等\n"
-        "   示例：/add https://rsshub.app/github/issue/DIYgod/RSSHub\n\n"
-        "🔹 /del <URL>\n"
-        "   删除指定的RSS/Feed订阅\n"
-        "   注意：删除时会保留历史数据，重新订阅不会重复推送\n\n"
+        "• 生成关键词汇总\n"
+        "• 智能内容展示（标题、描述、发布时间、图片）\n"
+        "• 防刷屏保护机制\n\n"
+        "📋 可用命令：\n\n"
+        "🔹 /add <RSS_URL>\n"
+        "   添加RSS/Feed订阅源\n"
+        "   • 支持标准RSS 2.0和Atom 1.0格式\n"
+        "   • 首次添加时会展示所有现有内容\n"
+        "   • 示例：/add https://example.com/feed.xml\n\n"
+        "🔹 /del <RSS_URL>\n"
+        "   删除RSS/Feed订阅源\n"
+        "   • 软删除机制，可重新添加\n"
+        "   • 示例：/del https://example.com/feed.xml\n\n"
         "🔹 /list\n"
-        "   显示当前所有订阅的RSS/Feed列表\n\n"
+        "   查看当前所有订阅源\n"
+        "   • 显示所有已添加的RSS/Feed订阅源列表\n\n"
         "🔹 /news\n"
-        "   手动触发关键词汇总生成和发送\n"
-        "   会比较已存储的数据，提取新增内容的关键词\n\n"
+        "   强制检查更新并发送差异内容\n"
+        "   • 立即检查所有订阅源的更新\n"
+        "   • 发送新增内容到频道\n"
+        "   • 生成关键词汇总报告\n\n"
         "🔹 /help\n"
         "   显示此帮助信息\n\n"
         "🔄 自动功能：\n"
         "• 每小时自动检查所有订阅源\n"
         "• 发现新内容时自动推送\n"
-        "• 智能去重，避免重复推送\n\n"
+        "• 智能去重，避免重复推送\n"
+        "• 自动生成关键词汇总\n\n"
+        "✨ 内容展示特性：\n"
+        "• 标题、描述、发布时间\n"
+        "• 自动提取和展示图片链接\n"
+        "• HTML标签清理和格式化\n"
+        "• 智能控制发送速度，避免刷屏\n\n"
         "💡 使用示例：\n"
-        "• /add https://example.com/feed.xml\n"
-        "• /del https://example.com/feed.xml\n"
+        "• /add https://feeds.bbci.co.uk/news/rss.xml\n"
+        "• /add https://rss.cnn.com/rss/edition.rss\n"
         "• /list\n"
         "• /news\n\n"
-        "❓ 如有问题，请检查URL格式是否正确，确保是有效的RSS/Feed地址。"
+        "🔧 技术支持：\n"
+        "项目地址：https://github.com/WeiWenxing/any-rss\n"
+        "如有问题请提交Issue或联系管理员"
     )
     await update.message.reply_text(help_text, disable_web_page_preview=True)
 
@@ -119,32 +134,34 @@ async def scheduled_task(token):
             feeds = rss_manager.get_feeds()
             logging.info(f"定时任务开始检查订阅源更新，共 {len(feeds)} 个订阅")
 
-            # 用于存储所有新增的URL
-            all_new_urls = []
+            # 用于存储所有新增的条目
+            all_new_entries = []
             for url in feeds:
                 logging.info(f"正在检查订阅源: {url}")
-                # add_feed 内部会调用 download_sitemap
-                success, error_msg, dated_file, new_urls = rss_manager.add_feed(url)
 
-                if success and dated_file.exists():
-                    # 直接调用合并后的函数
-                    await send_update_notification(bot, url, new_urls, dated_file)
-                    if new_urls:
-                        logging.info(
-                            f"订阅源 {url} 更新成功，发现 {len(new_urls)} 个新URL，已发送通知。"
-                        )
+                # 对于定时任务，我们直接调用download_and_parse_feed而不是add_feed
+                # 这样可以避免首次添加的特殊逻辑
+                success, error_msg, xml_content, new_entries = rss_manager.download_and_parse_feed(url)
+
+                if success:
+                    if new_entries:
+                        logging.info(f"订阅源 {url} 发现 {len(new_entries)} 个新条目，正在发送通知")
+                        await send_update_notification(bot, url, new_entries, xml_content)
+                        all_new_entries.extend(new_entries)
                     else:
-                        logging.info(f"订阅源 {url} 更新成功，无新增URL，已发送通知。")
-                elif "今天已经更新过此sitemap" in error_msg:
+                        logging.info(f"订阅源 {url} 无新增内容")
+                elif "今天已经更新过此Feed" in error_msg:
                     logging.info(f"订阅源 {url} {error_msg}")
+                elif "该Feed已被删除" in error_msg:
+                    logging.info(f"订阅源 {url} 已被标记为删除，跳过检查")
                 else:
                     logging.warning(f"订阅源 {url} 更新失败: {error_msg}")
-                # 将新URL添加到汇总列表中
-                all_new_urls.extend(new_urls)
 
-            # 调用新封装的函数发送关键词汇总
-            await asyncio.sleep(10)  # 等待10秒，确保所有消息都发送完成
-            await send_keywords_summary(bot, all_new_urls)
+            # 如果有新增条目，发送关键词汇总
+            if all_new_entries:
+                await asyncio.sleep(10)  # 等待10秒，确保所有消息都发送完成
+                await send_keywords_summary(bot, all_new_entries)
+                logging.info(f"已发送关键词汇总，共 {len(all_new_entries)} 个新条目")
 
             logging.info("所有订阅源检查完成，等待下一次检查")
             await asyncio.sleep(3600)  # 保持1小时检查间隔

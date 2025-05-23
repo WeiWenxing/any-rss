@@ -254,7 +254,9 @@ class RSSManager:
 
             # 验证是否已存在
             feeds = self.get_feeds()
-            if url not in feeds:
+            is_new_feed = url not in feeds
+
+            if is_new_feed:
                 # 如果是新的feed，先尝试下载和解析
                 success, error_msg, xml_content, new_entries = self.download_and_parse_feed(url)
                 if not success:
@@ -265,12 +267,24 @@ class RSSManager:
                 feeds.append(url)
                 self.feeds_file.write_text(json.dumps(feeds, indent=2))
                 logging.info(f"成功添加Feed监控: {url}")
-                # 返回解析成功的结果，包括可能的新增条目（首次添加时通常所有都是新增）
-                return True, "", xml_content, new_entries
+
+                # 对于新添加的Feed，返回所有条目而不是新增条目
+                if xml_content:
+                    try:
+                        import feedparser
+                        feed_data = feedparser.parse(xml_content)
+                        all_entries = list(feed_data.entries)  # 转换为列表
+                        logging.info(f"首次添加Feed，返回所有 {len(all_entries)} 个条目")
+                        return True, "首次添加", xml_content, all_entries
+                    except Exception as e:
+                        logging.error(f"解析Feed条目失败: {str(e)}")
+                        return True, "添加成功但解析条目失败", xml_content, []
+                else:
+                    return True, "", xml_content, new_entries
             else:
                 # 如果feed已存在，仍然尝试下载和解析（可能是新的一天）
                 success, error_msg, xml_content, new_entries = self.download_and_parse_feed(url)
-                # 返回下载和解析的结果
+                # 返回下载和解析的结果（只返回新增条目）
                 return success, error_msg, xml_content, new_entries
 
         except Exception as e:
