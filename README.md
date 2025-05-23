@@ -106,24 +106,32 @@ project/
 ### Telegram 命令
 - `/start` - 启动机器人
 - `/help` - 显示帮助信息
-- `/rss` - RSS订阅管理，包含以下子命令：
-  - `/rss list` - 显示所有监控的RSS/Feed列表
-  - `/rss add URL` - 添加新的RSS/Feed监控（支持标准RSS 2.0和Atom 1.0格式）
-  - `/rss del URL` - 删除指定的RSS/Feed监控
+- `/add URL` - 添加新的RSS/Feed监控（支持标准RSS 2.0和Atom 1.0格式）
+- `/del URL` - 删除指定的RSS/Feed监控
+- `/list` - 显示所有监控的RSS/Feed列表
 - `/news` - 手动触发关键词汇总的生成和发送。该命令会比较每个监控源已存储的 `current` 和 `latest` Feed 文件，收集所有新增的条目，并发送汇总的关键词速览到配置的目标频道。
 
 示例:
 ```bash
 # 查看所有监控的RSS/Feed
-/rss list
+/list
 
 # 添加新的RSS/Feed监控
-/rss add https://example.com/feed.xml
-/rss add https://rsshub.app/github/issue/DIYgod/RSSHub
+/add https://example.com/feed.xml
+/add https://rsshub.app/github/issue/DIYgod/RSSHub
 
 # 删除RSS/Feed监控
-/rss del https://example.com/feed.xml
+/del https://example.com/feed.xml
+
+# 手动触发关键词汇总
+/news
 ```
+
+### 兼容性说明
+为了保持向后兼容，旧的 `/rss` 命令仍然可用：
+- `/rss add URL` - 等同于 `/add URL`
+- `/rss del URL` - 等同于 `/del URL`
+- `/rss list` - 等同于 `/list`
 
 ### 支持的Feed格式
 - **RSS 2.0**: 标准的RSS格式
