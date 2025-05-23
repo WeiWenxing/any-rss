@@ -600,23 +600,60 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not context.args:
         await update.message.reply_text(
             "🔧 开发者调试命令\n\n"
-            "用法：/show <item_xml>\n\n"
+            "用法：/show [type] <item_xml>\n\n"
+            "参数说明：\n"
+            "• type: 消息类型 (可选)\n"
+            "  - auto: 自动判断 (默认)\n"
+            "  - text: 强制文字为主模式\n"
+            "  - media: 强制图片为主模式\n\n"
             "示例：\n"
-            "/show <item>\n"
-            "<title>标题</title>\n"
-            "<description>描述内容</description>\n"
-            "<link>链接</link>\n"
-            "<pubDate>发布时间</pubDate>\n"
-            "</item>"
+            "/show <item><title>标题</title><description>描述</description></item>\n"
+            "/show text <item><title>标题</title></item>\n"
+            "/show media <item><title>标题</title></item>"
         )
         return
+
+    # 解析参数：检查第一个参数是否是type
+    message_type = "auto"  # 默认值
+    xml_start_index = 0
+
+    # 检查第一个参数是否是有效的type
+    if len(context.args) > 0 and context.args[0].lower() in ['auto', 'text', 'media']:
+        message_type = context.args[0].lower()
+        xml_start_index = 1
+        logging.info(f"SHOW命令指定消息类型: {message_type}")
+    else:
+        logging.info(f"SHOW命令使用默认消息类型: {message_type}")
 
     # 获取完整的消息文本，去掉命令部分
     full_text = update.message.text
     if full_text.startswith('/show '):
-        item_xml = full_text[6:]  # 去掉 "/show " 前缀
+        remaining_text = full_text[6:]  # 去掉 "/show " 前缀
+
+        # 如果指定了type，需要去掉type参数
+        if xml_start_index == 1:
+            # 找到第一个空格后的内容作为XML
+            parts = remaining_text.split(' ', 1)
+            if len(parts) > 1:
+                item_xml = parts[1]
+            else:
+                await update.message.reply_text(
+                    f"❌ 指定了消息类型 '{message_type}' 但缺少XML内容\n"
+                    f"用法：/show {message_type} <item_xml>"
+                )
+                return
+        else:
+            item_xml = remaining_text
     else:
         await update.message.reply_text("❌ 无法解析命令参数")
+        return
+
+    # 验证XML内容不为空
+    if not item_xml.strip():
+        await update.message.reply_text(
+            "❌ XML内容为空\n"
+            "请提供有效的RSS条目XML内容"
+        )
         return
 
     try:
@@ -663,7 +700,7 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if soup.title:
             mock_entry['title'] = soup.title.get_text().strip()
 
-        # 提取描述（保留HTML格式，因为format_entry_message会处理）
+        # 提取描述（保留HTML格式，因为后续处理会解析）
         if soup.description:
             # 获取description标签的内部HTML内容
             desc_content = soup.description.decode_contents() if soup.description.contents else soup.description.get_text()
@@ -693,10 +730,29 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         content = mock_entry.get('description', '') or mock_entry.get('summary', '')
         images = extract_and_clean_images(content)
 
-        # 判断消息模式
-        is_image_focused = len(images) >= 2
-        mode = "图片为主" if is_image_focused else "文字为主"
-        logging.info(f"SHOW命令消息模式判断: {len(images)}张图片 -> {mode}模式")
+        # 根据type参数决定消息模式
+        if message_type == "auto":
+            # 自动判断模式
+            is_image_focused = len(images) >= 2
+            mode = "图片为主" if is_image_focused else "文字为主"
+            mode_reason = f"自动判断({len(images)}张图片)"
+        elif message_type == "text":
+            # 强制文字为主模式
+            is_image_focused = False
+            mode = "文字为主"
+            mode_reason = "强制指定"
+        elif message_type == "media":
+            # 强制图片为主模式
+            is_image_focused = True
+            mode = "图片为主"
+            mode_reason = "强制指定"
+        else:
+            # 不应该到达这里，但作为保险
+            is_image_focused = len(images) >= 2
+            mode = "图片为主" if is_image_focused else "文字为主"
+            mode_reason = f"默认判断({len(images)}张图片)"
+
+        logging.info(f"SHOW命令消息模式: {mode} ({mode_reason})")
 
         # 发送分析信息
         analysis_message = (
@@ -705,15 +761,31 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"📰 标题: {mock_entry['title']}\n"
             f"👤 作者: {mock_entry.get('author', '无')}\n"
             f"🖼️ 图片数量: {len(images)}\n"
-            f"📊 消息模式: {mode}\n"
+            f"⚙️ 指定类型: {message_type}\n"
+            f"📊 实际模式: {mode} ({mode_reason})\n"
             f"------------------------------------\n"
             f"正在发送实际消息..."
         )
         await update.message.reply_text(analysis_message)
 
-        # 使用新的智能消息发送逻辑
-        logging.info(f"SHOW命令开始调用send_entry_with_media，模式: {mode}")
-        await send_entry_with_media(context.bot, chat_id, mock_entry, 1, 1)
+        # 根据模式发送消息
+        logging.info(f"SHOW命令开始发送消息，模式: {mode}")
+
+        if is_image_focused:
+            # 图片为主模式：只发送图片组（带简洁caption）
+            if images:
+                await send_image_groups_with_caption(context.bot, chat_id, mock_entry['title'], mock_entry['author'], images)
+            else:
+                # 如果强制指定media模式但没有图片，发送提示
+                await update.message.reply_text("⚠️ 强制指定图片为主模式，但未找到图片内容")
+        else:
+            # 文字为主模式：先发送文字消息，再发送图片组
+            await send_text_message(context.bot, chat_id, mock_entry['title'], mock_entry['link'], content, mock_entry.get('published', ''))
+
+            # 如果有图片，发送图片组（带简洁caption）
+            if images:
+                await asyncio.sleep(3)  # 延迟避免flood control
+                await send_image_groups_with_caption(context.bot, chat_id, mock_entry['title'], mock_entry['author'], images)
 
         logging.info(f"SHOW命令执行成功，已发送条目: {mock_entry.get('title', 'Unknown')}, 图片数量: {len(images)}, 模式: {mode}")
 
