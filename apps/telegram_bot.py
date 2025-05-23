@@ -15,11 +15,46 @@ async def post_init(application: Application) -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /start 命令"""
     await help(update, context)
 
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    help_text = f"Hello, {update.message.from_user.first_name}"
+    """处理 /help 命令"""
+    help_text = (
+        "🤖 欢迎使用 Any RSS Bot！\n\n"
+        "这是一个通用的 RSS/Feed 监控机器人，支持标准的 RSS 2.0 和 Atom 1.0 格式。\n\n"
+        "🎯 主要功能：\n"
+        "• 监控 RSS/Feed 订阅源\n"
+        "• 自动检测新增内容\n"
+        "• 推送更新到指定频道\n"
+        "• 生成关键词汇总\n\n"
+        "📋 命令列表：\n\n"
+        "🔹 /add <URL>\n"
+        "   添加新的RSS/Feed订阅\n"
+        "   支持：RSS 2.0、Atom 1.0、RSSHub等\n"
+        "   示例：/add https://rsshub.app/github/issue/DIYgod/RSSHub\n\n"
+        "🔹 /del <URL>\n"
+        "   删除指定的RSS/Feed订阅\n"
+        "   注意：删除时会保留历史数据，重新订阅不会重复推送\n\n"
+        "🔹 /list\n"
+        "   显示当前所有订阅的RSS/Feed列表\n\n"
+        "🔹 /news\n"
+        "   手动触发关键词汇总生成和发送\n"
+        "   会比较已存储的数据，提取新增内容的关键词\n\n"
+        "🔹 /help\n"
+        "   显示此帮助信息\n\n"
+        "🔄 自动功能：\n"
+        "• 每小时自动检查所有订阅源\n"
+        "• 发现新内容时自动推送\n"
+        "• 智能去重，避免重复推送\n\n"
+        "💡 使用示例：\n"
+        "• /add https://example.com/feed.xml\n"
+        "• /del https://example.com/feed.xml\n"
+        "• /list\n"
+        "• /news\n\n"
+        "❓ 如有问题，请检查URL格式是否正确，确保是有效的RSS/Feed地址。"
+    )
     await update.message.reply_text(help_text, disable_web_page_preview=True)
 
 

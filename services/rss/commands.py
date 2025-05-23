@@ -168,53 +168,12 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"当前RSS订阅列表：\n{feed_list}")
 
 
-async def rss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /rss 命令（保留兼容性）"""
-    user = update.message.from_user
-    chat_id = update.message.chat_id
-    logging.info(f"收到RSS命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
-
-    if not context.args:
-        logging.info("显示RSS命令帮助信息")
-        await update.message.reply_text(
-            "RSS命令已更新，请使用新的命令：\n"
-            "/add URL - 添加RSS/Feed监控\n"
-            "/del URL - 删除RSS/Feed监控\n"
-            "/list - 显示所有监控的RSS/Feed\n"
-            "/news - 手动触发关键词汇总"
-        )
-        return
-
-    cmd = context.args[0].lower()
-    if cmd == "list":
-        await list_command(update, context)
-    elif cmd == "add":
-        # 移除第一个参数（"add"），保留URL参数
-        context.args = context.args[1:]
-        await add_command(update, context)
-    elif cmd == "del":
-        # 移除第一个参数（"del"），保留URL参数
-        context.args = context.args[1:]
-        await del_command(update, context)
-    else:
-        await update.message.reply_text(
-            "未知的RSS子命令，请使用：\n"
-            "/add URL - 添加RSS/Feed监控\n"
-            "/del URL - 删除RSS/Feed监控\n"
-            "/list - 显示所有监控的RSS/Feed\n"
-            "/news - 手动触发关键词汇总"
-        )
-
-
 def register_commands(application: Application):
     """注册RSS相关的命令"""
-    # 新的独立命令
+    # 注册新的独立命令
     application.add_handler(CommandHandler("add", add_command))
     application.add_handler(CommandHandler("del", del_command))
     application.add_handler(CommandHandler("list", list_command))
-
-    # 保留旧命令以兼容性
-    application.add_handler(CommandHandler("rss", rss_command))
     application.add_handler(CommandHandler("news", force_summary_command_handler))
 
 
