@@ -35,30 +35,7 @@ async def send_update_notification(
     domain = urlparse(url).netloc
 
     try:
-        # 根据是否有新增条目，分别构造美化后的标题
-        if new_entries:
-            header_message = (
-                f"✨ {domain} ✨\n"
-                f"------------------------------------\n"
-                f"发现新增内容！ (共 {len(new_entries)} 条)\n"
-                f"来源: {url}\n"
-            )
-        else:
-            header_message = (
-                f"✅ {domain}\n"
-                f"------------------------------------\n"
-                f"{domain} 今日Feed无更新\n"
-                f"来源: {url}\n"
-                f"------------------------------------"
-            )
-
-        await bot.send_message(
-            chat_id=chat_id, text=header_message, disable_web_page_preview=True
-        )
-
-        # 增加延迟避免flood exceed
-        await asyncio.sleep(2)
-
+        # 只发送条目内容，不发送开始和结束通知
         if new_entries:
             logging.info(f"开始发送 {len(new_entries)} 个条目 for {domain}")
 
@@ -85,18 +62,8 @@ async def send_update_notification(
                     continue
 
             logging.info(f"已发送 {len(new_entries)} 个条目 for {domain}")
-
-            # 发送更新结束的消息
-            await asyncio.sleep(2)
-            end_message = (
-                f"✨ {domain} 更新推送完成 ✨\n"
-                f"共推送 {len(new_entries)} 条内容\n"
-                f"------------------------------------"
-            )
-            await bot.send_message(
-                chat_id=chat_id, text=end_message, disable_web_page_preview=True
-            )
-            logging.info(f"已发送更新结束消息 for {domain}")
+        else:
+            logging.info(f"{domain} 无新增内容，跳过发送")
     except Exception as e:
         logging.error(f"发送Feed更新消息失败 for {url}: {str(e)}", exc_info=True)
 
