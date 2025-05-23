@@ -4,3 +4,4 @@ argparse
 discord
 requests
 feedparser
+beautifulsoup4

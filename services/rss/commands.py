@@ -288,45 +288,81 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     try:
-        # 解析XML条目
-        import xml.etree.ElementTree as ET
-
         # 如果没有包含<item>标签，自动添加
         if not item_xml.strip().startswith('<item'):
             item_xml = f"<item>{item_xml}</item>"
 
-        # 添加调试日志，显示接收到的XML内容
+        # 添加调试日志
         logging.info(f"SHOW命令接收到的XML内容长度: {len(item_xml)} 字符")
-        logging.debug(f"SHOW命令XML内容: {item_xml[:500]}...")  # 只显示前500个字符
+        logging.debug(f"SHOW命令原始内容: {item_xml[:500]}...")
 
-        # 解析XML
-        root = ET.fromstring(item_xml)
+        # 直接使用BeautifulSoup解析，跳过XML解析
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            await update.message.reply_text(
+                "❌ 系统错误：BeautifulSoup未安装\n"
+                "请联系管理员安装依赖：pip install beautifulsoup4"
+            )
+            logging.error("BeautifulSoup未安装，无法解析RSS内容")
+            return
+
+        # 使用BeautifulSoup解析（优先xml解析器，失败则用html.parser）
+        try:
+            soup = BeautifulSoup(item_xml, 'xml')
+            logging.info("使用XML解析器成功解析内容")
+        except Exception as xml_error:
+            logging.warning(f"XML解析器失败: {str(xml_error)}, 尝试HTML解析器")
+            soup = BeautifulSoup(item_xml, 'html.parser')
+            logging.info("使用HTML解析器成功解析内容")
 
         # 提取各个字段
-        title = root.find('title')
-        description = root.find('description')
-        link = root.find('link')
-        pub_date = root.find('pubDate')
-        author = root.find('author')
-        guid = root.find('guid')
-
-        # 构造模拟的entry对象（类似feedparser的格式）
         mock_entry = {
-            'title': title.text if title is not None else '无标题',
-            'description': description.text if description is not None else '',
-            'summary': description.text if description is not None else '',  # 备用字段
-            'link': link.text if link is not None else '',
-            'published': pub_date.text if pub_date is not None else '',
-            'author': author.text if author is not None else '',
-            'id': guid.text if guid is not None else ''
+            'title': '无标题',
+            'description': '',
+            'summary': '',
+            'link': '',
+            'published': '',
+            'author': '',
+            'id': ''
         }
+
+        # 提取标题
+        if soup.title:
+            mock_entry['title'] = soup.title.get_text().strip()
+
+        # 提取描述（保留HTML格式，因为format_entry_message会处理）
+        if soup.description:
+            # 获取description标签的内部HTML内容
+            desc_content = soup.description.decode_contents() if soup.description.contents else soup.description.get_text()
+            mock_entry['description'] = desc_content.strip()
+            mock_entry['summary'] = mock_entry['description']
+
+        # 提取链接
+        if soup.link:
+            mock_entry['link'] = soup.link.get_text().strip()
+
+        # 提取发布时间（支持多种格式）
+        pubdate_tag = soup.find('pubDate') or soup.find('pubdate') or soup.find('published')
+        if pubdate_tag:
+            mock_entry['published'] = pubdate_tag.get_text().strip()
+
+        # 提取作者
+        if soup.author:
+            mock_entry['author'] = soup.author.get_text().strip()
+
+        # 提取GUID
+        if soup.guid:
+            mock_entry['id'] = soup.guid.get_text().strip()
+
+        logging.info(f"BeautifulSoup解析成功，提取到标题: {mock_entry['title']}")
 
         # 使用现有的消息格式化逻辑
         formatted_message = await format_entry_message(mock_entry, 1, 1)
 
         # 发送格式化后的消息
         await update.message.reply_text(
-            f"🔧 调试结果：\n"
+            f"🔧 调试结果（BeautifulSoup解析）：\n"
             f"------------------------------------\n"
             f"{formatted_message}\n"
             f"------------------------------------\n"
@@ -335,23 +371,6 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         logging.info(f"SHOW命令执行成功，已格式化条目: {mock_entry.get('title', 'Unknown')}")
 
-    except ET.ParseError as e:
-        error_msg = (
-            f"❌ XML解析失败: {str(e)}\n\n"
-            f"📝 调试信息:\n"
-            f"• 接收到的内容长度: {len(item_xml)} 字符\n"
-            f"• 错误位置: {str(e)}\n\n"
-            f"💡 可能的原因:\n"
-            f"• XML标签不匹配\n"
-            f"• 特殊字符未正确转义\n"
-            f"• 内容包含未闭合的标签\n\n"
-            f"🔧 建议:\n"
-            f"• 检查所有标签是否正确闭合\n"
-            f"• 确保特殊字符使用HTML实体编码"
-        )
-        await update.message.reply_text(error_msg)
-        logging.error(f"SHOW命令XML解析失败: {str(e)}", exc_info=True)
-        logging.error(f"问题XML内容: {item_xml}")  # 完整记录问题内容
     except Exception as e:
         await update.message.reply_text(f"❌ 处理失败: {str(e)}")
         logging.error(f"SHOW命令执行失败: {str(e)}", exc_info=True)
