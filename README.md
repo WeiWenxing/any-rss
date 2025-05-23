@@ -83,13 +83,22 @@ project/
 ├── core/                 # 核心配置层
 │   └── config.py        # 配置文件处理
 ├── services/            # 具体服务层
-│   └── rss/            # RSS服务实现
-│       ├── commands.py  # RSS命令处理
-│       └── manager.py   # RSS管理器
+│   ├── rss/            # RSS服务实现
+│   │   ├── commands.py  # RSS命令处理
+│   │   └── manager.py   # RSS管理器
+│   └── douyin/         # 抖音服务实现
+│       ├── commands.py  # 抖音命令处理
+│       ├── manager.py   # 抖音管理器
+│       ├── fetcher.py   # 抖音内容获取器
+│       └── formatter.py # 抖音消息格式化器
 ├── storage/             # 数据存储层
-│   └── rss/
-│       ├── config/      # 配置文件
-│       └── feeds_data/  # Feed数据存储
+│   ├── rss/
+│   │   ├── config/      # RSS配置文件
+│   │   └── feeds_data/  # RSS Feed数据存储
+│   └── douyin/
+│       ├── config/      # 抖音配置文件
+│       ├── data/        # 抖音内容数据存储
+│       └── media/       # 抖音媒体文件存储
 └── any-rss-bot.py      # 主程序入口
 ```
 
@@ -106,6 +115,12 @@ project/
 - `/del <RSS_URL>` - 删除指定的RSS/Feed监控
 - `/list` - 显示所有监控的RSS/Feed列表及其绑定的频道
 - `/news` - 手动检查所有订阅源并发送更新内容到对应频道
+
+#### 抖音订阅管理
+- `/douyin_add <抖音链接> <CHAT_ID>` - 添加抖音用户订阅并绑定到指定频道
+- `/douyin_del <抖音链接>` - 删除指定的抖音用户订阅
+- `/douyin_list` - 显示所有抖音订阅列表及其绑定的频道
+- `/douyin_check` - 手动检查所有抖音订阅并发送更新内容到对应频道
 
 #### 开发者调试命令
 - `/show [type] <item_xml>` - 测试单个RSS条目的消息格式
@@ -154,7 +169,41 @@ project/
 /news
 ```
 
-#### 5. 开发者调试命令
+#### 5. 抖音订阅管理
+
+##### 添加抖音订阅
+```bash
+# 基本格式
+/douyin_add <抖音链接> <CHAT_ID>
+
+# 示例
+/douyin_add https://v.douyin.com/iM5g7LsM/ @my_channel
+/douyin_add https://www.douyin.com/user/MS4wLjABAAAAxxx -1001234567890
+```
+
+**支持的抖音链接格式：**
+- `https://v.douyin.com/xxx` - 手机分享链接
+- `https://www.douyin.com/user/xxx` - 电脑端用户主页链接
+
+##### 删除抖音订阅
+```bash
+# 删除指定抖音订阅
+/douyin_del https://v.douyin.com/iM5g7LsM/
+```
+
+##### 查看抖音订阅列表
+```bash
+# 显示所有抖音订阅及其绑定的频道
+/douyin_list
+```
+
+##### 手动检查抖音更新
+```bash
+# 强制检查所有抖音订阅并发送更新
+/douyin_check
+```
+
+#### 6. 开发者调试命令
 ```bash
 # 自动判断消息模式（默认）
 /show <item><title>标题</title><description>内容</description></item>
@@ -214,13 +263,16 @@ project/
 
 - **异步处理**: 使用asyncio实现高效的并发处理
 - **多平台支持**: 同时支持Telegram和Discord
+- **多内容源支持**: 支持RSS/Feed和抖音用户内容订阅
 - **智能消息格式**: 根据内容自动选择最佳显示方式
-- **频道绑定**: 支持每个RSS源绑定到不同频道
+- **频道绑定**: 支持每个RSS源和抖音用户绑定到不同频道
+- **媒体文件处理**: 自动下载并发送视频/图片文件
 - **智能分批**: 图片发送使用均衡分批算法
 - **Flood Control**: 完善的发送速度控制和重试机制
 - **数据持久化**: 本地文件系统存储，支持数据恢复
 - **错误处理**: 完善的异常处理和日志记录
 - **标准兼容**: 支持标准的RSS 2.0和Atom 1.0格式
+- **第三方API集成**: 集成抖音内容解析API
 
 ## 注意事项
 
