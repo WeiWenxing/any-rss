@@ -101,6 +101,51 @@ async def send_update_notification(
         logging.error(f"发送Feed更新消息失败 for {url}: {str(e)}", exc_info=True)
 
 
+def extract_and_clean_images(content: str) -> list[str]:
+    """
+    提取并清理图片URL
+
+    Args:
+        content: HTML内容
+
+    Returns:
+        list[str]: 清理后的有效图片URL列表
+    """
+    images = []
+    if not content:
+        return images
+
+    img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
+    raw_images = re.findall(img_pattern, content, re.IGNORECASE)
+    logging.info(f"提取到 {len(raw_images)} 张原始图片")
+
+    # 清理和验证图片URL
+    for img_url in raw_images:
+        # 清理HTML实体编码
+        clean_url = img_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        clean_url = clean_url.replace('&quot;', '"').strip()
+
+        # 过滤掉明显的小图标和装饰图片
+        if any(keyword in clean_url.lower() for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button']):
+            logging.debug(f"过滤装饰图片: {clean_url}")
+            continue
+
+        # 验证URL格式
+        if clean_url.startswith(('http://', 'https://')):
+            images.append(clean_url)
+            logging.debug(f"添加有效图片: {clean_url}")
+        else:
+            logging.warning(f"跳过无效图片URL: {clean_url}")
+
+    logging.info(f"清理后有效图片数量: {len(images)}")
+
+    # 记录前几张图片URL用于调试
+    for i, img_url in enumerate(images[:3], 1):
+        logging.info(f"图片{i}: {img_url}")
+
+    return images
+
+
 async def send_entry_with_media(
     bot: Bot,
     chat_id: str,
@@ -142,14 +187,8 @@ async def send_entry_with_media(
         # 选择描述内容（优先使用description，其次summary）
         content = entry_description if entry_description else entry_summary
 
-        # 提取图片链接
-        images = []
-        if content:
-            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-            images = re.findall(img_pattern, content, re.IGNORECASE)
-            # 过滤掉明显的小图标和装饰图片
-            images = [img for img in images if not any(keyword in img.lower()
-                     for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button'])]
+        # 使用公共函数提取图片
+        images = extract_and_clean_images(content)
 
         # 判断是图片为主还是文字为主
         is_image_focused = len(images) >= 2
@@ -303,8 +342,17 @@ async def send_image_focused_message(
             logging.info(f"✅ 成功发送第 {batch_num}/{total_batches} 批媒体组 ({batch_size}张图片)")
         except Exception as e:
             logging.error(f"❌ 发送第 {batch_num} 批媒体组失败: {str(e)}")
+
+            # 如果是图片无法访问的错误，记录详细信息
+            if "webpage_media_empty" in str(e):
+                logging.error(f"图片无法访问错误，批次 {batch_num} 的图片URL:")
+                for j, img_url in enumerate(batch_images):
+                    logging.error(f"  图片{j+1}: {img_url}")
+                # 这种错误通常是图片URL无效，直接抛出异常让上层处理
+                raise Exception(f"图片无法访问: {str(e)}")
+
             # 如果是flood control，等待更长时间后重试
-            if "Flood control exceeded" in str(e):
+            elif "Flood control exceeded" in str(e):
                 logging.info(f"遇到flood control，等待40秒后重试第 {batch_num} 批...")
                 await asyncio.sleep(40)
                 try:
@@ -719,27 +767,7 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # 提取图片数量用于分析
         content = mock_entry.get('description', '') or mock_entry.get('summary', '')
-        images = []
-        if content:
-            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-            images = re.findall(img_pattern, content, re.IGNORECASE)
-            logging.info(f"SHOW命令提取到 {len(images)} 张原始图片")
-
-            # 过滤掉明显的小图标和装饰图片
-            filtered_images = [img for img in images if not any(keyword in img.lower()
-                     for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button'])]
-
-            filtered_count = len(images) - len(filtered_images)
-            if filtered_count > 0:
-                logging.info(f"SHOW命令过滤掉 {filtered_count} 张装饰图片，剩余 {len(filtered_images)} 张")
-
-            images = filtered_images
-
-            # 记录前几张图片URL用于调试
-            for i, img_url in enumerate(images[:3], 1):
-                logging.debug(f"SHOW命令图片{i}: {img_url}")
-        else:
-            logging.info("SHOW命令未找到description或summary内容")
+        images = extract_and_clean_images(content)
 
         # 判断消息模式
         is_image_focused = len(images) >= 2
