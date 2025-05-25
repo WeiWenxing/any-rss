@@ -346,6 +346,7 @@ async def debug_download_test_command(update, context: ContextTypes.DEFAULT_TYPE
     调试下载测试命令，测试下载媒体文件
     用法: /debug_download <媒体URL>
     """
+    file_path = None  # 初始化文件路径变量
     try:
         if not context.args:
             await update.message.reply_text("❌ 请提供媒体URL\n用法: /debug_download <媒体URL>")
@@ -356,53 +357,95 @@ async def debug_download_test_command(update, context: ContextTypes.DEFAULT_TYPE
 
         # 发送状态消息
         status_msg = await update.message.reply_text("🔄 正在测试下载...")
+        logging.info("✅ 状态消息发送成功")
 
         # 判断媒体类型
         media_type = 'video' if any(ext in media_url.lower() for ext in ['.mp4', '.mov', '.avi']) else 'image'
+        logging.info(f"📁 检测到媒体类型: {media_type}")
 
         # 下载文件
+        logging.info("🔄 开始下载文件...")
         file_path = await download_media_file(media_url, media_type)
+        logging.info(f"📥 下载结果: {file_path}")
 
         if file_path:
             file_size = os.path.getsize(file_path)
             size_mb = file_size / (1024 * 1024)
+            logging.info(f"📏 文件大小: {size_mb:.2f}MB")
 
-            await status_msg.edit_text(f"✅ 下载成功\n📁 文件: {os.path.basename(file_path)}\n📏 大小: {size_mb:.2f}MB\n🔄 正在上传到Telegram...")
+            # 更新状态消息 - 分步进行，避免一次性更新失败
+            try:
+                await status_msg.edit_text(f"✅ 下载成功\n📁 文件: {os.path.basename(file_path)}\n📏 大小: {size_mb:.2f}MB")
+                logging.info("✅ 状态消息更新成功 - 下载完成")
+            except Exception as edit_error:
+                logging.error(f"❌ 状态消息更新失败: {str(edit_error)}")
+                # 继续执行，不因为消息更新失败而中断
+
+            # 更新上传状态
+            try:
+                await status_msg.edit_text(f"✅ 下载成功\n📁 文件: {os.path.basename(file_path)}\n📏 大小: {size_mb:.2f}MB\n🔄 正在上传到Telegram...")
+                logging.info("✅ 状态消息更新成功 - 开始上传")
+            except Exception as edit_error:
+                logging.error(f"❌ 上传状态消息更新失败: {str(edit_error)}")
 
             # 尝试发送文件
+            logging.info("🚀 开始尝试上传文件到Telegram...")
             try:
                 with open(file_path, 'rb') as f:
+                    logging.info(f"📂 文件已打开，准备发送{media_type}")
                     if media_type == 'video':
+                        logging.info("📹 发送视频文件...")
                         await context.bot.send_video(
                             chat_id=update.effective_chat.id,
                             video=f,
                             caption=f"📹 测试视频上传\n📏 大小: {size_mb:.2f}MB"
                         )
+                        logging.info("✅ 视频文件发送成功")
                     else:
+                        logging.info("🖼️ 发送图片文件...")
                         await context.bot.send_photo(
                             chat_id=update.effective_chat.id,
                             photo=f,
                             caption=f"🖼️ 测试图片上传\n📏 大小: {size_mb:.2f}MB"
                         )
+                        logging.info("✅ 图片文件发送成功")
 
-                await status_msg.edit_text(f"✅ 下载并上传成功\n📏 大小: {size_mb:.2f}MB")
+                # 更新最终状态
+                try:
+                    await status_msg.edit_text(f"✅ 下载并上传成功\n📏 大小: {size_mb:.2f}MB")
+                    logging.info("✅ 最终状态消息更新成功")
+                except Exception as edit_error:
+                    logging.error(f"❌ 最终状态消息更新失败: {str(edit_error)}")
 
             except Exception as upload_error:
-                await status_msg.edit_text(f"✅ 下载成功，❌ 上传失败\n📏 大小: {size_mb:.2f}MB\n💥 错误: {str(upload_error)}")
-
-            # 清理文件
-            try:
-                os.remove(file_path)
-                logging.info(f"🗑️ 清理临时文件: {file_path}")
-            except:
-                pass
+                error_msg = str(upload_error)
+                logging.error(f"❌ 文件上传失败: {error_msg}", exc_info=True)
+                try:
+                    await status_msg.edit_text(f"✅ 下载成功，❌ 上传失败\n📏 大小: {size_mb:.2f}MB\n💥 错误: {error_msg}")
+                except Exception as edit_error:
+                    logging.error(f"❌ 错误状态消息更新失败: {str(edit_error)}")
 
         else:
-            await status_msg.edit_text("❌ 下载失败")
+            logging.error("❌ 文件下载失败")
+            try:
+                await status_msg.edit_text("❌ 下载失败")
+            except Exception as edit_error:
+                logging.error(f"❌ 失败状态消息更新失败: {str(edit_error)}")
 
     except Exception as e:
         logging.error(f"DEBUG_DOWNLOAD命令执行失败: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+        try:
+            await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+        except:
+            logging.error("❌ 连错误消息都发送失败")
+    finally:
+        # 清理文件
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logging.info(f"🗑️ 清理临时文件: {file_path}")
+            except Exception as cleanup_error:
+                logging.error(f"❌ 清理临时文件失败: {str(cleanup_error)}")
 
 
 async def debug_send_url_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -451,3 +494,98 @@ async def debug_send_url_command(update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logging.error(f"DEBUG_SEND_URL命令执行失败: {str(e)}", exc_info=True)
         await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+
+
+async def debug_api_status_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    调试API状态命令，检查当前使用的API服务器和配置
+    用法: /debug_api
+    """
+    try:
+        logging.info("DEBUG_API命令检查API状态")
+
+        # 获取Bot实例信息
+        bot = context.bot
+
+        # 检查Bot API配置
+        api_info = "🔍 Bot API 配置信息\n\n"
+
+        # 获取base_url信息
+        if hasattr(bot, '_base_url'):
+            base_url = bot._base_url
+            api_info += f"📍 API地址: {base_url}\n"
+
+            if "localhost" in base_url or "127.0.0.1" in base_url:
+                api_info += "🏠 使用本地Bot API服务器\n"
+                api_info += "✅ 支持2GB大文件上传\n"
+            else:
+                api_info += "🌐 使用官方Bot API服务器\n"
+                api_info += "⚠️ 文件大小限制50MB\n"
+        else:
+            api_info += "📍 API地址: 官方API (默认)\n"
+            api_info += "🌐 使用官方Bot API服务器\n"
+            api_info += "⚠️ 文件大小限制50MB\n"
+
+        # 获取file_url信息
+        if hasattr(bot, '_base_file_url'):
+            base_file_url = bot._base_file_url
+            api_info += f"📁 文件地址: {base_file_url}\n"
+        else:
+            api_info += "📁 文件地址: 官方文件API (默认)\n"
+
+        # 检查环境配置
+        from core.config import telegram_config
+        api_base_url = telegram_config.get("api_base_url")
+
+        api_info += f"\n🔧 环境配置:\n"
+        if api_base_url:
+            api_info += f"   TELEGRAM_API_BASE_URL: {api_base_url}\n"
+            api_info += "   ✅ 已配置本地API\n"
+        else:
+            api_info += "   TELEGRAM_API_BASE_URL: 未设置\n"
+            api_info += "   ❌ 未配置本地API\n"
+
+        # 测试本地API连接（如果配置了）
+        if api_base_url:
+            api_info += f"\n🔗 本地API连接测试:\n"
+            try:
+                import requests
+                test_url = f"{api_base_url}/"
+                response = requests.get(test_url, timeout=5)
+                if response.status_code == 200:
+                    api_info += "   ✅ 本地API服务器连接正常\n"
+                else:
+                    api_info += f"   ❌ 本地API服务器响应异常: {response.status_code}\n"
+            except Exception as conn_error:
+                api_info += f"   ❌ 本地API服务器连接失败: {str(conn_error)}\n"
+
+        # 获取Bot信息
+        try:
+            bot_info = await bot.get_me()
+            api_info += f"\n🤖 Bot信息:\n"
+            api_info += f"   用户名: @{bot_info.username}\n"
+            api_info += f"   ID: {bot_info.id}\n"
+            api_info += f"   名称: {bot_info.first_name}\n"
+        except Exception as bot_error:
+            api_info += f"\n❌ 获取Bot信息失败: {str(bot_error)}\n"
+
+        # 发送信息
+        await update.message.reply_text(api_info, disable_web_page_preview=True)
+        logging.info("✅ API状态信息发送成功")
+
+    except Exception as e:
+        logging.error(f"DEBUG_API命令执行失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+
+
+def register_debug_commands(application):
+    """注册调试命令"""
+    from telegram.ext import CommandHandler
+
+    application.add_handler(CommandHandler("debug_show", debug_show_command))
+    application.add_handler(CommandHandler("debug_media", debug_media_info_command))
+    application.add_handler(CommandHandler("debug_download", debug_download_test_command))
+    application.add_handler(CommandHandler("debug_send_url", debug_send_url_command))
+    application.add_handler(CommandHandler("debug_api", debug_api_status_command))
+
+    logging.info("✅ 调试命令注册完成")
