@@ -1,0 +1,38 @@
+[Unit]
+Description=Telegram Bot API Local Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME
+ExecStart=/home/YOUR_USERNAME/.local/bin/telegram-bot-api \
+    --api-id=YOUR_API_ID \
+    --api-hash=YOUR_API_HASH \
+    --local \
+    --http-port=8081 \
+    --dir=/home/YOUR_USERNAME/telegram-bot-api-data \
+    --verbosity=2 \
+    --max-webhook-connections=100000 \
+    --max-connections=100000
+
+# 重启策略
+Restart=always
+RestartSec=10
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/YOUR_USERNAME/telegram-bot-api-data
+
+# 日志设置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telegram-bot-api
+
+[Install]
+WantedBy=multi-user.target 
