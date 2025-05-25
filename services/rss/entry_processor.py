@@ -161,47 +161,62 @@ async def send_entry_unified(
         else:
             # 文字为主模式
             if images:
-                # 有图片：把文字内容作为caption发送到图片组
-                logging.info(f"文字为主模式，有图片，将文字内容作为caption发送")
+                # 有图片：把图片链接放到文本消息开头，利用Telegram自动预览
+                logging.info(f"文字为主模式，有图片，将图片链接放到文本消息开头")
 
-                # 构建完整的caption内容（包含标题、内容、时间、链接）
-                caption_parts = []
+                # 格式化图片链接列表
+                image_links = []
+                for i, img_url in enumerate(images, 1):
+                    if i == 1:
+                        # 第一个链接不加序号，让Telegram自动预览
+                        image_links.append(img_url)
+                    else:
+                        # 后续链接添加序号
+                        image_links.append(f"{i}. {img_url}")
 
-                # 添加作者标签（如果有）
-                if author:
-                    caption_parts.append(f"#{author}")
+                # 构建包含图片链接的完整文本消息
+                message_parts = []
 
-                # 添加标题
-                caption_parts.append(title)
+                # 1. 图片链接放在最开头
+                image_section = "\n".join(image_links)
+                message_parts.append(image_section)
 
-                # 添加内容（清理HTML并限制长度）
+                # 2. 添加标题
+                if title:
+                    message_parts.append(f"\n📰 {title}")
+
+                # 3. 添加内容
                 if content:
+                    # 清理HTML标签
                     import re
                     clean_content = re.sub(r'<[^>]+>', '', content)
                     clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
                     clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
                     clean_content = clean_content.replace('&quot;', '"').strip()
 
-                    # 限制内容长度（caption总长度限制1024字符）
-                    max_content_length = 300  # 为标题、作者、时间、链接留出空间
+                    # 限制内容长度（考虑图片链接占用的字符）
+                    used_chars = len(image_section) + len(title) + 50  # 预留空间
+                    remaining_chars = 4096 - used_chars  # Telegram消息总长度限制
+                    max_content_length = min(500, remaining_chars - 100)  # 再预留一些空间
+
                     if len(clean_content) > max_content_length:
                         clean_content = clean_content[:max_content_length] + "..."
 
                     if clean_content:
-                        caption_parts.append(f"\n{clean_content}")
+                        message_parts.append(f"\n{clean_content}")
 
-                # 添加发布时间
+                # 4. 添加发布时间
                 if published_time:
-                    caption_parts.append(f"\n⏰ {published_time}")
+                    message_parts.append(f"\n⏰ {published_time}")
 
-                # 添加链接
-                if link:
-                    caption_parts.append(f"\n🔗 {link}")
+                # 5. 添加原文链接（如果有且不同于图片链接）
+                if link and link not in images:
+                    message_parts.append(f"\n🔗 {link}")
 
-                full_caption = "".join(caption_parts)
-
-                # 使用自定义的图片发送函数，传入完整caption
-                await send_image_groups_with_caption(bot, chat_id, title, author, images, full_caption=full_caption)
+                # 发送包含图片链接的文本消息
+                full_message = "".join(message_parts)
+                await bot.send_message(chat_id=chat_id, text=full_message)
+                logging.info(f"✅ 发送包含 {len(images)} 个图片链接的文本消息")
             else:
                 # 没有图片：发送纯文字消息
                 logging.info(f"文字为主模式，无图片，发送纯文字消息")
