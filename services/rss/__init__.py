@@ -26,6 +26,7 @@ from .state_manager import FeedStateManager
 from .scheduler import RSSScheduler, run_scheduled_check
 from .config import get_config, update_config, rss_config
 from .network_utils import get_network_manager, network_manager
+from .parser_utils import get_unified_parser, UnifiedParser
 
 __all__ = [
     # 管理器
@@ -67,5 +68,9 @@ __all__ = [
     'network_manager',
 
     # 定时任务
-    'run_scheduled_check'
+    'run_scheduled_check',
+
+    # 解析工具
+    'get_unified_parser',
+    'UnifiedParser'
 ]

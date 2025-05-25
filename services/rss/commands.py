@@ -12,6 +12,7 @@ from telegram import Update, Bot, InputMediaPhoto
 from telegram.ext import ContextTypes, CommandHandler, Application
 from datetime import datetime
 from bs4 import BeautifulSoup
+from .parser_utils import get_unified_parser
 
 rss_manager = RSSManager()
 
@@ -291,108 +292,40 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     try:
-        # 智能识别并处理RSS和Atom格式
-        item_xml_stripped = item_xml.strip()
-
-        # 检查是否已经是完整的条目标签
-        if not (item_xml_stripped.startswith('<item') or item_xml_stripped.startswith('<entry')):
-            # 如果没有条目标签，默认包装为item标签（保持向后兼容）
-            item_xml = f"<item>{item_xml}</item>"
-            logging.info("自动包装为RSS item标签")
-        else:
-            logging.info(f"检测到完整的条目标签: {item_xml_stripped[:20]}...")
-
         # 添加调试日志
         logging.info(f"SHOW命令接收到的XML内容长度: {len(item_xml)} 字符")
         logging.debug(f"SHOW命令原始内容: {item_xml[:500]}...")
 
-        # 使用BeautifulSoup解析（优先xml解析器，失败则用html.parser）
-        try:
-            soup = BeautifulSoup(item_xml, 'xml')
-            logging.info("使用XML解析器成功解析内容")
-        except Exception as xml_error:
-            logging.warning(f"XML解析器失败: {xml_error}，尝试HTML解析器")
-            try:
-                soup = BeautifulSoup(item_xml, 'html.parser')
-                logging.info("使用HTML解析器成功解析内容")
-            except Exception as html_error:
-                await update.message.reply_text(
-                    f"❌ 解析失败\n"
-                    f"XML解析器错误: {xml_error}\n"
-                    f"HTML解析器错误: {html_error}"
-                )
-                logging.error(f"BeautifulSoup解析失败: XML={xml_error}, HTML={html_error}", exc_info=True)
-                return
+        # 使用统一解析器解析XML片段
+        parser = get_unified_parser()
+        entry_data = parser.extract_entry_data_from_xml(item_xml)
 
-        # 检测格式类型
-        format_type = "Atom" if item_xml_stripped.startswith('<entry') else "RSS"
-        logging.info(f"检测到格式类型: {format_type}")
+        if not entry_data:
+            await update.message.reply_text(
+                "❌ 解析失败\n"
+                "无法解析提供的XML内容，请检查格式是否正确"
+            )
+            return
 
-        # 提取条目信息（手动解析模式）
+        logging.info(f"统一解析器解析成功，提取到标题: {entry_data['title']}")
+
+        # 将解析结果转换为entry_processor期望的格式
         mock_entry = {
-            'title': '无标题',
-            'description': '',
-            'summary': '',
-            'link': '',
-            'published': '',
-            'author': '',
-            'id': ''
+            'title': entry_data['title'],
+            'description': entry_data['description'],
+            'summary': entry_data['summary'],
+            'link': entry_data['link'],
+            'published': entry_data['published'],
+            'author': entry_data['author'],
+            'id': entry_data['id'],
+            'content': entry_data['description']  # 将description复制到content字段
         }
 
-        # 提取标题
-        if soup.title:
-            mock_entry['title'] = soup.title.get_text().strip()
-
-        # 提取内容（支持RSS的description和Atom的content）
-        # 优先使用content标签（Atom格式），其次使用description标签（RSS格式）
-        content_tag = soup.find('content') or soup.find('description')
-        if content_tag:
-            # 获取标签的内部HTML内容
-            desc_content = content_tag.decode_contents() if content_tag.contents else content_tag.get_text()
-            mock_entry['description'] = desc_content.strip()
-            mock_entry['summary'] = mock_entry['description']
-
-        # 提取链接（支持Atom的link标签和RSS的link标签）
-        link_tag = soup.find('link')
-        if link_tag:
-            # Atom格式的link标签可能有href属性
-            if link_tag.get('href'):
-                mock_entry['link'] = link_tag.get('href').strip()
-            # RSS格式的link标签直接包含URL文本
-            elif link_tag.get_text():
-                mock_entry['link'] = link_tag.get_text().strip()
-
-        # 提取发布时间（支持多种格式）
-        # RSS: pubDate, Atom: published, updated
-        pubdate_tag = (soup.find('pubDate') or soup.find('pubdate') or
-                      soup.find('published') or soup.find('updated'))
-        if pubdate_tag:
-            mock_entry['published'] = pubdate_tag.get_text().strip()
-
-        # 提取作者（支持Atom的author/name和RSS的author）
-        author_tag = soup.find('author')
-        if author_tag:
-            # Atom格式可能有name子标签
-            name_tag = author_tag.find('name')
-            if name_tag:
-                mock_entry['author'] = name_tag.get_text().strip()
-            else:
-                mock_entry['author'] = author_tag.get_text().strip()
-
-        # 提取ID（支持Atom的id和RSS的guid）
-        id_tag = soup.find('id') or soup.find('guid')
-        if id_tag:
-            mock_entry['id'] = id_tag.get_text().strip()
-
-        logging.info(f"BeautifulSoup解析成功，提取到标题: {mock_entry['title']}")
-
         # 使用统一的条目信息提取函数（手动解析模式）
-        # 但需要确保mock_entry的content字段包含HTML内容
-        mock_entry['content'] = mock_entry['description']  # 将description复制到content字段
         entry_info = extract_entry_info(mock_entry, is_feedparser_entry=False)
 
         # 添加格式类型到entry_info中
-        entry_info['format_type'] = format_type
+        entry_info['format_type'] = entry_data['format_type']
 
         # 使用统一的发送函数，并显示分析信息
         await send_entry_unified(

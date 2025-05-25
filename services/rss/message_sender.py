@@ -25,22 +25,57 @@ def extract_and_clean_media(content: str) -> list[dict]:
         content: HTML内容
 
     Returns:
-        list[dict]: 媒体信息列表，每个元素包含 {'url': str, 'type': str}
+        list[dict]: 媒体信息列表，每个元素包含 {'url': str, 'type': str, 'poster': str}
                    type 可能是 'image' 或 'video'
+                   poster 仅对视频有效，包含封面图URL
+    """
+    if not content:
+        return []
+
+    # 使用统一解析器提取媒体
+    from .parser_utils import get_unified_parser
+
+    try:
+        parser = get_unified_parser()
+        media_list = parser.extract_media_from_html(content)
+
+        # 记录前几个媒体URL用于调试
+        for i, media_info in enumerate(media_list[:3], 1):
+            media_type = "图片" if media_info['type'] == 'image' else "视频"
+            poster_info = f" (封面: {media_info.get('poster', '无')})" if media_info['type'] == 'video' else ""
+            logging.info(f"媒体{i}({media_type}): {media_info['url']}{poster_info}")
+
+        return media_list
+
+    except ImportError:
+        logging.warning("统一解析器不可用，回退到正则表达式解析")
+        return _extract_media_with_regex(content)
+    except Exception as e:
+        logging.error(f"统一解析器失败，回退到正则表达式: {str(e)}")
+        return _extract_media_with_regex(content)
+
+
+def _extract_media_with_regex(content: str) -> list[dict]:
+    """
+    使用正则表达式提取媒体（回退方法）
+
+    Args:
+        content: HTML内容
+
+    Returns:
+        list[dict]: 媒体信息列表
     """
     media_list = []
-    if not content:
-        return media_list
 
     # 提取图片URL
     img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
     raw_images = re.findall(img_pattern, content, re.IGNORECASE)
-    logging.info(f"提取到 {len(raw_images)} 张原始图片")
+    logging.info(f"正则提取到 {len(raw_images)} 张原始图片")
 
-    # 提取视频URL
-    video_pattern = r'<video[^>]+src=["\']([^"\']+)["\'][^>]*>'
-    raw_videos = re.findall(video_pattern, content, re.IGNORECASE)
-    logging.info(f"提取到 {len(raw_videos)} 个原始视频")
+    # 提取视频URL和poster（封面图）
+    video_pattern = r'<video[^>]*src=["\']([^"\']+)["\'][^>]*(?:poster=["\']([^"\']+)["\'][^>]*)?[^>]*>'
+    video_matches = re.findall(video_pattern, content, re.IGNORECASE)
+    logging.info(f"正则提取到 {len(video_matches)} 个原始视频")
 
     # 处理图片
     for img_url in raw_images:
@@ -61,24 +96,30 @@ def extract_and_clean_media(content: str) -> list[dict]:
             logging.warning(f"跳过无效图片URL: {clean_url}")
 
     # 处理视频
-    for video_url in raw_videos:
+    for video_match in video_matches:
+        video_url = video_match[0] if video_match[0] else ""
+        poster_url = video_match[1] if len(video_match) > 1 and video_match[1] else ""
+
         # 清理HTML实体编码
-        clean_url = video_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-        clean_url = clean_url.replace('&quot;', '"').strip()
+        clean_video_url = video_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        clean_video_url = clean_video_url.replace('&quot;', '"').strip()
+
+        clean_poster_url = ""
+        if poster_url:
+            clean_poster_url = poster_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            clean_poster_url = clean_poster_url.replace('&quot;', '"').strip()
 
         # 验证URL格式
-        if clean_url.startswith(('http://', 'https://')):
-            media_list.append({'url': clean_url, 'type': 'video'})
-            logging.debug(f"添加有效视频: {clean_url}")
+        if clean_video_url.startswith(('http://', 'https://')):
+            media_info = {'url': clean_video_url, 'type': 'video'}
+            if clean_poster_url.startswith(('http://', 'https://')):
+                media_info['poster'] = clean_poster_url
+                logging.debug(f"添加有效视频(含封面): {clean_video_url} -> {clean_poster_url}")
+            else:
+                logging.debug(f"添加有效视频(无封面): {clean_video_url}")
+            media_list.append(media_info)
         else:
-            logging.warning(f"跳过无效视频URL: {clean_url}")
-
-    logging.info(f"清理后有效媒体数量: {len(media_list)} (图片: {len(raw_images)}, 视频: {len(raw_videos)})")
-
-    # 记录前几个媒体URL用于调试
-    for i, media_info in enumerate(media_list[:3], 1):
-        media_type = "图片" if media_info['type'] == 'image' else "视频"
-        logging.info(f"媒体{i}({media_type}): {media_info['url']}")
+            logging.warning(f"跳过无效视频URL: {clean_video_url}")
 
     return media_list
 

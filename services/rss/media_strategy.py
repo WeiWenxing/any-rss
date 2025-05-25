@@ -30,12 +30,14 @@ class MediaSendResult(Enum):
 
 class MediaInfo:
     """媒体文件信息类"""
-    def __init__(self, url: str, media_type: str, size_mb: float = 0, accessible: bool = True):
+    def __init__(self, url: str, media_type: str, size_mb: float = 0, accessible: bool = True, poster_url: str = None):
         self.url = url
         self.media_type = media_type  # 'image' or 'video'
         self.size_mb = size_mb
         self.accessible = accessible
+        self.poster_url = poster_url  # 视频封面图URL（仅对视频有效）
         self.local_path: Optional[str] = None
+        self.local_poster_path: Optional[str] = None  # 本地封面图路径
         self.send_strategy: Optional[MediaSendStrategy] = None
 
 
@@ -63,7 +65,7 @@ class MediaSendStrategyManager:
         分析媒体文件列表，确定发送策略
 
         Args:
-            media_list: 媒体信息列表 [{'url': str, 'type': str}, ...]
+            media_list: 媒体信息列表 [{'url': str, 'type': str, 'poster': str}, ...]
 
         Returns:
             List[MediaInfo]: 分析后的媒体信息列表
@@ -74,6 +76,7 @@ class MediaSendStrategyManager:
         for i, media_dict in enumerate(media_list, 1):
             media_url = media_dict['url']
             media_type = media_dict['type']
+            poster_url = media_dict.get('poster')  # 提取封面图URL
 
             # 检查文件可访问性和大小
             accessible, error_msg, size_mb = self._check_media_accessibility(media_url)
@@ -83,7 +86,8 @@ class MediaSendStrategyManager:
                 url=media_url,
                 media_type=media_type,
                 size_mb=size_mb,
-                accessible=accessible
+                accessible=accessible,
+                poster_url=poster_url
             )
 
             # 确定发送策略
@@ -93,10 +97,11 @@ class MediaSendStrategyManager:
 
             # 记录分析结果
             strategy_name = media_info.send_strategy.value
+            poster_info = f" (封面: {poster_url})" if poster_url else ""
             if accessible:
-                logging.info(f"   📁 {media_type}{i}: {size_mb:.1f}MB → 策略: {strategy_name}")
+                logging.info(f"   📁 {media_type}{i}: {size_mb:.1f}MB → 策略: {strategy_name}{poster_info}")
             else:
-                logging.warning(f"   ❌ {media_type}{i}: 无法访问 ({error_msg}) → 策略: {strategy_name}")
+                logging.warning(f"   ❌ {media_type}{i}: 无法访问 ({error_msg}) → 策略: {strategy_name}{poster_info}")
 
         return analyzed_media
 
@@ -258,6 +263,17 @@ class MediaSender:
                 local_path = await self._download_media_file(media_info.url, media_info.media_type)
                 if local_path:
                     media_info.local_path = local_path
+
+                    # 如果是视频且有封面图，尝试下载封面图
+                    if media_info.media_type == 'video' and media_info.poster_url:
+                        logging.info(f"📥 下载视频封面图: {media_info.poster_url}")
+                        poster_path = await self._download_media_file(media_info.poster_url, 'image')
+                        if poster_path:
+                            media_info.local_poster_path = poster_path
+                            logging.info(f"✅ 封面图下载成功")
+                        else:
+                            logging.warning(f"❌ 封面图下载失败，将使用默认封面")
+
                     downloaded_files.append(media_info)
                     logging.info(f"✅ 文件 {i} 下载成功")
                 else:
@@ -275,10 +291,19 @@ class MediaSender:
                     file_content = f.read()
 
                 if media_info.media_type == 'video':
-                    media_item = InputMediaVideo(
-                        media=file_content,
-                        caption=caption if i == 0 else None
-                    )
+                    # 构建视频媒体项，如果有封面图则使用
+                    video_kwargs = {
+                        'media': file_content,
+                        'caption': caption if i == 0 else None
+                    }
+
+                    # 如果有本地封面图，添加thumbnail参数
+                    if media_info.local_poster_path and os.path.exists(media_info.local_poster_path):
+                        with open(media_info.local_poster_path, 'rb') as poster_f:
+                            video_kwargs['thumbnail'] = poster_f.read()
+                        logging.info(f"📸 视频 {i} 使用自定义封面图")
+
+                    media_item = InputMediaVideo(**video_kwargs)
                 else:  # image
                     media_item = InputMediaPhoto(
                         media=file_content,
@@ -350,12 +375,21 @@ class MediaSender:
             media_list: 媒体信息列表
         """
         for media_info in media_list:
+            # 清理主媒体文件
             if media_info.local_path and os.path.exists(media_info.local_path):
                 try:
                     os.remove(media_info.local_path)
                     logging.info(f"🗑️ 清理临时文件: {media_info.local_path}")
                 except Exception as e:
                     logging.error(f"清理临时文件失败: {str(e)}")
+
+            # 清理封面图文件
+            if media_info.local_poster_path and os.path.exists(media_info.local_poster_path):
+                try:
+                    os.remove(media_info.local_poster_path)
+                    logging.info(f"🗑️ 清理封面图临时文件: {media_info.local_poster_path}")
+                except Exception as e:
+                    logging.error(f"清理封面图临时文件失败: {str(e)}")
 
 
 # 工厂函数
