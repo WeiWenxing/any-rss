@@ -146,11 +146,9 @@ async def download_media_file(url: str, media_type: str) -> str | None:
         temp_filename = f"telegram_media_{os.getpid()}_{id(url)}.{extension}"
         temp_path = os.path.join(temp_dir, temp_filename)
         
-        # 设置请求头
+        # 设置请求头（与message_sender.py保持一致）
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://twitter.com/",
-            "Accept": "*/*"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
         
         # 下载文件
@@ -294,8 +292,7 @@ async def debug_media_info_command(update, context: ContextTypes.DEFAULT_TYPE) -
         # 检查媒体信息
         try:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "Referer": "https://twitter.com/"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             }
             
             response = requests.head(media_url, headers=headers, timeout=10, allow_redirects=True)
