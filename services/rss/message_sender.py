@@ -9,6 +9,7 @@ import re
 from telegram import Bot, InputMediaPhoto
 from datetime import datetime
 from urllib.parse import urlparse
+import requests
 
 
 def extract_and_clean_media(content: str) -> list[dict]:
@@ -138,6 +139,37 @@ async def send_media_groups_with_caption(
         logging.warning("send_media_groups_with_caption: 没有媒体可发送")
         return
 
+    # 🔍 分析媒体文件大小信息（不过滤，只记录）
+    media_analysis = analyze_media_files_info(media_list)
+
+    # 🔍 详细打印每个媒体文件的大小信息
+    logging.info(f"📊 媒体文件详细信息:")
+    for detail in media_analysis['details']:
+        media_type_name = detail['type_name']
+        index = detail['index']
+        accessible = detail['accessible']
+        size_mb = detail['size_mb']
+        url = detail['url']
+
+        if accessible:
+            if size_mb > 0:
+                # 判断是否可能导致发送失败
+                risk_level = ""
+                if size_mb > 50:
+                    risk_level = " 🚨 高风险：超过50MB Bot API限制"
+                elif size_mb > 20:
+                    risk_level = " ⚠️ 中风险：较大文件"
+                elif size_mb > 10:
+                    risk_level = " ⚡ 低风险：中等大小"
+
+                logging.info(f"   {media_type_name}{index}: {size_mb:.2f}MB{risk_level}")
+            else:
+                logging.info(f"   {media_type_name}{index}: 大小未知 ❓")
+        else:
+            logging.info(f"   {media_type_name}{index}: 无法访问 ❌ - {detail['error_msg']}")
+
+        logging.info(f"   URL: {url}")
+
     # 判断使用哪种caption格式
     use_full_caption = full_caption is not None
 
@@ -266,7 +298,7 @@ async def send_media_groups_with_caption(
             for j, media_info in enumerate(batch_media):
                 media_url = media_info['url']
                 media_type = media_info['type']
-                
+
                 try:
                     if media_type == 'video':
                         # 发送视频
@@ -287,7 +319,7 @@ async def send_media_groups_with_caption(
                 except Exception as single_error:
                     media_type_name = "视频" if media_type == 'video' else "图片"
                     logging.error(f"❌ 逐个发送{media_type_name}失败: {media_url}, 错误: {str(single_error)}", exc_info=True)
-            
+
             if batch_success:
                 any_batch_success = True
 
@@ -411,3 +443,136 @@ async def send_update_notification(
             logging.info(f"{domain} 无新增内容，跳过发送")
     except Exception as e:
         logging.error(f"发送Feed更新消息失败 for {url}: {str(e)}", exc_info=True)
+
+
+def check_media_accessibility(media_url: str, max_size_mb: int = 45) -> tuple[bool, str, int]:
+    """
+    检查媒体文件的可访问性和大小
+
+    Args:
+        media_url: 媒体URL
+        max_size_mb: 最大允许大小（MB）
+
+    Returns:
+        tuple[bool, str, int]: (是否可访问, 错误信息, 文件大小MB)
+    """
+    try:
+        # 发送HEAD请求检查文件信息
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+
+        response = requests.head(media_url, headers=headers, timeout=10, allow_redirects=True)
+
+        if response.status_code != 200:
+            return False, f"HTTP {response.status_code}", 0
+
+        # 检查文件大小
+        content_length = response.headers.get('content-length')
+        if content_length:
+            size_bytes = int(content_length)
+            size_mb = size_bytes / (1024 * 1024)
+
+            if size_mb > max_size_mb:
+                return False, f"文件过大 ({size_mb:.1f}MB > {max_size_mb}MB)", int(size_mb)
+
+            return True, "", int(size_mb)
+        else:
+            # 无法获取文件大小，假设可以尝试
+            return True, "无法获取文件大小", 0
+
+    except requests.exceptions.RequestException as e:
+        return False, f"网络错误: {str(e)}", 0
+    except Exception as e:
+        return False, f"检查失败: {str(e)}", 0
+
+
+def analyze_media_files_info(media_list: list[dict]) -> dict:
+    """
+    分析媒体文件列表的大小信息，只检查不过滤
+
+    Args:
+        media_list: 媒体信息列表，每个元素包含 {'url': str, 'type': str}
+
+    Returns:
+        dict: 包含分析结果的字典
+    """
+    if not media_list:
+        return {
+            'total_count': 0,
+            'total_size_mb': 0,
+            'large_files_count': 0,
+            'accessible_count': 0,
+            'details': []
+        }
+
+    logging.info(f"🔍 开始分析 {len(media_list)} 个媒体文件的大小信息...")
+
+    total_size_mb = 0
+    large_files_count = 0
+    accessible_count = 0
+    details = []
+
+    for i, media_info in enumerate(media_list, 1):
+        media_url = media_info['url']
+        media_type = media_info['type']
+        media_type_name = "视频" if media_type == 'video' else "图片"
+
+        # 检查文件大小（设置很大的限制，不过滤任何文件）
+        accessible, error_msg, size_mb = check_media_accessibility(media_url, max_size_mb=999999)
+
+        file_info = {
+            'index': i,
+            'url': media_url,
+            'type': media_type,
+            'type_name': media_type_name,
+            'accessible': accessible,
+            'size_mb': size_mb,
+            'error_msg': error_msg
+        }
+
+        if accessible:
+            accessible_count += 1
+            if size_mb > 0:
+                total_size_mb += size_mb
+                size_status = ""
+
+                # 标记大文件
+                if media_type == 'video' and size_mb > 50:
+                    large_files_count += 1
+                    size_status = " ⚠️ 超过Bot API 50MB限制"
+                elif media_type == 'image' and size_mb > 10:
+                    large_files_count += 1
+                    size_status = " ⚠️ 较大图片文件"
+
+                logging.info(f"📁 {media_type_name}{i}: {size_mb:.1f}MB{size_status}")
+                file_info['size_status'] = size_status
+            else:
+                logging.info(f"📁 {media_type_name}{i}: 大小未知")
+                file_info['size_status'] = " ℹ️ 大小未知"
+
+            logging.info(f"🔗 URL: {media_url}")
+        else:
+            logging.warning(f"❌ {media_type_name}{i}: 无法访问 - {error_msg}")
+            logging.warning(f"🔗 URL: {media_url}")
+            file_info['size_status'] = f" ❌ 无法访问: {error_msg}"
+
+        details.append(file_info)
+
+    # 打印汇总信息
+    analysis_result = {
+        'total_count': len(media_list),
+        'accessible_count': accessible_count,
+        'total_size_mb': total_size_mb,
+        'large_files_count': large_files_count,
+        'details': details
+    }
+
+    logging.info(f"📊 媒体文件分析汇总:")
+    logging.info(f"   总文件数: {analysis_result['total_count']}")
+    logging.info(f"   可访问文件: {analysis_result['accessible_count']}")
+    if total_size_mb > 0:
+        logging.info(f"   总大小: {total_size_mb:.1f}MB")
+    logging.info(f"   大文件数量: {large_files_count}")
+
+    return analysis_result
