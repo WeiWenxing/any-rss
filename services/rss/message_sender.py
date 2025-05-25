@@ -94,24 +94,46 @@ async def send_image_groups_with_caption(
     chat_id: str,
     title: str,
     author: str,
-    images: list[str]
+    images: list[str],
+    full_caption: str = None
 ) -> None:
     """
-    发送图片组，统一使用简洁caption格式：#作者 + title + 批次信息
-    适用于所有图片发送场景（图片为主模式和文字为主模式）
+    发送图片组，支持两种caption格式：
+    1. 简洁格式：#作者 + title + 批次信息（用于图片为主模式）
+    2. 完整格式：传入完整的caption内容（用于文字为主模式）
+
+    Args:
+        bot: Telegram Bot实例
+        chat_id: 目标聊天ID
+        title: 标题
+        author: 作者
+        images: 图片URL列表
+        full_caption: 完整的caption内容（可选，如果提供则使用完整格式）
     """
     if not images:
         logging.warning("send_image_groups_with_caption: 没有图片可发送")
         return
 
-    logging.info(f"开始发送图片组: 标题='{title}', 作者='{author}', 图片数量={len(images)}")
+    # 判断使用哪种caption格式
+    use_full_caption = full_caption is not None
 
-    # 截断标题（Telegram caption限制1024字符）
-    max_title_length = 100
-    original_title = title
-    if len(title) > max_title_length:
-        title = title[:max_title_length] + "..."
-        logging.info(f"标题过长已截断: '{original_title}' -> '{title}'")
+    if use_full_caption:
+        logging.info(f"开始发送带完整caption的图片组: 图片数量={len(images)}, caption长度={len(full_caption)}")
+
+        # 确保caption不超过Telegram限制（1024字符）
+        max_caption_length = 1024
+        if len(full_caption) > max_caption_length:
+            full_caption = full_caption[:max_caption_length-3] + "..."
+            logging.info(f"Caption过长已截断到 {len(full_caption)} 字符")
+    else:
+        logging.info(f"开始发送图片组: 标题='{title}', 作者='{author}', 图片数量={len(images)}")
+
+        # 截断标题（Telegram caption限制1024字符）
+        max_title_length = 100
+        original_title = title
+        if len(title) > max_title_length:
+            title = title[:max_title_length] + "..."
+            logging.info(f"标题过长已截断: '{original_title}' -> '{title}'")
 
     # 计算均衡的分批方案
     batch_sizes = calculate_balanced_batches(len(images), max_per_batch=10)
@@ -128,25 +150,41 @@ async def send_image_groups_with_caption(
 
         logging.info(f"准备发送第 {batch_num}/{total_batches} 批，包含 {batch_size} 张图片")
 
-        # 构建简洁的caption格式：#作者 + title + 批次信息
-        caption_parts = []
+        # 构建caption
+        if use_full_caption:
+            # 完整caption格式
+            if batch_num == 1:
+                # 第一批：使用完整caption
+                if total_batches > 1:
+                    # 如果有多批，在第一批caption后添加批次信息（前面加空格）
+                    caption = f"{full_caption}\n\n {batch_num}/{total_batches}"
+                else:
+                    # 只有一批，直接使用完整caption
+                    caption = full_caption
+            else:
+                # 后续批次：只显示批次信息（前面加空格）
+                caption = f" {batch_num}/{total_batches}"
+        else:
+            # 简洁caption格式：#作者 + title + 批次信息
+            caption_parts = []
 
-        # 添加作者（如果有）
-        if author:
-            caption_parts.append(f"#{author}")
-            logging.debug(f"添加作者标签: #{author}")
+            # 添加作者（如果有）
+            if author:
+                caption_parts.append(f"#{author}")
+                logging.debug(f"添加作者标签: #{author}")
 
-        # 添加标题
-        caption_parts.append(title)
+            # 添加标题
+            caption_parts.append(title)
 
-        # 只在多批次时显示批次信息
-        if total_batches > 1:
-            batch_info = f"{batch_num}/{total_batches}"
-            caption_parts.append(batch_info)
-            logging.debug(f"添加批次信息: {batch_info}")
+            # 只在多批次时显示批次信息
+            if total_batches > 1:
+                batch_info = f"{batch_num}/{total_batches}"
+                caption_parts.append(batch_info)
+                logging.debug(f"添加批次信息: {batch_info}")
 
-        caption = " ".join(caption_parts)
-        logging.info(f"第 {batch_num} 批caption: {caption}")
+            caption = " ".join(caption_parts)
+
+        logging.info(f"第 {batch_num} 批caption长度: {len(caption)}")
 
         # 构建媒体组
         media_list = []

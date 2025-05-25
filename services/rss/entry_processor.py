@@ -159,13 +159,53 @@ async def send_entry_unified(
             # 图片为主模式：发送媒体组
             await send_image_groups_with_caption(bot, chat_id, title, author, images)
         else:
-            # 文字为主模式：发送文字消息
-            await send_text_message(bot, chat_id, title, link, content, published_time)
-
-            # 如果有图片，作为补充发送
+            # 文字为主模式
             if images:
-                logging.info(f"文字为主模式，补充发送 {len(images)} 张图片")
-                await send_image_groups_with_caption(bot, chat_id, f"📷 {title} - 补充图片", author, images)
+                # 有图片：把文字内容作为caption发送到图片组
+                logging.info(f"文字为主模式，有图片，将文字内容作为caption发送")
+
+                # 构建完整的caption内容（包含标题、内容、时间、链接）
+                caption_parts = []
+
+                # 添加作者标签（如果有）
+                if author:
+                    caption_parts.append(f"#{author}")
+
+                # 添加标题
+                caption_parts.append(title)
+
+                # 添加内容（清理HTML并限制长度）
+                if content:
+                    import re
+                    clean_content = re.sub(r'<[^>]+>', '', content)
+                    clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
+                    clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
+                    clean_content = clean_content.replace('&quot;', '"').strip()
+
+                    # 限制内容长度（caption总长度限制1024字符）
+                    max_content_length = 300  # 为标题、作者、时间、链接留出空间
+                    if len(clean_content) > max_content_length:
+                        clean_content = clean_content[:max_content_length] + "..."
+
+                    if clean_content:
+                        caption_parts.append(f"\n{clean_content}")
+
+                # 添加发布时间
+                if published_time:
+                    caption_parts.append(f"\n⏰ {published_time}")
+
+                # 添加链接
+                if link:
+                    caption_parts.append(f"\n🔗 {link}")
+
+                full_caption = "".join(caption_parts)
+
+                # 使用自定义的图片发送函数，传入完整caption
+                await send_image_groups_with_caption(bot, chat_id, title, author, images, full_caption=full_caption)
+            else:
+                # 没有图片：发送纯文字消息
+                logging.info(f"文字为主模式，无图片，发送纯文字消息")
+                await send_text_message(bot, chat_id, title, link, content, published_time)
 
         logging.info(f"✅ 条目发送完成: '{title}' ({mode})")
 
