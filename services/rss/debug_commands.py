@@ -10,7 +10,7 @@ import asyncio
 import requests
 from pathlib import Path
 from urllib.parse import urlparse
-from telegram import Bot, InputMediaPhoto, InputMediaVideo
+from telegram import Bot, InputMediaPhoto, InputMediaVideo, Update
 from telegram.ext import ContextTypes
 
 from .entry_processor import extract_entry_info
@@ -608,10 +608,10 @@ async def debug_media_strategy_command(update: Update, context: ContextTypes.DEF
     try:
         chat_id = str(update.effective_chat.id)
         bot = context.bot
-        
+
         # 发送开始消息
         await bot.send_message(chat_id=chat_id, text="🧪 开始测试媒体策略系统...")
-        
+
         # 测试媒体列表（包含不同大小的文件）
         test_media_list = [
             {
@@ -627,47 +627,47 @@ async def debug_media_strategy_command(update: Update, context: ContextTypes.DEF
                 'type': 'video'
             }
         ]
-        
+
         # 导入媒体策略系统
         from .media_strategy import create_media_strategy_manager
-        
+
         # 创建策略管理器和发送器
         strategy_manager, media_sender = create_media_strategy_manager(bot)
-        
+
         # 分析媒体文件
         analyzed_media = strategy_manager.analyze_media_files(test_media_list)
-        
+
         # 发送分析结果
         analysis_text = "📊 媒体策略分析结果:\n\n"
         for i, media_info in enumerate(analyzed_media, 1):
             strategy_name = media_info.send_strategy.value
             size_info = f"{media_info.size_mb:.1f}MB" if media_info.size_mb > 0 else "大小未知"
             accessible_status = "✅" if media_info.accessible else "❌"
-            
+
             analysis_text += f"{i}. {media_info.media_type} - {size_info} {accessible_status}\n"
             analysis_text += f"   策略: {strategy_name}\n"
             analysis_text += f"   URL: {media_info.url[:50]}...\n\n"
-        
+
         await bot.send_message(chat_id=chat_id, text=analysis_text)
-        
+
         # 测试发送
         sendable_media = [m for m in analyzed_media if m.send_strategy.value != 'text_fallback']
         if sendable_media:
             await bot.send_message(chat_id=chat_id, text="🚀 开始测试发送...")
-            
+
             success = await media_sender.send_media_group_with_strategy(
                 chat_id=chat_id,
                 media_list=sendable_media,
                 caption="🧪 媒体策略系统测试"
             )
-            
+
             if success:
                 await bot.send_message(chat_id=chat_id, text="✅ 媒体策略系统测试成功！")
             else:
                 await bot.send_message(chat_id=chat_id, text="❌ 媒体策略系统测试失败")
         else:
             await bot.send_message(chat_id=chat_id, text="❌ 没有可发送的媒体文件")
-            
+
     except Exception as e:
         logging.error(f"媒体策略测试失败: {str(e)}", exc_info=True)
         await bot.send_message(chat_id=chat_id, text=f"❌ 测试失败: {str(e)}")
