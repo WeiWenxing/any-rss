@@ -3,6 +3,7 @@ from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Application
 import logging
 import asyncio
+from telegram.request import HTTPXRequest
 
 tel_bots = {}
 commands = [
@@ -101,6 +102,16 @@ def create_application(token: str) -> Application:
     Returns:
         Application: 配置好的应用实例
     """
+    # 创建自定义请求对象，增加超时时间
+    # 对于大文件上传，需要更长的超时时间
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        read_timeout=300,  # 读取超时：5分钟
+        write_timeout=300,  # 写入超时：5分钟
+        connect_timeout=30,  # 连接超时：30秒
+        pool_timeout=30,   # 连接池超时：30秒
+    )
+
     # 获取本地API配置
     api_base_url = telegram_config.get("api_base_url")
 
@@ -114,6 +125,7 @@ def create_application(token: str) -> Application:
             .token(token)
             .base_url(base_url)
             .base_file_url(base_file_url)
+            .request(request)  # 使用自定义请求配置
             .concurrent_updates(True)
             .post_init(post_init)
             .build()
@@ -122,11 +134,13 @@ def create_application(token: str) -> Application:
         logging.info(f"✅ 机器人已配置使用本地Bot API服务器")
         logging.info(f"📍 API地址: {base_url}")
         logging.info(f"📁 文件地址: {base_file_url}")
+        logging.info(f"⏱️ 超时配置: 读取/写入=300s, 连接=30s")
     else:
         # 使用官方Bot API服务器
         application = (
             ApplicationBuilder()
             .token(token)
+            .request(request)  # 使用自定义请求配置
             .concurrent_updates(True)
             .post_init(post_init)
             .build()
@@ -134,6 +148,7 @@ def create_application(token: str) -> Application:
 
         logging.info(f"✅ 机器人已配置使用官方Bot API服务器")
         logging.info(f"📍 API地址: https://api.telegram.org/bot")
+        logging.info(f"⏱️ 超时配置: 读取/写入=300s, 连接=30s")
 
     return application
 
