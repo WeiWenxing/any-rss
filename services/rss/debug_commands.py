@@ -525,12 +525,12 @@ async def debug_api_status_command(update, context: ContextTypes.DEFAULT_TYPE) -
             else:
                 logging.info("🌐 检测到使用官方Bot API服务器")
                 api_info += "🌐 使用官方Bot API服务器\n"
-                api_info += "⚠️ 文件大小限制50MB\n"
+                api_info += "⚠️ 文件大小限制20MB\n"
         else:
             logging.info("❌ Bot没有_base_url属性，使用默认官方API")
             api_info += "📍 API地址: 官方API (默认)\n"
             api_info += "🌐 使用官方Bot API服务器\n"
-            api_info += "⚠️ 文件大小限制50MB\n"
+            api_info += "⚠️ 文件大小限制20MB\n"
 
         # 获取file_url信息
         logging.info("🔍 检查Bot的base_file_url属性...")

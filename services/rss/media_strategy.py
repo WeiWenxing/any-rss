@@ -50,7 +50,7 @@ class MediaSendStrategyManager:
         """
         self.use_local_api = use_local_api
         # 根据API类型设置大文件阈值
-        self.large_file_threshold_mb = 500 if use_local_api else 50
+        self.large_file_threshold_mb = 50 if use_local_api else 20
         logging.info(f"📋 媒体发送策略管理器初始化: 本地API={use_local_api}, 大文件阈值={self.large_file_threshold_mb}MB")
     
     def analyze_media_files(self, media_list: List[Dict]) -> List[MediaInfo]:

@@ -9,7 +9,7 @@
 1. **URL直接发送** (`url_direct`)
    - 适用于：小于阈值的文件
    - 优点：速度快，不占用本地存储
-   - 阈值：本地API=500MB，官方API=50MB
+   - 阈值：本地API=50MB，官方API=20MB
 
 2. **下载后上传** (`download_upload`)
    - 适用于：大文件或URL发送失败的文件
@@ -104,10 +104,10 @@ success = await media_sender.send_media_group_with_strategy(
 | 文件状态 | 文件大小 | API类型 | 策略选择 | 说明 |
 |---------|---------|---------|----------|------|
 | 无法访问 | - | - | `text_fallback` | 抛出异常 |
-| 可访问 | ≤50MB | 官方API | `url_direct` | 直接发送 |
-| 可访问 | >50MB | 官方API | `download_upload` | 下载上传 |
-| 可访问 | ≤500MB | 本地API | `url_direct` | 直接发送 |
-| 可访问 | >500MB | 本地API | `download_upload` | 下载上传 |
+| 可访问 | ≤20MB | 官方API | `url_direct` | 直接发送 |
+| 可访问 | >20MB | 官方API | `download_upload` | 下载上传 |
+| 可访问 | ≤50MB | 本地API | `url_direct` | 直接发送 |
+| 可访问 | >50MB | 本地API | `download_upload` | 下载上传 |
 
 ## 🔧 配置说明
 
@@ -123,8 +123,8 @@ def create_media_strategy_manager(bot: Bot):
 ```
 
 ### 大文件阈值
-- **本地API**: 500MB（支持2GB，保留安全边际）
-- **官方API**: 50MB（官方限制）
+- **本地API**: 50MB（支持2GB，但50MB是合理平衡点）
+- **官方API**: 20MB（更严格的限制）
 
 ## 🚀 使用示例
 
@@ -210,10 +210,10 @@ async def send_media_groups_with_caption(bot, chat_id, title, author, media_list
 ## 🔍 日志示例
 
 ```
-📋 媒体发送策略管理器初始化: 本地API=True, 大文件阈值=500MB
+📋 媒体发送策略管理器初始化: 本地API=True, 大文件阈值=50MB
 🔍 开始分析 3 个媒体文件...
    📁 image1: 2.1MB → 策略: url_direct
-   📁 video1: 101.5MB → 策略: download_upload
+   📁 video1: 60.5MB → 策略: download_upload
    ❌ image2: 无法访问 (HTTP 404) → 策略: text_fallback
 🚀 开始发送媒体组: 2 个文件
 📡 尝试URL直接发送 1 个媒体文件
@@ -248,4 +248,4 @@ async def send_media_groups_with_caption(bot, chat_id, title, author, media_list
    - 发送时间监控
    - 自动策略优化
 
-这个媒体策略系统为RSS机器人提供了强大而灵活的媒体发送能力，确保各种大小的媒体文件都能可靠发送。 
+这个媒体策略系统为RSS机器人提供了强大而灵活的媒体发送能力，确保各种大小的媒体文件都能可靠发送。
