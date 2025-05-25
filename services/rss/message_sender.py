@@ -141,7 +141,7 @@ async def send_image_groups_with_caption(
 
         # 只在多批次时显示批次信息
         if total_batches > 1:
-            batch_info = f"📊 {batch_num}/{total_batches}"
+            batch_info = f"{batch_num}/{total_batches}"
             caption_parts.append(batch_info)
             logging.debug(f"添加批次信息: {batch_info}")
 

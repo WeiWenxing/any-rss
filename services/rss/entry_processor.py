@@ -195,14 +195,10 @@ async def process_and_send_entry(
         # 提取条目信息
         entry_info = extract_entry_info(entry, is_feedparser_entry=True)
 
-        # 添加进度信息到标题
-        original_title = entry_info['title']
-        entry_info['title'] = f"[{current_index}/{total_count}] {original_title}"
-
-        # 使用统一发送函数
+        # 使用统一发送函数（不添加任何索引信息）
         await send_entry_unified(bot, chat_id, entry_info, message_type="auto")
 
-        logging.info(f"✅ 条目处理完成: {current_index}/{total_count} - '{original_title}'")
+        logging.info(f"✅ 条目处理完成: '{entry_info['title']}'")
 
     except Exception as e:
         logging.error(f"❌ 处理条目失败: {current_index}/{total_count} - {str(e)}")
