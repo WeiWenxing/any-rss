@@ -91,15 +91,58 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(help_text, disable_web_page_preview=True)
 
 
+def create_application(token: str) -> Application:
+    """
+    创建Telegram应用实例，根据配置决定使用官方API还是本地API
+
+    Args:
+        token: 机器人Token
+
+    Returns:
+        Application: 配置好的应用实例
+    """
+    # 获取本地API配置
+    api_base_url = telegram_config.get("api_base_url")
+
+    if api_base_url:
+        # 使用本地Bot API服务器
+        base_url = f"{api_base_url}/bot"
+        base_file_url = f"{api_base_url}/file/bot"
+
+        application = (
+            ApplicationBuilder()
+            .token(token)
+            .base_url(base_url)
+            .base_file_url(base_file_url)
+            .concurrent_updates(True)
+            .post_init(post_init)
+            .build()
+        )
+
+        logging.info(f"✅ 机器人已配置使用本地Bot API服务器")
+        logging.info(f"📍 API地址: {base_url}")
+        logging.info(f"📁 文件地址: {base_file_url}")
+    else:
+        # 使用官方Bot API服务器
+        application = (
+            ApplicationBuilder()
+            .token(token)
+            .concurrent_updates(True)
+            .post_init(post_init)
+            .build()
+        )
+
+        logging.info(f"✅ 机器人已配置使用官方Bot API服务器")
+        logging.info(f"📍 API地址: https://api.telegram.org/bot")
+
+    return application
+
+
 async def run(token):
     global tel_bots
-    application = (
-        ApplicationBuilder()
-        .token(token)
-        .concurrent_updates(True)
-        .post_init(post_init)
-        .build()
-    )
+
+    # 使用新的创建函数
+    application = create_application(token)
 
     # 用token作为key存储bot实例
     tel_bots[token] = application.bot
