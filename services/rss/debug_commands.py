@@ -601,6 +601,78 @@ async def debug_api_status_command(update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
 
 
+async def debug_media_strategy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    测试新的媒体策略系统
+    """
+    try:
+        chat_id = str(update.effective_chat.id)
+        bot = context.bot
+        
+        # 发送开始消息
+        await bot.send_message(chat_id=chat_id, text="🧪 开始测试媒体策略系统...")
+        
+        # 测试媒体列表（包含不同大小的文件）
+        test_media_list = [
+            {
+                'url': 'https://picsum.photos/800/600.jpg',  # 小图片
+                'type': 'image'
+            },
+            {
+                'url': 'https://picsum.photos/1920/1080.jpg',  # 中等图片
+                'type': 'image'
+            },
+            {
+                'url': 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4',  # 小视频
+                'type': 'video'
+            }
+        ]
+        
+        # 导入媒体策略系统
+        from .media_strategy import create_media_strategy_manager
+        
+        # 创建策略管理器和发送器
+        strategy_manager, media_sender = create_media_strategy_manager(bot)
+        
+        # 分析媒体文件
+        analyzed_media = strategy_manager.analyze_media_files(test_media_list)
+        
+        # 发送分析结果
+        analysis_text = "📊 媒体策略分析结果:\n\n"
+        for i, media_info in enumerate(analyzed_media, 1):
+            strategy_name = media_info.send_strategy.value
+            size_info = f"{media_info.size_mb:.1f}MB" if media_info.size_mb > 0 else "大小未知"
+            accessible_status = "✅" if media_info.accessible else "❌"
+            
+            analysis_text += f"{i}. {media_info.media_type} - {size_info} {accessible_status}\n"
+            analysis_text += f"   策略: {strategy_name}\n"
+            analysis_text += f"   URL: {media_info.url[:50]}...\n\n"
+        
+        await bot.send_message(chat_id=chat_id, text=analysis_text)
+        
+        # 测试发送
+        sendable_media = [m for m in analyzed_media if m.send_strategy.value != 'text_fallback']
+        if sendable_media:
+            await bot.send_message(chat_id=chat_id, text="🚀 开始测试发送...")
+            
+            success = await media_sender.send_media_group_with_strategy(
+                chat_id=chat_id,
+                media_list=sendable_media,
+                caption="🧪 媒体策略系统测试"
+            )
+            
+            if success:
+                await bot.send_message(chat_id=chat_id, text="✅ 媒体策略系统测试成功！")
+            else:
+                await bot.send_message(chat_id=chat_id, text="❌ 媒体策略系统测试失败")
+        else:
+            await bot.send_message(chat_id=chat_id, text="❌ 没有可发送的媒体文件")
+            
+    except Exception as e:
+        logging.error(f"媒体策略测试失败: {str(e)}", exc_info=True)
+        await bot.send_message(chat_id=chat_id, text=f"❌ 测试失败: {str(e)}")
+
+
 def register_debug_commands(application):
     """注册调试命令"""
     from telegram.ext import CommandHandler
@@ -610,5 +682,6 @@ def register_debug_commands(application):
     application.add_handler(CommandHandler("debug_download", debug_download_test_command))
     application.add_handler(CommandHandler("debug_send_url", debug_send_url_command))
     application.add_handler(CommandHandler("debug_api", debug_api_status_command))
+    application.add_handler(CommandHandler("debug_media_strategy", debug_media_strategy_command))
 
     logging.info("✅ 调试命令注册完成")

@@ -11,7 +11,16 @@ from .message_sender import (
     extract_and_clean_media,
     send_media_groups_with_caption,
     send_text_message,
-    calculate_balanced_batches
+    calculate_balanced_batches,
+    MediaAccessError
+)
+from .media_strategy import (
+    MediaSendStrategy,
+    MediaSendResult,
+    MediaInfo,
+    MediaSendStrategyManager,
+    MediaSender,
+    create_media_strategy_manager
 )
 from .state_manager import FeedStateManager
 from .scheduler import RSSScheduler, run_scheduled_check
@@ -36,6 +45,15 @@ __all__ = [
     'send_media_groups_with_caption',
     'send_text_message',
     'calculate_balanced_batches',
+    'MediaAccessError',
+
+    # 媒体策略
+    'MediaSendStrategy',
+    'MediaSendResult',
+    'MediaInfo',
+    'MediaSendStrategyManager',
+    'MediaSender',
+    'create_media_strategy_manager',
 
     # 定时任务
     'run_scheduled_check'

@@ -1,0 +1,407 @@
+"""
+RSS媒体发送策略模块
+定义清晰的媒体发送策略和降级机制
+"""
+
+import logging
+import os
+import tempfile
+import asyncio
+from enum import Enum
+from typing import List, Dict, Tuple, Optional
+from telegram import Bot, InputMediaPhoto, InputMediaVideo
+import requests
+
+
+class MediaSendStrategy(Enum):
+    """媒体发送策略枚举"""
+    URL_DIRECT = "url_direct"           # 直接URL发送
+    DOWNLOAD_UPLOAD = "download_upload" # 下载后上传
+    TEXT_FALLBACK = "text_fallback"     # 降级到文本
+
+
+class MediaSendResult(Enum):
+    """媒体发送结果枚举"""
+    SUCCESS = "success"                 # 发送成功
+    FAILED_RETRY = "failed_retry"       # 失败，可重试
+    FAILED_FALLBACK = "failed_fallback" # 失败，需降级
+
+
+class MediaInfo:
+    """媒体文件信息类"""
+    def __init__(self, url: str, media_type: str, size_mb: float = 0, accessible: bool = True):
+        self.url = url
+        self.media_type = media_type  # 'image' or 'video'
+        self.size_mb = size_mb
+        self.accessible = accessible
+        self.local_path: Optional[str] = None
+        self.send_strategy: Optional[MediaSendStrategy] = None
+
+
+class MediaSendStrategyManager:
+    """媒体发送策略管理器"""
+    
+    def __init__(self, use_local_api: bool = False):
+        """
+        初始化策略管理器
+        
+        Args:
+            use_local_api: 是否使用本地API（影响大文件阈值）
+        """
+        self.use_local_api = use_local_api
+        # 根据API类型设置大文件阈值
+        self.large_file_threshold_mb = 500 if use_local_api else 50
+        logging.info(f"📋 媒体发送策略管理器初始化: 本地API={use_local_api}, 大文件阈值={self.large_file_threshold_mb}MB")
+    
+    def analyze_media_files(self, media_list: List[Dict]) -> List[MediaInfo]:
+        """
+        分析媒体文件列表，确定发送策略
+        
+        Args:
+            media_list: 媒体信息列表 [{'url': str, 'type': str}, ...]
+            
+        Returns:
+            List[MediaInfo]: 分析后的媒体信息列表
+        """
+        logging.info(f"🔍 开始分析 {len(media_list)} 个媒体文件...")
+        
+        analyzed_media = []
+        for i, media_dict in enumerate(media_list, 1):
+            media_url = media_dict['url']
+            media_type = media_dict['type']
+            
+            # 检查文件可访问性和大小
+            accessible, error_msg, size_mb = self._check_media_accessibility(media_url)
+            
+            # 创建媒体信息对象
+            media_info = MediaInfo(
+                url=media_url,
+                media_type=media_type,
+                size_mb=size_mb,
+                accessible=accessible
+            )
+            
+            # 确定发送策略
+            media_info.send_strategy = self._determine_send_strategy(media_info)
+            
+            analyzed_media.append(media_info)
+            
+            # 记录分析结果
+            strategy_name = media_info.send_strategy.value
+            if accessible:
+                logging.info(f"   📁 {media_type}{i}: {size_mb:.1f}MB → 策略: {strategy_name}")
+            else:
+                logging.warning(f"   ❌ {media_type}{i}: 无法访问 ({error_msg}) → 策略: {strategy_name}")
+        
+        return analyzed_media
+    
+    def _determine_send_strategy(self, media_info: MediaInfo) -> MediaSendStrategy:
+        """
+        确定单个媒体文件的发送策略
+        
+        Args:
+            media_info: 媒体文件信息
+            
+        Returns:
+            MediaSendStrategy: 发送策略
+        """
+        # 如果文件无法访问，直接降级到文本
+        if not media_info.accessible:
+            return MediaSendStrategy.TEXT_FALLBACK
+        
+        # 如果文件大小超过阈值，直接使用下载上传策略
+        if media_info.size_mb > self.large_file_threshold_mb:
+            logging.debug(f"文件 {media_info.url} 大小 {media_info.size_mb:.1f}MB 超过阈值 {self.large_file_threshold_mb}MB，使用下载上传策略")
+            return MediaSendStrategy.DOWNLOAD_UPLOAD
+        
+        # 默认使用URL直接发送
+        return MediaSendStrategy.URL_DIRECT
+    
+    def _check_media_accessibility(self, media_url: str) -> Tuple[bool, str, float]:
+        """
+        检查媒体文件的可访问性和大小
+        
+        Args:
+            media_url: 媒体URL
+            
+        Returns:
+            Tuple[bool, str, float]: (是否可访问, 错误信息, 文件大小MB)
+        """
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+            
+            response = requests.head(media_url, headers=headers, timeout=10, allow_redirects=True)
+            
+            if response.status_code != 200:
+                return False, f"HTTP {response.status_code}", 0.0
+            
+            # 检查文件大小
+            content_length = response.headers.get('content-length')
+            if content_length:
+                size_bytes = int(content_length)
+                size_mb = size_bytes / (1024 * 1024)
+                return True, "", size_mb
+            else:
+                # 无法获取文件大小，假设可以尝试
+                return True, "无法获取文件大小", 0.0
+                
+        except requests.exceptions.RequestException as e:
+            return False, f"网络错误: {str(e)}", 0.0
+        except Exception as e:
+            return False, f"检查失败: {str(e)}", 0.0
+
+
+class MediaSender:
+    """媒体发送器"""
+    
+    def __init__(self, bot: Bot, strategy_manager: MediaSendStrategyManager):
+        """
+        初始化媒体发送器
+        
+        Args:
+            bot: Telegram Bot实例
+            strategy_manager: 策略管理器
+        """
+        self.bot = bot
+        self.strategy_manager = strategy_manager
+    
+    async def send_media_group_with_strategy(
+        self, 
+        chat_id: str, 
+        media_list: List[MediaInfo], 
+        caption: str = ""
+    ) -> bool:
+        """
+        使用策略发送媒体组
+        
+        Args:
+            chat_id: 目标聊天ID
+            media_list: 媒体信息列表
+            caption: 标题
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        if not media_list:
+            logging.warning("没有媒体可发送")
+            return False
+        
+        logging.info(f"🚀 开始发送媒体组: {len(media_list)} 个文件")
+        
+        # 按策略分组
+        url_direct_media = [m for m in media_list if m.send_strategy == MediaSendStrategy.URL_DIRECT]
+        download_upload_media = [m for m in media_list if m.send_strategy == MediaSendStrategy.DOWNLOAD_UPLOAD]
+        
+        success = False
+        
+        # 1. 先尝试URL直接发送的媒体
+        if url_direct_media:
+            success = await self._send_url_direct_group(chat_id, url_direct_media, caption)
+            
+            # 如果URL发送失败，将这些媒体改为下载上传策略
+            if not success:
+                logging.info("URL直接发送失败，将这些媒体改为下载上传策略")
+                for media in url_direct_media:
+                    media.send_strategy = MediaSendStrategy.DOWNLOAD_UPLOAD
+                download_upload_media.extend(url_direct_media)
+        
+        # 2. 处理需要下载上传的媒体
+        if download_upload_media:
+            download_success = await self._send_download_upload_group(chat_id, download_upload_media, caption if not success else "")
+            success = success or download_success
+        
+        return success
+    
+    async def _send_url_direct_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> bool:
+        """
+        直接使用URL发送媒体组
+        
+        Args:
+            chat_id: 目标聊天ID
+            media_list: 媒体信息列表
+            caption: 标题
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        try:
+            logging.info(f"📡 尝试URL直接发送 {len(media_list)} 个媒体文件")
+            
+            # 构建媒体组
+            telegram_media = []
+            for i, media_info in enumerate(media_list):
+                if media_info.media_type == 'video':
+                    media_item = InputMediaVideo(
+                        media=media_info.url,
+                        caption=caption if i == 0 else None
+                    )
+                else:  # image
+                    media_item = InputMediaPhoto(
+                        media=media_info.url,
+                        caption=caption if i == 0 else None
+                    )
+                telegram_media.append(media_item)
+            
+            # 发送媒体组
+            await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
+            logging.info(f"✅ URL直接发送成功: {len(media_list)} 个文件")
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ URL直接发送失败: {str(e)}")
+            return False
+    
+    async def _send_download_upload_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> bool:
+        """
+        下载后上传发送媒体组
+        
+        Args:
+            chat_id: 目标聊天ID
+            media_list: 媒体信息列表
+            caption: 标题
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        downloaded_files = []
+        try:
+            logging.info(f"📥 开始下载 {len(media_list)} 个媒体文件...")
+            
+            # 下载所有文件
+            for i, media_info in enumerate(media_list, 1):
+                logging.info(f"📥 下载文件 {i}/{len(media_list)}: {media_info.url}")
+                local_path = await self._download_media_file(media_info.url, media_info.media_type)
+                if local_path:
+                    media_info.local_path = local_path
+                    downloaded_files.append(media_info)
+                    logging.info(f"✅ 文件 {i} 下载成功")
+                else:
+                    logging.error(f"❌ 文件 {i} 下载失败")
+            
+            if not downloaded_files:
+                logging.error("所有文件下载失败")
+                return False
+            
+            # 构建媒体组
+            logging.info(f"📤 开始上传 {len(downloaded_files)} 个文件...")
+            telegram_media = []
+            for i, media_info in enumerate(downloaded_files):
+                with open(media_info.local_path, 'rb') as f:
+                    file_content = f.read()
+                
+                if media_info.media_type == 'video':
+                    media_item = InputMediaVideo(
+                        media=file_content,
+                        caption=caption if i == 0 else None
+                    )
+                else:  # image
+                    media_item = InputMediaPhoto(
+                        media=file_content,
+                        caption=caption if i == 0 else None
+                    )
+                telegram_media.append(media_item)
+            
+            # 发送媒体组
+            await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
+            logging.info(f"✅ 下载上传发送成功: {len(downloaded_files)} 个文件")
+            return True
+            
+        except Exception as e:
+            logging.error(f"❌ 下载上传发送失败: {str(e)}", exc_info=True)
+            return False
+        finally:
+            # 清理临时文件
+            self._cleanup_temp_files(downloaded_files)
+    
+    async def _download_media_file(self, url: str, media_type: str) -> Optional[str]:
+        """
+        下载媒体文件到临时目录
+        
+        Args:
+            url: 媒体URL
+            media_type: 媒体类型
+            
+        Returns:
+            Optional[str]: 下载的文件路径，失败返回None
+        """
+        try:
+            # 解析URL获取文件扩展名
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            path_parts = parsed_url.path.split('.')
+            
+            if len(path_parts) > 1:
+                extension = path_parts[-1].split('?')[0]  # 去掉查询参数
+            else:
+                # 根据媒体类型设置默认扩展名
+                extension = 'mp4' if media_type == 'video' else 'jpg'
+            
+            # 创建临时文件
+            temp_dir = tempfile.gettempdir()
+            temp_filename = f"telegram_media_{os.getpid()}_{id(url)}.{extension}"
+            temp_path = os.path.join(temp_dir, temp_filename)
+            
+            # 设置请求头
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+            
+            # 下载文件
+            response = requests.get(url, headers=headers, timeout=60, stream=True)
+            response.raise_for_status()
+            
+            # 写入文件
+            with open(temp_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            file_size = os.path.getsize(temp_path)
+            logging.info(f"文件下载完成: {temp_path}, 大小: {file_size / (1024*1024):.2f}MB")
+            
+            return temp_path
+            
+        except Exception as e:
+            logging.error(f"下载媒体文件失败: {url}, 错误: {str(e)}")
+            return None
+    
+    def _cleanup_temp_files(self, media_list: List[MediaInfo]) -> None:
+        """
+        清理临时文件
+        
+        Args:
+            media_list: 媒体信息列表
+        """
+        for media_info in media_list:
+            if media_info.local_path and os.path.exists(media_info.local_path):
+                try:
+                    os.remove(media_info.local_path)
+                    logging.info(f"🗑️ 清理临时文件: {media_info.local_path}")
+                except Exception as e:
+                    logging.error(f"清理临时文件失败: {str(e)}")
+
+
+# 工厂函数
+def create_media_strategy_manager(bot: Bot) -> Tuple[MediaSendStrategyManager, MediaSender]:
+    """
+    创建媒体策略管理器和发送器
+    
+    Args:
+        bot: Telegram Bot实例
+        
+    Returns:
+        Tuple[MediaSendStrategyManager, MediaSender]: 策略管理器和发送器
+    """
+    # 检测是否使用本地API
+    use_local_api = False
+    if hasattr(bot, '_base_url') and bot._base_url:
+        use_local_api = "localhost" in bot._base_url or "127.0.0.1" in bot._base_url
+    
+    strategy_manager = MediaSendStrategyManager(use_local_api=use_local_api)
+    media_sender = MediaSender(bot, strategy_manager)
+    
+    logging.info(f"✅ 媒体策略系统初始化完成: 本地API={use_local_api}")
+    
+    return strategy_manager, media_sender 
