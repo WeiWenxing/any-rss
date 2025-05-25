@@ -1,7 +1,7 @@
 """
 RSS服务模块
 
-提供RSS/Feed订阅管理、消息发送和命令处理功能
+提供RSS/Feed订阅管理、消息发送、状态管理和定时任务调度功能
 """
 
 from .manager import RSSManager
@@ -13,10 +13,14 @@ from .message_sender import (
     send_text_message,
     calculate_balanced_batches
 )
+from .state_manager import FeedStateManager
+from .scheduler import RSSScheduler, run_scheduled_check
 
 __all__ = [
     # 管理器
     'RSSManager',
+    'FeedStateManager',
+    'RSSScheduler',
 
     # 命令处理
     'register_commands',
@@ -31,5 +35,8 @@ __all__ = [
     'extract_and_clean_images',
     'send_image_groups_with_caption',
     'send_text_message',
-    'calculate_balanced_batches'
+    'calculate_balanced_batches',
+
+    # 定时任务
+    'run_scheduled_check'
 ]

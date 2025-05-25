@@ -142,45 +142,14 @@ async def scheduled_task(token):
         logging.error(f"未找到token对应的bot实例: {token}")
         return
 
-    # 修改导入
-    from services.rss.commands import (
-        rss_manager,
-        send_update_notification,
-    )
+    # 导入服务模块
+    from services.rss.scheduler import run_scheduled_check
     from services.douyin.commands import douyin_manager, send_douyin_content
 
     while True:
         try:
-            # RSS订阅检查
-            feeds = rss_manager.get_feeds()
-            logging.info(f"定时任务开始检查RSS订阅源更新，共 {len(feeds)} 个订阅")
-
-            # 用于存储所有新增的条目
-            all_new_entries = []
-            for url, target_chat_id in feeds.items():
-                logging.info(f"正在检查RSS订阅源: {url} -> 频道: {target_chat_id}")
-
-                # 对于定时任务，我们直接调用download_and_parse_feed而不是add_feed
-                # 这样可以避免首次添加的特殊逻辑
-                success, error_msg, xml_content, new_entries = rss_manager.download_and_parse_feed(url)
-
-                if success:
-                    if new_entries:
-                        logging.info(f"RSS订阅源 {url} 发现 {len(new_entries)} 个新条目，正在发送通知到 {target_chat_id}")
-                        await send_update_notification(bot, url, new_entries, xml_content, target_chat_id)
-                        all_new_entries.extend(new_entries)
-                    else:
-                        logging.info(f"RSS订阅源 {url} 无新增内容")
-                elif "今天已经更新过此Feed" in error_msg:
-                    logging.info(f"RSS订阅源 {url} {error_msg}")
-                else:
-                    logging.warning(f"RSS订阅源 {url} 更新失败: {error_msg}")
-
-            # 如果有新增条目，记录日志
-            if all_new_entries:
-                logging.info(f"RSS定时任务完成，共发现 {len(all_new_entries)} 个新条目")
-            else:
-                logging.info("RSS定时任务完成，无新增内容")
+            # RSS订阅检查 - 使用新的调度器
+            await run_scheduled_check(bot)
 
             # 抖音订阅检查
             douyin_subscriptions = douyin_manager.get_subscriptions()
