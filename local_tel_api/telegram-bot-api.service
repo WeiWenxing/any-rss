@@ -5,15 +5,17 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
-Group=YOUR_USERNAME
-WorkingDirectory=/home/YOUR_USERNAME
-ExecStart=/home/YOUR_USERNAME/.local/bin/telegram-bot-api \
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LD_LIBRARY_PATH=/home/ubuntu/.local/lib:/usr/local/lib:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
+ExecStart=/home/ubuntu/.local/bin/telegram-bot-api \
     --api-id=YOUR_API_ID \
     --api-hash=YOUR_API_HASH \
     --local \
     --http-port=8081 \
-    --dir=/home/YOUR_USERNAME/telegram-bot-api-data \
+    --dir=/home/ubuntu/telegram-bot-api-data \
     --verbosity=2 \
     --max-webhook-connections=100000 \
     --max-connections=100000
@@ -22,12 +24,12 @@ ExecStart=/home/YOUR_USERNAME/.local/bin/telegram-bot-api \
 Restart=always
 RestartSec=10
 
-# 安全设置
+# 安全设置（放宽一些限制）
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/home/YOUR_USERNAME/telegram-bot-api-data
+PrivateTmp=false
+ProtectSystem=false
+ProtectHome=false
+ReadWritePaths=/home/ubuntu/telegram-bot-api-data
 
 # 日志设置
 StandardOutput=journal
