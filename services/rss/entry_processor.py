@@ -8,8 +8,8 @@ import re
 from datetime import datetime
 from telegram import Bot
 from .message_sender import (
-    extract_and_clean_images,
-    send_image_groups_with_caption,
+    extract_and_clean_media,
+    send_media_groups_with_caption,
     send_text_message
 )
 
@@ -120,19 +120,19 @@ async def send_entry_unified(
         author = entry_info.get('author', '')
         published_time = entry_info.get('published', '')
 
-        # 提取图片
-        images = extract_and_clean_images(content)
+        # 提取媒体
+        media_urls = extract_and_clean_media(content)
 
         # 根据消息类型决定发送模式
         if message_type == "auto":
             # 自动判断：≥2张图片为图片为主，<2张图片为文字为主
-            mode = "图片为主" if len(images) >= 2 else "文字为主"
+            mode = "媒体为主" if len(media_urls) >= 2 else "文字为主"
         elif message_type == "media":
-            mode = "图片为主"
+            mode = "媒体为主"
         else:  # message_type == "text"
             mode = "文字为主"
 
-        logging.info(f"条目发送模式: {mode} (图片数量: {len(images)}, 类型: {message_type})")
+        logging.info(f"条目发送模式: {mode} (媒体数量: {len(media_urls)}, 类型: {message_type})")
 
         # 发送分析信息（仅在调试模式下）
         if show_analysis:
@@ -145,7 +145,7 @@ async def send_entry_unified(
                 f"👤 作者: {author or '无'}\n"
                 f"🔗 链接: {link[:50]}{'...' if len(link) > 50 else ''}\n"
                 f"🕒 时间: {published_time or '无'}\n"
-                f"🖼️ 图片数量: {len(images)}\n"
+                f"🎬 媒体数量: {len(media_urls)}\n"
                 f"⚙️ 指定类型: {message_type}\n"
                 f"📊 实际模式: {mode}\n"
                 f"📝 内容长度: {len(content)} 字符\n"
@@ -155,31 +155,31 @@ async def send_entry_unified(
             await bot.send_message(chat_id=chat_id, text=analysis_info)
 
         # 根据模式发送消息
-        if mode == "图片为主" and images:
-            # 图片为主模式：发送媒体组
-            await send_image_groups_with_caption(bot, chat_id, title, author, images)
+        if mode == "媒体为主" and media_urls:
+            # 媒体为主模式：发送媒体组
+            await send_media_groups_with_caption(bot, chat_id, title, author, media_urls)
         else:
             # 文字为主模式
-            if images:
-                # 有图片：把图片链接放到文本消息开头，利用Telegram自动预览
-                logging.info(f"文字为主模式，有图片，将图片链接放到文本消息开头")
+            if media_urls:
+                # 有媒体：把媒体链接放到文本消息开头，利用Telegram自动预览
+                logging.info(f"文字为主模式，有媒体，将媒体链接放到文本消息开头")
 
-                # 格式化图片链接列表
-                image_links = []
-                for i, img_url in enumerate(images, 1):
+                # 格式化媒体链接列表
+                media_links = []
+                for i, media_url in enumerate(media_urls, 1):
                     if i == 1:
                         # 第一个链接不加序号，让Telegram自动预览
-                        image_links.append(img_url)
+                        media_links.append(media_url)
                     else:
                         # 后续链接添加序号
-                        image_links.append(f"{i}. {img_url}")
+                        media_links.append(f"{i}. {media_url}")
 
-                # 构建包含图片链接的完整文本消息
+                # 构建包含媒体链接的完整文本消息
                 message_parts = []
 
-                # 1. 图片链接放在最开头
-                image_section = "\n".join(image_links)
-                message_parts.append(image_section)
+                # 1. 媒体链接放在最开头
+                media_section = "\n".join(media_links)
+                message_parts.append(media_section)
 
                 # 2. 添加标题
                 if title:
@@ -194,8 +194,8 @@ async def send_entry_unified(
                     clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
                     clean_content = clean_content.replace('&quot;', '"').strip()
 
-                    # 限制内容长度（考虑图片链接占用的字符）
-                    used_chars = len(image_section) + len(title) + 50  # 预留空间
+                    # 限制内容长度（考虑媒体链接占用的字符）
+                    used_chars = len(media_section) + len(title) + 50  # 预留空间
                     remaining_chars = 4096 - used_chars  # Telegram消息总长度限制
                     max_content_length = min(500, remaining_chars - 100)  # 再预留一些空间
 
@@ -209,17 +209,17 @@ async def send_entry_unified(
                 if published_time:
                     message_parts.append(f"\n⏰ {published_time}")
 
-                # 5. 添加原文链接（如果有且不同于图片链接）
-                if link and link not in images:
+                # 5. 添加原文链接（如果有且不同于媒体链接）
+                if link and link not in media_urls:
                     message_parts.append(f"\n🔗 {link}")
 
-                # 发送包含图片链接的文本消息
+                # 发送包含媒体链接的文本消息
                 full_message = "".join(message_parts)
                 await bot.send_message(chat_id=chat_id, text=full_message)
-                logging.info(f"✅ 发送包含 {len(images)} 个图片链接的文本消息")
+                logging.info(f"✅ 发送包含 {len(media_urls)} 个媒体链接的文本消息")
             else:
-                # 没有图片：发送纯文字消息
-                logging.info(f"文字为主模式，无图片，发送纯文字消息")
+                # 没有媒体：发送纯文字消息
+                logging.info(f"文字为主模式，无媒体，发送纯文字消息")
                 await send_text_message(bot, chat_id, title, link, content, published_time)
 
         logging.info(f"✅ 条目发送完成: '{title}' ({mode})")
