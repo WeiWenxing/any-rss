@@ -24,6 +24,8 @@ from .media_strategy import (
 )
 from .state_manager import FeedStateManager
 from .scheduler import RSSScheduler, run_scheduled_check
+from .config import get_config, update_config, rss_config
+from .network_utils import get_network_manager, network_manager
 
 __all__ = [
     # 管理器
@@ -54,6 +56,15 @@ __all__ = [
     'MediaSendStrategyManager',
     'MediaSender',
     'create_media_strategy_manager',
+
+    # 配置管理
+    'get_config',
+    'update_config',
+    'rss_config',
+
+    # 网络工具
+    'get_network_manager',
+    'network_manager',
 
     # 定时任务
     'run_scheduled_check'

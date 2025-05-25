@@ -3,9 +3,9 @@ import logging
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
-import requests
 import feedparser
 import hashlib
+from .network_utils import get_network_manager
 
 
 class RSSManager:
@@ -87,14 +87,11 @@ class RSSManager:
                         pass # 继续执行下载逻辑
 
             # 下载新文件
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            }
-            response = requests.get(url, timeout=10, headers=headers)
-            response.raise_for_status() # 检查HTTP请求是否成功
+            network_manager = get_network_manager()
+            success, error_msg, xml_content = network_manager.download_feed(url, use_cache=False)
 
-            # 获取原始XML内容
-            xml_content = response.text
+            if not success:
+                return False, error_msg, None, []
 
             # 使用feedparser解析用于验证和比较
             feed_data = feedparser.parse(xml_content)
@@ -104,17 +101,17 @@ class RSSManager:
                 logging.warning(
                     f"Feed解析可能存在问题 for {url}: {feed_data.bozo_exception}"
                 )
-                # 如果是soft error，可以继续；如果是hard error，可能需要返回失败
-                if isinstance(
-                    feed_data.bozo_exception,
-                    (requests.exceptions.RequestException, Exception),
-                ):
-                     return (
-                        False,
-                        f"Feed解析失败或下载错误: {feed_data.bozo_exception}",
-                        None,
-                        [],
-                    )
+                # 如果是严重的解析错误，返回失败
+                if isinstance(feed_data.bozo_exception, Exception):
+                    # 对于XML解析错误等严重问题，返回失败
+                    error_type = type(feed_data.bozo_exception).__name__
+                    if error_type in ['XMLSyntaxError', 'ExpatError', 'SAXParseException']:
+                        return (
+                            False,
+                            f"Feed解析失败: {feed_data.bozo_exception}",
+                            None,
+                            [],
+                        )
 
             # 比较新旧条目
             new_entries = []
@@ -145,9 +142,6 @@ class RSSManager:
 
             return True, "", xml_content, new_entries  # 返回原始XML内容和新增条目
 
-        except requests.exceptions.RequestException as e:
-            logging.error(f"下载Feed失败: {url} 原因: {str(e)}", exc_info=True)
-            return False, f"下载失败: {str(e)}", None, []
         except Exception as e:
             logging.error(f"处理Feed失败: {url} 原因: {str(e)}", exc_info=True)
             return False, f"处理失败: {str(e)}", None, []

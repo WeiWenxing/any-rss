@@ -7,7 +7,6 @@ import logging
 import os
 import tempfile
 import asyncio
-import requests
 from pathlib import Path
 from urllib.parse import urlparse
 from telegram import Bot, InputMediaPhoto, InputMediaVideo, Update
@@ -15,6 +14,7 @@ from telegram.ext import ContextTypes
 
 from .entry_processor import extract_entry_info
 from .message_sender import extract_and_clean_media
+from .network_utils import get_network_manager
 
 
 async def debug_show_command(update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -146,36 +146,25 @@ async def download_media_file(url: str, media_type: str) -> str | None:
         temp_filename = f"telegram_media_{os.getpid()}_{id(url)}.{extension}"
         temp_path = os.path.join(temp_dir, temp_filename)
 
-        # 设置请求头（与message_sender.py保持一致）
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        }
-
-        # 下载文件
+        # 使用网络管理器下载文件
         logging.info(f"开始下载媒体文件: {url}")
-        response = requests.get(url, headers=headers, timeout=30, stream=True)
-        response.raise_for_status()
+        network_manager = get_network_manager()
+        success, error_msg = network_manager.download_media_file(url, temp_path)
 
-        # 检查文件大小
-        content_length = response.headers.get('content-length')
-        if content_length:
-            size_mb = int(content_length) / (1024 * 1024)
+        if success:
+            file_size = os.path.getsize(temp_path)
+            size_mb = file_size / (1024 * 1024)
             logging.info(f"媒体文件大小: {size_mb:.2f}MB")
 
             # Telegram文件大小限制检查
             if size_mb > 50:  # 50MB限制
                 logging.warning(f"文件过大 ({size_mb:.2f}MB)，可能上传失败")
 
-        # 写入文件
-        with open(temp_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-        file_size = os.path.getsize(temp_path)
-        logging.info(f"文件下载完成: {temp_path}, 大小: {file_size / (1024*1024):.2f}MB")
-
-        return temp_path
+            logging.info(f"文件下载完成: {temp_path}, 大小: {size_mb:.2f}MB")
+            return temp_path
+        else:
+            logging.error(f"下载媒体文件失败: {url}, 错误: {error_msg}")
+            return None
 
     except Exception as e:
         logging.error(f"下载媒体文件失败: {url}, 错误: {str(e)}", exc_info=True)
@@ -291,42 +280,22 @@ async def debug_media_info_command(update, context: ContextTypes.DEFAULT_TYPE) -
 
         # 检查媒体信息
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            }
-
-            response = requests.head(media_url, headers=headers, timeout=10, allow_redirects=True)
+            network_manager = get_network_manager()
+            accessible, error_msg, size_mb = network_manager.check_url_accessibility(media_url, use_cache=False)
 
             info_text = f"📊 媒体信息分析\n"
             info_text += f"🔗 URL: {media_url}\n"
-            info_text += f"📡 状态码: {response.status_code}\n"
 
-            if response.status_code == 200:
-                content_type = response.headers.get('content-type', 'Unknown')
-                content_length = response.headers.get('content-length')
+            if accessible:
+                info_text += f"📡 状态码: 200\n"
+                info_text += f"📏 大小: {size_mb:.2f}MB\n"
 
-                info_text += f"📄 类型: {content_type}\n"
-
-                if content_length:
-                    size_bytes = int(content_length)
-                    size_mb = size_bytes / (1024 * 1024)
-                    info_text += f"📏 大小: {size_mb:.2f}MB ({size_bytes:,} bytes)\n"
-
-                    if size_mb > 50:
-                        info_text += "⚠️ 警告: 超过Telegram 50MB限制\n"
-                else:
+                if size_mb > 50:
+                    info_text += "⚠️ 警告: 超过Telegram 50MB限制\n"
+                elif size_mb == 0:
                     info_text += "📏 大小: 未知\n"
-
-                # 显示重要的响应头
-                info_text += "\n📋 响应头:\n"
-                important_headers = ['content-type', 'content-length', 'server', 'cache-control', 'expires']
-                for header in important_headers:
-                    value = response.headers.get(header)
-                    if value:
-                        info_text += f"  {header}: {value}\n"
-
             else:
-                info_text += f"❌ 无法访问媒体文件\n"
+                info_text += f"❌ 无法访问: {error_msg}\n"
 
             await status_msg.edit_text(info_text)
 
@@ -563,17 +532,19 @@ async def debug_api_status_command(update, context: ContextTypes.DEFAULT_TYPE) -
             api_info += f"\n🔗 本地API连接测试:\n"
             logging.info(f"🔗 开始测试本地API连接: {api_base_url}")
             try:
-                import requests
                 test_url = f"{api_base_url}/"
                 logging.info(f"📡 发送请求到: {test_url}")
-                response = requests.get(test_url, timeout=5)
-                logging.info(f"📡 响应状态码: {response.status_code}")
-                if response.status_code == 200:
+
+                # 使用网络管理器进行连接测试
+                network_manager = get_network_manager()
+                accessible, error_msg, _ = network_manager.check_url_accessibility(test_url, use_cache=False)
+
+                if accessible:
                     api_info += "   ✅ 本地API服务器连接正常\n"
                     logging.info("✅ 本地API服务器连接测试成功")
                 else:
-                    api_info += f"   ❌ 本地API服务器响应异常: {response.status_code}\n"
-                    logging.warning(f"⚠️ 本地API服务器响应异常: {response.status_code}")
+                    api_info += f"   ❌ 本地API服务器连接失败: {error_msg}\n"
+                    logging.warning(f"⚠️ 本地API服务器连接失败: {error_msg}")
             except Exception as conn_error:
                 api_info += f"   ❌ 本地API服务器连接失败: {str(conn_error)}\n"
                 logging.error(f"❌ 本地API服务器连接失败: {str(conn_error)}")

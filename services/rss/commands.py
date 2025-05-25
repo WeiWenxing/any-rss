@@ -150,21 +150,9 @@ def register_commands(application: Application) -> None:
     application.add_handler(CommandHandler("news", news_command))
     application.add_handler(CommandHandler("show", show_command))  # 开发者调试命令
 
-    # 调试命令
-    from .debug_commands import (
-        debug_show_command,
-        debug_media_info_command,
-        debug_download_test_command,
-        debug_send_url_command,
-        debug_api_status_command,
-        debug_media_strategy_command
-    )
-    application.add_handler(CommandHandler("debug_show", debug_show_command))  # 调试版show命令
-    application.add_handler(CommandHandler("debug_media", debug_media_info_command))  # 媒体信息检查
-    application.add_handler(CommandHandler("debug_download", debug_download_test_command))  # 下载测试
-    application.add_handler(CommandHandler("debug_send_url", debug_send_url_command))  # 直接URL发送
-    application.add_handler(CommandHandler("debug_api", debug_api_status_command))  # API状态检查
-    application.add_handler(CommandHandler("debug_media_strategy", debug_media_strategy_command))  # 媒体策略测试
+    # 注册调试命令
+    from .debug_commands import register_debug_commands
+    register_debug_commands(application)
 
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
