@@ -7,4 +7,4 @@
 from .manager import DouyinManager
 from .commands import register_douyin_commands
 
-__all__ = ['DouyinManager', 'register_douyin_commands'] 
+__all__ = ['DouyinManager', 'register_douyin_commands']
