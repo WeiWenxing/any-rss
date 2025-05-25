@@ -506,70 +506,93 @@ async def debug_api_status_command(update, context: ContextTypes.DEFAULT_TYPE) -
 
         # 获取Bot实例信息
         bot = context.bot
+        logging.info(f"🤖 获取到Bot实例: {type(bot)}")
 
         # 检查Bot API配置
         api_info = "🔍 Bot API 配置信息\n\n"
 
         # 获取base_url信息
+        logging.info("🔍 检查Bot的base_url属性...")
         if hasattr(bot, '_base_url'):
             base_url = bot._base_url
+            logging.info(f"📍 Bot._base_url = {base_url}")
             api_info += f"📍 API地址: {base_url}\n"
 
             if "localhost" in base_url or "127.0.0.1" in base_url:
+                logging.info("🏠 检测到使用本地Bot API服务器")
                 api_info += "🏠 使用本地Bot API服务器\n"
                 api_info += "✅ 支持2GB大文件上传\n"
             else:
+                logging.info("🌐 检测到使用官方Bot API服务器")
                 api_info += "🌐 使用官方Bot API服务器\n"
                 api_info += "⚠️ 文件大小限制50MB\n"
         else:
+            logging.info("❌ Bot没有_base_url属性，使用默认官方API")
             api_info += "📍 API地址: 官方API (默认)\n"
             api_info += "🌐 使用官方Bot API服务器\n"
             api_info += "⚠️ 文件大小限制50MB\n"
 
         # 获取file_url信息
+        logging.info("🔍 检查Bot的base_file_url属性...")
         if hasattr(bot, '_base_file_url'):
             base_file_url = bot._base_file_url
+            logging.info(f"📁 Bot._base_file_url = {base_file_url}")
             api_info += f"📁 文件地址: {base_file_url}\n"
         else:
+            logging.info("❌ Bot没有_base_file_url属性，使用默认官方文件API")
             api_info += "📁 文件地址: 官方文件API (默认)\n"
 
         # 检查环境配置
+        logging.info("🔍 检查环境配置...")
         from core.config import telegram_config
         api_base_url = telegram_config.get("api_base_url")
+        logging.info(f"🔧 telegram_config.api_base_url = {api_base_url}")
 
         api_info += f"\n🔧 环境配置:\n"
         if api_base_url:
             api_info += f"   TELEGRAM_API_BASE_URL: {api_base_url}\n"
             api_info += "   ✅ 已配置本地API\n"
+            logging.info("✅ 环境变量已配置本地API")
         else:
             api_info += "   TELEGRAM_API_BASE_URL: 未设置\n"
             api_info += "   ❌ 未配置本地API\n"
+            logging.info("❌ 环境变量未配置本地API")
 
         # 测试本地API连接（如果配置了）
         if api_base_url:
             api_info += f"\n🔗 本地API连接测试:\n"
+            logging.info(f"🔗 开始测试本地API连接: {api_base_url}")
             try:
                 import requests
                 test_url = f"{api_base_url}/"
+                logging.info(f"📡 发送请求到: {test_url}")
                 response = requests.get(test_url, timeout=5)
+                logging.info(f"📡 响应状态码: {response.status_code}")
                 if response.status_code == 200:
                     api_info += "   ✅ 本地API服务器连接正常\n"
+                    logging.info("✅ 本地API服务器连接测试成功")
                 else:
                     api_info += f"   ❌ 本地API服务器响应异常: {response.status_code}\n"
+                    logging.warning(f"⚠️ 本地API服务器响应异常: {response.status_code}")
             except Exception as conn_error:
                 api_info += f"   ❌ 本地API服务器连接失败: {str(conn_error)}\n"
+                logging.error(f"❌ 本地API服务器连接失败: {str(conn_error)}")
 
         # 获取Bot信息
+        logging.info("🤖 获取Bot基本信息...")
         try:
             bot_info = await bot.get_me()
+            logging.info(f"🤖 Bot信息获取成功: @{bot_info.username} (ID: {bot_info.id})")
             api_info += f"\n🤖 Bot信息:\n"
             api_info += f"   用户名: @{bot_info.username}\n"
             api_info += f"   ID: {bot_info.id}\n"
             api_info += f"   名称: {bot_info.first_name}\n"
         except Exception as bot_error:
             api_info += f"\n❌ 获取Bot信息失败: {str(bot_error)}\n"
+            logging.error(f"❌ 获取Bot信息失败: {str(bot_error)}")
 
         # 发送信息
+        logging.info("📤 发送API状态信息...")
         await update.message.reply_text(api_info, disable_web_page_preview=True)
         logging.info("✅ API状态信息发送成功")
 
