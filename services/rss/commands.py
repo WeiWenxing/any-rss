@@ -606,9 +606,16 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "  - auto: 自动判断 (默认)\n"
             "  - text: 强制文字为主模式\n"
             "  - media: 强制图片为主模式\n\n"
+            "支持格式：\n"
+            "• RSS 2.0: <item>...</item>\n"
+            "• Atom 1.0: <entry>...</entry>\n\n"
             "示例：\n"
-            "/show <item><title>标题</title><description>描述</description></item>\n"
-            "/show text <item><title>标题</title></item>\n"
+            "RSS格式：\n"
+            "/show <item><title>标题</title><description>描述</description></item>\n\n"
+            "Atom格式：\n"
+            "/show <entry><title>标题</title><content>内容</content></entry>\n\n"
+            "强制模式：\n"
+            "/show text <entry><title>标题</title></entry>\n"
             "/show media <item><title>标题</title></item>"
         )
         return
@@ -657,9 +664,16 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     try:
-        # 如果没有包含<item>标签，自动添加
-        if not item_xml.strip().startswith('<item'):
+        # 智能识别并处理RSS和Atom格式
+        item_xml_stripped = item_xml.strip()
+
+        # 检查是否已经是完整的条目标签
+        if not (item_xml_stripped.startswith('<item') or item_xml_stripped.startswith('<entry')):
+            # 如果没有条目标签，默认包装为item标签（保持向后兼容）
             item_xml = f"<item>{item_xml}</item>"
+            logging.info("自动包装为RSS item标签")
+        else:
+            logging.info(f"检测到完整的条目标签: {item_xml_stripped[:20]}...")
 
         # 添加调试日志
         logging.info(f"SHOW命令接收到的XML内容长度: {len(item_xml)} 字符")
@@ -700,30 +714,50 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if soup.title:
             mock_entry['title'] = soup.title.get_text().strip()
 
-        # 提取描述（保留HTML格式，因为后续处理会解析）
-        if soup.description:
-            # 获取description标签的内部HTML内容
-            desc_content = soup.description.decode_contents() if soup.description.contents else soup.description.get_text()
+        # 提取描述（支持RSS的description和Atom的content）
+        # 优先使用content标签（Atom格式），其次使用description标签（RSS格式）
+        content_tag = soup.find('content') or soup.find('description')
+        if content_tag:
+            # 获取标签的内部HTML内容
+            desc_content = content_tag.decode_contents() if content_tag.contents else content_tag.get_text()
             mock_entry['description'] = desc_content.strip()
             mock_entry['summary'] = mock_entry['description']
 
-        # 提取链接
-        if soup.link:
-            mock_entry['link'] = soup.link.get_text().strip()
+        # 提取链接（支持Atom的link标签和RSS的link标签）
+        link_tag = soup.find('link')
+        if link_tag:
+            # Atom格式的link标签可能有href属性
+            if link_tag.get('href'):
+                mock_entry['link'] = link_tag.get('href').strip()
+            # RSS格式的link标签直接包含URL文本
+            elif link_tag.get_text():
+                mock_entry['link'] = link_tag.get_text().strip()
 
         # 提取发布时间（支持多种格式）
-        pubdate_tag = soup.find('pubDate') or soup.find('pubdate') or soup.find('published')
+        # RSS: pubDate, Atom: published, updated
+        pubdate_tag = (soup.find('pubDate') or soup.find('pubdate') or
+                      soup.find('published') or soup.find('updated'))
         if pubdate_tag:
             mock_entry['published'] = pubdate_tag.get_text().strip()
 
-        # 提取作者
-        if soup.author:
-            mock_entry['author'] = soup.author.get_text().strip()
+        # 提取作者（支持Atom的author/name和RSS的author）
+        author_tag = soup.find('author')
+        if author_tag:
+            # Atom格式可能有name子标签
+            name_tag = author_tag.find('name')
+            if name_tag:
+                mock_entry['author'] = name_tag.get_text().strip()
+            else:
+                mock_entry['author'] = author_tag.get_text().strip()
 
-        # 提取GUID
-        if soup.guid:
-            mock_entry['id'] = soup.guid.get_text().strip()
+        # 提取ID（支持Atom的id和RSS的guid）
+        id_tag = soup.find('id') or soup.find('guid')
+        if id_tag:
+            mock_entry['id'] = id_tag.get_text().strip()
 
+        # 检测格式类型
+        format_type = "Atom" if item_xml_stripped.startswith('<entry') else "RSS"
+        logging.info(f"检测到格式类型: {format_type}")
         logging.info(f"BeautifulSoup解析成功，提取到标题: {mock_entry['title']}")
 
         # 提取图片数量用于分析
@@ -758,8 +792,11 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         analysis_message = (
             f"🔧 SHOW命令分析结果：\n"
             f"------------------------------------\n"
+            f"📋 格式类型: {format_type}\n"
             f"📰 标题: {mock_entry['title']}\n"
             f"👤 作者: {mock_entry.get('author', '无')}\n"
+            f"🔗 链接: {mock_entry.get('link', '无')[:50]}{'...' if len(mock_entry.get('link', '')) > 50 else ''}\n"
+            f"🕒 时间: {mock_entry.get('published', '无')}\n"
             f"🖼️ 图片数量: {len(images)}\n"
             f"⚙️ 指定类型: {message_type}\n"
             f"📊 实际模式: {mode} ({mode_reason})\n"

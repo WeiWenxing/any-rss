@@ -213,12 +213,19 @@ project/
 
 # 强制图片为主模式
 /show media <item><title>标题</title><description>内容</description></item>
+
+# Atom格式支持
+/show <entry><title>标题</title><content>内容</content></entry>
 ```
 
 **type参数说明：**
 - `auto` - 自动判断（≥2张图片为图片为主，<2张图片为文字为主）
 - `text` - 强制文字为主模式
 - `media` - 强制图片为主模式
+
+**支持的格式：**
+- `RSS 2.0` - 使用`<item>`标签，内容字段为`<description>`
+- `Atom 1.0` - 使用`<entry>`标签，内容字段为`<content>`
 
 ### 消息格式说明
 
