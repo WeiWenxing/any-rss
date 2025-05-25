@@ -222,6 +222,170 @@ async def send_image_groups_with_caption(
     logging.info(f"✅ 图片组发送完成: 共 {total_batches} 批，{len(images)} 张图片")
 
 
+def extract_entry_info(entry_data, is_feedparser_entry=True):
+    """
+    统一的条目信息提取函数
+
+    Args:
+        entry_data: 条目数据（可以是feedparser的entry对象或字典）
+        is_feedparser_entry: 是否为feedparser解析的entry对象
+
+    Returns:
+        dict: 标准化的条目信息
+    """
+    try:
+        if is_feedparser_entry:
+            # feedparser解析的entry对象
+            entry_info = {
+                'title': entry_data.get('title', '无标题').strip(),
+                'link': entry_data.get('link', '').strip(),
+                'summary': entry_data.get('summary', '').strip(),
+                'description': entry_data.get('description', '').strip(),
+                'author': entry_data.get('author', '').strip(),
+                'id': entry_data.get('id', '').strip(),
+                'published': '',
+                'content': ''
+            }
+
+            # 获取发布时间
+            if hasattr(entry_data, 'published_parsed') and entry_data.published_parsed:
+                try:
+                    pub_time = datetime.fromtimestamp(time.mktime(entry_data.published_parsed))
+                    entry_info['published'] = pub_time.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            elif entry_data.get('published'):
+                entry_info['published'] = entry_data.get('published', '')[:16]
+
+        else:
+            # 手动解析的字典（如show命令）
+            entry_info = {
+                'title': entry_data.get('title', '无标题').strip(),
+                'link': entry_data.get('link', '').strip(),
+                'summary': entry_data.get('summary', '').strip(),
+                'description': entry_data.get('description', '').strip(),
+                'author': entry_data.get('author', '').strip(),
+                'id': entry_data.get('id', '').strip(),
+                'published': entry_data.get('published', '').strip(),
+                'content': ''
+            }
+
+        # 选择描述内容（优先使用description，其次summary）
+        entry_info['content'] = entry_info['description'] if entry_info['description'] else entry_info['summary']
+
+        logging.debug(f"提取条目信息完成: {entry_info['title']}")
+        return entry_info
+
+    except Exception as e:
+        logging.error(f"提取条目信息失败: {str(e)}")
+        return {
+            'title': '无标题',
+            'link': '',
+            'summary': '',
+            'description': '',
+            'author': '',
+            'id': '',
+            'published': '',
+            'content': ''
+        }
+
+
+async def send_entry_unified(
+    bot: Bot,
+    chat_id: str,
+    entry_info: dict,
+    message_type: str = "auto",
+    show_analysis: bool = False
+) -> None:
+    """
+    统一的条目发送函数，支持自动判断和强制模式
+
+    Args:
+        bot: Telegram Bot实例
+        chat_id: 目标聊天ID
+        entry_info: 标准化的条目信息字典
+        message_type: 消息类型 ("auto", "text", "media")
+        show_analysis: 是否显示分析信息（用于show命令）
+    """
+    try:
+        title = entry_info['title']
+        link = entry_info['link']
+        content = entry_info['content']
+        published_time = entry_info['published']
+        author = entry_info['author']
+
+        logging.info(f"开始发送条目: '{title}'")
+
+        # 使用公共函数提取图片
+        images = extract_and_clean_images(content)
+
+        # 根据message_type参数决定消息模式
+        if message_type == "auto":
+            # 自动判断模式
+            is_image_focused = len(images) >= 2
+            mode = "图片为主" if is_image_focused else "文字为主"
+            mode_reason = f"自动判断({len(images)}张图片)"
+        elif message_type == "text":
+            # 强制文字为主模式
+            is_image_focused = False
+            mode = "文字为主"
+            mode_reason = "强制指定"
+        elif message_type == "media":
+            # 强制图片为主模式
+            is_image_focused = True
+            mode = "图片为主"
+            mode_reason = "强制指定"
+        else:
+            # 默认自动判断
+            is_image_focused = len(images) >= 2
+            mode = "图片为主" if is_image_focused else "文字为主"
+            mode_reason = f"默认判断({len(images)}张图片)"
+
+        logging.info(f"条目模式判断: {len(images)}张图片 -> {mode}模式 ({mode_reason})")
+
+        # 如果需要显示分析信息（show命令专用）
+        if show_analysis:
+            analysis_message = (
+                f"🔧 SHOW命令分析结果：\n"
+                f"------------------------------------\n"
+                f"📰 标题: {title}\n"
+                f"👤 作者: {author or '无'}\n"
+                f"🔗 链接: {link[:50]}{'...' if len(link) > 50 else ''}\n"
+                f"🕒 时间: {published_time or '无'}\n"
+                f"🖼️ 图片数量: {len(images)}\n"
+                f"⚙️ 指定类型: {message_type}\n"
+                f"📊 实际模式: {mode} ({mode_reason})\n"
+                f"------------------------------------\n"
+                f"正在发送实际消息..."
+            )
+            # 这里需要从外部传入update对象，暂时先用bot发送
+            await bot.send_message(chat_id=chat_id, text=analysis_message)
+
+        # 根据模式发送消息
+        if is_image_focused:
+            # 图片为主模式：只发送图片组（带简洁caption）
+            if images:
+                await send_image_groups_with_caption(bot, chat_id, title, author, images)
+            else:
+                # 如果强制指定media模式但没有图片，发送提示
+                if message_type == "media":
+                    await bot.send_message(chat_id=chat_id, text="⚠️ 强制指定图片为主模式，但未找到图片内容")
+        else:
+            # 文字为主模式：先发送文字消息，再发送图片组
+            await send_text_message(bot, chat_id, title, link, content, published_time)
+
+            # 如果有图片，发送图片组（带简洁caption）
+            if images:
+                await asyncio.sleep(3)  # 延迟避免flood control
+                await send_image_groups_with_caption(bot, chat_id, title, author, images)
+
+        logging.info(f"✅ 条目发送完成: '{title}' ({mode})")
+
+    except Exception as e:
+        logging.error(f"❌ 发送条目失败: '{entry_info.get('title', 'Unknown')}', 错误: {str(e)}")
+        raise
+
+
 async def send_entry_with_media(
     bot: Bot,
     chat_id: str,
@@ -231,6 +395,7 @@ async def send_entry_with_media(
 ) -> None:
     """
     发送单个条目，智能判断图片为主还是文字为主
+    （重构后的版本，使用统一的发送函数）
 
     Args:
         bot: Telegram Bot实例
@@ -240,51 +405,13 @@ async def send_entry_with_media(
         total_count: 总条目数（仅用于日志）
     """
     try:
-        # 提取基本信息
-        entry_title = entry.get('title', '无标题').strip()
-        entry_link = entry.get('link', '').strip()
-        entry_summary = entry.get('summary', '').strip()
-        entry_description = entry.get('description', '').strip()
-        entry_author = entry.get('author', '').strip()
+        logging.info(f"处理条目 {current_index}/{total_count}: '{entry.get('title', 'Unknown')}'")
 
-        logging.info(f"处理条目 {current_index}/{total_count}: '{entry_title}'")
+        # 使用统一的条目信息提取函数
+        entry_info = extract_entry_info(entry, is_feedparser_entry=True)
 
-        # 获取发布时间
-        published_time = ""
-        if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            try:
-                pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                published_time = pub_time.strftime("%Y-%m-%d %H:%M")
-            except:
-                pass
-        elif entry.get('published'):
-            published_time = entry.get('published', '')[:16]
-
-        # 选择描述内容（优先使用description，其次summary）
-        content = entry_description if entry_description else entry_summary
-
-        # 使用公共函数提取图片
-        images = extract_and_clean_images(content)
-
-        # 判断是图片为主还是文字为主
-        is_image_focused = len(images) >= 2
-        mode = "图片为主" if is_image_focused else "文字为主"
-
-        logging.info(f"条目模式判断: {len(images)}张图片 -> {mode}模式")
-
-        if is_image_focused:
-            # 图片为主模式：只发送图片组（带简洁caption）
-            await send_image_groups_with_caption(bot, chat_id, entry_title, entry_author, images)
-        else:
-            # 文字为主模式：先发送文字消息，再发送图片组
-            await send_text_message(bot, chat_id, entry_title, entry_link, content, published_time)
-
-            # 如果有图片，发送图片组（带简洁caption）
-            if images:
-                await asyncio.sleep(3)  # 延迟避免flood control
-                await send_image_groups_with_caption(bot, chat_id, entry_title, entry_author, images)
-
-        logging.info(f"✅ 条目发送完成: '{entry_title}' ({mode})")
+        # 使用统一的发送函数
+        await send_entry_unified(bot, chat_id, entry_info, message_type="auto", show_analysis=False)
 
     except Exception as e:
         logging.error(f"❌ 发送条目失败: '{entry.get('title', 'Unknown')}', 错误: {str(e)}")
@@ -760,11 +887,59 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logging.info(f"检测到格式类型: {format_type}")
         logging.info(f"BeautifulSoup解析成功，提取到标题: {mock_entry['title']}")
 
-        # 提取图片数量用于分析
-        content = mock_entry.get('description', '') or mock_entry.get('summary', '')
+        # 使用统一的条目信息提取函数（手动解析模式）
+        entry_info = extract_entry_info(mock_entry, is_feedparser_entry=False)
+
+        # 添加格式类型到entry_info中
+        entry_info['format_type'] = format_type
+
+        # 使用统一的发送函数，并显示分析信息
+        await send_entry_unified_with_analysis(
+            context.bot,
+            chat_id,
+            entry_info,
+            message_type=message_type,
+            update=update
+        )
+
+        logging.info(f"SHOW命令执行成功，已发送条目: {entry_info.get('title', 'Unknown')}, 模式: {message_type}")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
+        logging.error(f"SHOW命令执行失败: {str(e)}", exc_info=True)
+
+
+async def send_entry_unified_with_analysis(
+    bot: Bot,
+    chat_id: str,
+    entry_info: dict,
+    message_type: str = "auto",
+    update: Update = None
+) -> None:
+    """
+    带分析信息的统一条目发送函数（专用于show命令）
+
+    Args:
+        bot: Telegram Bot实例
+        chat_id: 目标聊天ID
+        entry_info: 标准化的条目信息字典
+        message_type: 消息类型 ("auto", "text", "media")
+        update: Update对象（用于回复消息）
+    """
+    try:
+        title = entry_info['title']
+        link = entry_info['link']
+        content = entry_info['content']
+        published_time = entry_info['published']
+        author = entry_info['author']
+        format_type = entry_info.get('format_type', 'Unknown')
+
+        logging.info(f"开始发送条目: '{title}'")
+
+        # 使用公共函数提取图片
         images = extract_and_clean_images(content)
 
-        # 根据type参数决定消息模式
+        # 根据message_type参数决定消息模式
         if message_type == "auto":
             # 自动判断模式
             is_image_focused = len(images) >= 2
@@ -781,7 +956,7 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             mode = "图片为主"
             mode_reason = "强制指定"
         else:
-            # 不应该到达这里，但作为保险
+            # 默认自动判断
             is_image_focused = len(images) >= 2
             mode = "图片为主" if is_image_focused else "文字为主"
             mode_reason = f"默认判断({len(images)}张图片)"
@@ -793,17 +968,21 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"🔧 SHOW命令分析结果：\n"
             f"------------------------------------\n"
             f"📋 格式类型: {format_type}\n"
-            f"📰 标题: {mock_entry['title']}\n"
-            f"👤 作者: {mock_entry.get('author', '无')}\n"
-            f"🔗 链接: {mock_entry.get('link', '无')[:50]}{'...' if len(mock_entry.get('link', '')) > 50 else ''}\n"
-            f"🕒 时间: {mock_entry.get('published', '无')}\n"
+            f"📰 标题: {title}\n"
+            f"👤 作者: {author or '无'}\n"
+            f"🔗 链接: {link[:50]}{'...' if len(link) > 50 else ''}\n"
+            f"🕒 时间: {published_time or '无'}\n"
             f"🖼️ 图片数量: {len(images)}\n"
             f"⚙️ 指定类型: {message_type}\n"
             f"📊 实际模式: {mode} ({mode_reason})\n"
             f"------------------------------------\n"
             f"正在发送实际消息..."
         )
-        await update.message.reply_text(analysis_message)
+
+        if update:
+            await update.message.reply_text(analysis_message)
+        else:
+            await bot.send_message(chat_id=chat_id, text=analysis_message)
 
         # 根据模式发送消息
         logging.info(f"SHOW命令开始发送消息，模式: {mode}")
@@ -811,90 +990,25 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if is_image_focused:
             # 图片为主模式：只发送图片组（带简洁caption）
             if images:
-                await send_image_groups_with_caption(context.bot, chat_id, mock_entry['title'], mock_entry['author'], images)
+                await send_image_groups_with_caption(bot, chat_id, title, author, images)
             else:
                 # 如果强制指定media模式但没有图片，发送提示
-                await update.message.reply_text("⚠️ 强制指定图片为主模式，但未找到图片内容")
+                if message_type == "media":
+                    if update:
+                        await update.message.reply_text("⚠️ 强制指定图片为主模式，但未找到图片内容")
+                    else:
+                        await bot.send_message(chat_id=chat_id, text="⚠️ 强制指定图片为主模式，但未找到图片内容")
         else:
             # 文字为主模式：先发送文字消息，再发送图片组
-            await send_text_message(context.bot, chat_id, mock_entry['title'], mock_entry['link'], content, mock_entry.get('published', ''))
+            await send_text_message(bot, chat_id, title, link, content, published_time)
 
             # 如果有图片，发送图片组（带简洁caption）
             if images:
                 await asyncio.sleep(3)  # 延迟避免flood control
-                await send_image_groups_with_caption(context.bot, chat_id, mock_entry['title'], mock_entry['author'], images)
+                await send_image_groups_with_caption(bot, chat_id, title, author, images)
 
-        logging.info(f"SHOW命令执行成功，已发送条目: {mock_entry.get('title', 'Unknown')}, 图片数量: {len(images)}, 模式: {mode}")
+        logging.info(f"✅ SHOW命令条目发送完成: '{title}' ({mode})")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
-        logging.error(f"SHOW命令执行失败: {str(e)}", exc_info=True)
-
-
-async def format_entry_message(entry: dict, current_index: int, total_count: int) -> str:
-    """
-    格式化单个条目消息
-
-    Args:
-        entry: 条目数据字典
-        current_index: 当前条目序号
-        total_count: 总条目数
-
-    Returns:
-        str: 格式化后的消息文本
-    """
-    # 构造详细的条目消息
-    entry_title = entry.get('title', '无标题').strip()
-    entry_link = entry.get('link', '').strip()
-    entry_summary = entry.get('summary', '').strip()
-    entry_description = entry.get('description', '').strip()
-
-    # 获取发布时间
-    published_time = ""
-    if hasattr(entry, 'published_parsed') and entry.published_parsed:
-        try:
-            pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-            published_time = pub_time.strftime("%Y-%m-%d %H:%M")
-        except:
-            pass
-    elif entry.get('published'):
-        published_time = entry.get('published', '')[:16]  # 截取前16个字符
-
-    # 选择描述内容（优先使用description，其次summary）
-    content = entry_description if entry_description else entry_summary
-
-    # 构建消息（时间在顶部）
-    entry_message = f"🕒 {published_time}\n" if published_time else ""
-    entry_message += f"📰 {entry_title}\n"
-
-    if entry_link:
-        entry_message += f"🔗 {entry_link}\n"
-
-    if content:
-        # 提取图片链接
-        img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-        images = re.findall(img_pattern, content, re.IGNORECASE)
-
-        # 移除HTML标签但保留文本内容
-        clean_content = re.sub(r'<[^>]+>', '', content)
-        clean_content = clean_content.replace('&nbsp;', ' ').replace('&amp;', '&')
-        clean_content = clean_content.replace('&lt;', '<').replace('&gt;', '>')
-        clean_content = clean_content.replace('&quot;', '"').strip()
-
-        # 限制内容长度
-        if len(clean_content) > 500:
-            clean_content = clean_content[:500] + "..."
-
-        if clean_content:
-            entry_message += f"\n📝 {clean_content}\n"
-
-        # 添加图片链接
-        if images:
-            entry_message += f"\n🖼️ 图片:\n"
-            for img_url in images[:3]:  # 最多显示3张图片
-                entry_message += f"• {img_url}\n"
-
-    # 添加序号信息
-    entry_message += f"\n📊 {current_index}/{total_count}"
-
-    return entry_message
+        logging.error(f"❌ SHOW命令发送条目失败: '{entry_info.get('title', 'Unknown')}', 错误: {str(e)}")
+        raise
