@@ -78,7 +78,7 @@ class DouyinFetcher:
             return True, "", content_data
             
         except requests.exceptions.RequestException as e:
-            logging.error(f"请求抖音API失败: {douyin_url}, 错误: {str(e)}")
+            logging.error(f"请求抖音API失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
             return False, f"网络请求失败: {str(e)}", None
         except Exception as e:
             logging.error(f"获取抖音内容失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
@@ -117,7 +117,7 @@ class DouyinFetcher:
             return True, ""
             
         except requests.exceptions.RequestException as e:
-            logging.error(f"下载媒体文件失败: {media_url}, 错误: {str(e)}")
+            logging.error(f"下载媒体文件失败: {media_url}, 错误: {str(e)}", exc_info=True)
             return False, f"下载失败: {str(e)}"
         except Exception as e:
             logging.error(f"保存媒体文件失败: {save_path}, 错误: {str(e)}", exc_info=True)

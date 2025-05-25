@@ -11,19 +11,20 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 
-def extract_and_clean_media(content: str) -> list[str]:
+def extract_and_clean_media(content: str) -> list[dict]:
     """
-    提取并清理媒体URL（包括图片和视频）
+    提取并清理媒体URL（包括图片和视频），返回包含类型信息的媒体列表
 
     Args:
         content: HTML内容
 
     Returns:
-        list[str]: 清理后的有效媒体URL列表
+        list[dict]: 媒体信息列表，每个元素包含 {'url': str, 'type': str}
+                   type 可能是 'image' 或 'video'
     """
-    media_urls = []
+    media_list = []
     if not content:
-        return media_urls
+        return media_list
 
     # 提取图片URL
     img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
@@ -35,39 +36,45 @@ def extract_and_clean_media(content: str) -> list[str]:
     raw_videos = re.findall(video_pattern, content, re.IGNORECASE)
     logging.info(f"提取到 {len(raw_videos)} 个原始视频")
 
-    # 合并所有媒体URL
-    all_media = raw_images + raw_videos
-
-    # 清理和验证媒体URL
-    for media_url in all_media:
+    # 处理图片
+    for img_url in raw_images:
         # 清理HTML实体编码
-        clean_url = media_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        clean_url = img_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
         clean_url = clean_url.replace('&quot;', '"').strip()
 
         # 过滤掉明显的小图标和装饰图片
         if any(keyword in clean_url.lower() for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button']):
-            logging.debug(f"过滤装饰媒体: {clean_url}")
+            logging.debug(f"过滤装饰图片: {clean_url}")
             continue
 
         # 验证URL格式
         if clean_url.startswith(('http://', 'https://')):
-            media_urls.append(clean_url)
-            # 判断媒体类型用于日志
-            if media_url in raw_images:
-                logging.debug(f"添加有效图片: {clean_url}")
-            else:
-                logging.debug(f"添加有效视频: {clean_url}")
+            media_list.append({'url': clean_url, 'type': 'image'})
+            logging.debug(f"添加有效图片: {clean_url}")
         else:
-            logging.warning(f"跳过无效媒体URL: {clean_url}")
+            logging.warning(f"跳过无效图片URL: {clean_url}")
 
-    logging.info(f"清理后有效媒体数量: {len(media_urls)} (图片: {len(raw_images)}, 视频: {len(raw_videos)})")
+    # 处理视频
+    for video_url in raw_videos:
+        # 清理HTML实体编码
+        clean_url = video_url.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        clean_url = clean_url.replace('&quot;', '"').strip()
+
+        # 验证URL格式
+        if clean_url.startswith(('http://', 'https://')):
+            media_list.append({'url': clean_url, 'type': 'video'})
+            logging.debug(f"添加有效视频: {clean_url}")
+        else:
+            logging.warning(f"跳过无效视频URL: {clean_url}")
+
+    logging.info(f"清理后有效媒体数量: {len(media_list)} (图片: {len(raw_images)}, 视频: {len(raw_videos)})")
 
     # 记录前几个媒体URL用于调试
-    for i, media_url in enumerate(media_urls[:3], 1):
-        media_type = "图片" if media_url in [img.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').strip() for img in raw_images] else "视频"
-        logging.info(f"媒体{i}({media_type}): {media_url}")
+    for i, media_info in enumerate(media_list[:3], 1):
+        media_type = "图片" if media_info['type'] == 'image' else "视频"
+        logging.info(f"媒体{i}({media_type}): {media_info['url']}")
 
-    return media_urls
+    return media_list
 
 
 def calculate_balanced_batches(total_images: int, max_per_batch: int = 10) -> list[int]:
@@ -108,7 +115,7 @@ async def send_media_groups_with_caption(
     chat_id: str,
     title: str,
     author: str,
-    media_urls: list[str],
+    media_list: list[dict],
     full_caption: str = None
 ) -> None:
     """
@@ -121,10 +128,13 @@ async def send_media_groups_with_caption(
         chat_id: 目标聊天ID
         title: 标题
         author: 作者
-        media_urls: 媒体URL列表（图片和视频）
+        media_list: 媒体信息列表，每个元素包含 {'url': str, 'type': str}
         full_caption: 完整的caption内容（可选，如果提供则使用完整格式）
+
+    Raises:
+        MediaAccessError: 当媒体无法访问时抛出，调用方可以降级到文字模式
     """
-    if not media_urls:
+    if not media_list:
         logging.warning("send_media_groups_with_caption: 没有媒体可发送")
         return
 
@@ -132,7 +142,7 @@ async def send_media_groups_with_caption(
     use_full_caption = full_caption is not None
 
     if use_full_caption:
-        logging.info(f"开始发送带完整caption的媒体组: 媒体数量={len(media_urls)}, caption长度={len(full_caption)}")
+        logging.info(f"开始发送带完整caption的媒体组: 媒体数量={len(media_list)}, caption长度={len(full_caption)}")
 
         # 确保caption不超过Telegram限制（1024字符）
         max_caption_length = 1024
@@ -140,7 +150,7 @@ async def send_media_groups_with_caption(
             full_caption = full_caption[:max_caption_length-3] + "..."
             logging.info(f"Caption过长已截断到 {len(full_caption)} 字符")
     else:
-        logging.info(f"开始发送媒体组: 标题='{title}', 作者='{author}', 媒体数量={len(media_urls)}")
+        logging.info(f"开始发送媒体组: 标题='{title}', 作者='{author}', 媒体数量={len(media_list)}")
 
         # 截断标题（Telegram caption限制1024字符）
         max_title_length = 100
@@ -150,16 +160,20 @@ async def send_media_groups_with_caption(
             logging.info(f"标题过长已截断: '{original_title}' -> '{title}'")
 
     # 计算均衡的分批方案
-    batch_sizes = calculate_balanced_batches(len(media_urls), max_per_batch=10)
+    batch_sizes = calculate_balanced_batches(len(media_list), max_per_batch=10)
     total_batches = len(batch_sizes)
 
     logging.info(f"将发送 {total_batches} 个媒体组，分批方案: {batch_sizes}")
+
+    # 记录是否有任何批次发送成功
+    any_batch_success = False
+    media_access_errors = []
 
     # 按照分批方案发送媒体
     media_index = 0
     for batch_num, batch_size in enumerate(batch_sizes, 1):
         # 获取当前批次的媒体
-        batch_media = media_urls[media_index:media_index + batch_size]
+        batch_media = media_list[media_index:media_index + batch_size]
         media_index += batch_size
 
         logging.info(f"准备发送第 {batch_num}/{total_batches} 批，包含 {batch_size} 个媒体")
@@ -201,65 +215,90 @@ async def send_media_groups_with_caption(
         logging.info(f"第 {batch_num} 批caption长度: {len(caption)}")
 
         # 构建媒体组
-        media_list = []
+        telegram_media_list = []
 
         # 每个批次的第一个媒体包含caption
-        for j, media_url in enumerate(batch_media):
-            # 判断媒体类型（简单的文件扩展名判断）
-            if media_url.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v')):
+        for j, media_info in enumerate(batch_media):
+            media_url = media_info['url']
+            media_type = media_info['type']
+
+            # 根据媒体类型构建对应的InputMedia对象
+            if media_type == 'video':
                 # 视频文件
                 if j == 0:  # 每批的第一个媒体包含caption
                     from telegram import InputMediaVideo
-                    media_list.append(InputMediaVideo(media=media_url, caption=caption))
+                    telegram_media_list.append(InputMediaVideo(media=media_url, caption=caption))
                     logging.debug(f"第 {batch_num} 批第1个媒体(视频,带caption): {media_url}")
                 else:
                     from telegram import InputMediaVideo
-                    media_list.append(InputMediaVideo(media=media_url))
+                    telegram_media_list.append(InputMediaVideo(media=media_url))
                     logging.debug(f"第 {batch_num} 批第{j+1}个媒体(视频): {media_url}")
-            else:
-                # 图片文件（默认）
+            else:  # media_type == 'image'
+                # 图片文件
                 if j == 0:  # 每批的第一个媒体包含caption
-                    media_list.append(InputMediaPhoto(media=media_url, caption=caption))
+                    telegram_media_list.append(InputMediaPhoto(media=media_url, caption=caption))
                     logging.debug(f"第 {batch_num} 批第1个媒体(图片,带caption): {media_url}")
                 else:
-                    media_list.append(InputMediaPhoto(media=media_url))
+                    telegram_media_list.append(InputMediaPhoto(media=media_url))
                     logging.debug(f"第 {batch_num} 批第{j+1}个媒体(图片): {media_url}")
 
         try:
             # 发送媒体组
-            await bot.send_media_group(chat_id=chat_id, media=media_list)
+            await bot.send_media_group(chat_id=chat_id, media=telegram_media_list)
             logging.info(f"✅ 成功发送第 {batch_num}/{total_batches} 批媒体组 ({batch_size}个媒体)")
+            any_batch_success = True
         except Exception as e:
-            logging.error(f"❌ 发送第 {batch_num} 批媒体组失败: {str(e)}")
+            logging.error(f"❌ 发送第 {batch_num} 批媒体组失败: {str(e)}", exc_info=True)
 
             # 如果是媒体无法访问的错误，记录详细信息
             if "webpage_media_empty" in str(e):
                 logging.error(f"媒体无法访问错误，批次 {batch_num} 的媒体URL:")
-                for j, media_url in enumerate(batch_media):
-                    logging.error(f"  媒体{j+1}: {media_url}")
-                # 继续处理下一批，不中断整个流程
+                for j, media_info in enumerate(batch_media):
+                    media_type = "图片" if media_info['type'] == 'image' else "视频"
+                    logging.error(f"  媒体{j+1}({media_type}): {media_info['url']}")
+                media_access_errors.append(f"批次{batch_num}: {str(e)}")
+                # 继续处理下一批
                 continue
 
             # 如果发送失败，尝试逐个发送（降级处理）
             logging.info(f"尝试逐个发送第 {batch_num} 批的媒体...")
-            for j, media_url in enumerate(batch_media):
+            batch_success = False
+            for j, media_info in enumerate(batch_media):
+                media_url = media_info['url']
+                media_type = media_info['type']
+                
                 try:
-                    if media_url.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v')):
+                    if media_type == 'video':
                         # 发送视频
                         if j == 0:
                             await bot.send_video(chat_id=chat_id, video=media_url, caption=caption)
                         else:
                             await bot.send_video(chat_id=chat_id, video=media_url)
                         logging.info(f"✅ 逐个发送视频成功: {media_url}")
-                    else:
+                        batch_success = True
+                    else:  # media_type == 'image'
                         # 发送图片
                         if j == 0:
                             await bot.send_photo(chat_id=chat_id, photo=media_url, caption=caption)
                         else:
                             await bot.send_photo(chat_id=chat_id, photo=media_url)
                         logging.info(f"✅ 逐个发送图片成功: {media_url}")
+                        batch_success = True
                 except Exception as single_error:
-                    logging.error(f"❌ 逐个发送媒体失败: {media_url}, 错误: {str(single_error)}")
+                    media_type_name = "视频" if media_type == 'video' else "图片"
+                    logging.error(f"❌ 逐个发送{media_type_name}失败: {media_url}, 错误: {str(single_error)}", exc_info=True)
+            
+            if batch_success:
+                any_batch_success = True
+
+    # 如果所有批次都因为媒体无法访问而失败，抛出特殊异常
+    if not any_batch_success and media_access_errors:
+        error_msg = f"所有媒体都无法访问: {'; '.join(media_access_errors)}"
+        logging.error(f"媒体组发送完全失败: {error_msg}", exc_info=True)
+        # 定义一个自定义异常类
+        class MediaAccessError(Exception):
+            pass
+        raise MediaAccessError(error_msg)
 
 
 async def send_text_message(
@@ -312,7 +351,7 @@ async def send_text_message(
         logging.info(f"✅ 文字消息发送成功: '{title}'")
 
     except Exception as e:
-        logging.error(f"❌ 发送文字消息失败: '{title}', 错误: {str(e)}")
+        logging.error(f"❌ 发送文字消息失败: '{title}', 错误: {str(e)}", exc_info=True)
         raise
 
 
@@ -362,7 +401,7 @@ async def send_update_notification(
                         await asyncio.sleep(8)
 
                 except Exception as e:
-                    logging.error(f"发送条目失败: {entry.get('title', 'Unknown')}, 错误: {str(e)}")
+                    logging.error(f"发送条目失败: {entry.get('title', 'Unknown')}, 错误: {str(e)}", exc_info=True)
                     # 出错后也要等待，避免连续错误
                     await asyncio.sleep(5)
                     continue

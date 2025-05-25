@@ -139,7 +139,7 @@ async def scheduled_task(token):
 
     bot = tel_bots.get(token)
     if not bot:
-        logging.error(f"未找到token对应的bot实例: {token}")
+        logging.error(f"未找到token对应的bot实例: {token}", exc_info=True)
         return
 
     # 导入服务模块
@@ -176,7 +176,7 @@ async def scheduled_task(token):
                         logging.warning(f"抖音订阅 {douyin_url} 检查失败: {error_msg}")
 
                 except Exception as e:
-                    logging.error(f"检查抖音订阅失败: {douyin_url}, 错误: {str(e)}")
+                    logging.error(f"检查抖音订阅失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
 
             if douyin_new_content_count > 0:
                 logging.info(f"抖音定时任务完成，共发现 {douyin_new_content_count} 个新内容")

@@ -88,7 +88,7 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logging.info(f"已尝试发送抖音内容 for {douyin_url} to {target_chat_id} after add command")
 
     else:
-        logging.error(f"添加抖音订阅失败: {douyin_url} 原因: {error_msg}")
+        logging.error(f"添加抖音订阅失败: {douyin_url} 原因: {error_msg}", exc_info=True)
         await update.message.reply_text(
             f"❌ 添加抖音订阅失败：{douyin_url}\n原因：{error_msg}"
         )
@@ -115,7 +115,7 @@ async def douyin_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logging.info(f"成功删除抖音订阅: {douyin_url}")
         await update.message.reply_text(f"✅ 成功删除抖音订阅：{douyin_url}")
     else:
-        logging.error(f"删除抖音订阅失败: {douyin_url} 原因: {error_msg}")
+        logging.error(f"删除抖音订阅失败: {douyin_url} 原因: {error_msg}", exc_info=True)
         await update.message.reply_text(
             f"❌ 删除抖音订阅失败：{douyin_url}\n原因：{error_msg}"
         )
@@ -206,7 +206,7 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         except Exception as e:
             error_count += 1
-            logging.error(f"检查抖音订阅失败: {douyin_url}, 错误: {str(e)}")
+            logging.error(f"检查抖音订阅失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
 
     # 发送检查结果摘要
     result_message = (
@@ -260,7 +260,7 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
                         )
                     logging.info(f"✅ 成功发送抖音视频: {local_path}")
                 except Exception as e:
-                    logging.error(f"发送视频文件失败: {str(e)}")
+                    logging.error(f"发送视频文件失败: {str(e)}", exc_info=True)
                     # 降级：发送文字消息
                     await bot.send_message(
                         chat_id=target_chat_id,
@@ -291,7 +291,7 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
                         )
                     logging.info(f"✅ 成功发送抖音图片: {local_path}")
                 except Exception as e:
-                    logging.error(f"发送图片文件失败: {str(e)}")
+                    logging.error(f"发送图片文件失败: {str(e)}", exc_info=True)
                     # 降级：发送文字消息
                     await bot.send_message(
                         chat_id=target_chat_id,
@@ -317,7 +317,7 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
         logging.info(f"✅ 抖音内容发送完成: {content_info.get('title', '无标题')}")
         
     except Exception as e:
-        logging.error(f"❌ 发送抖音内容失败: {content_info.get('title', 'Unknown')}, 错误: {str(e)}")
+        logging.error(f"❌ 发送抖音内容失败: {content_info.get('title', 'Unknown')}, 错误: {str(e)}", exc_info=True)
 
 
 def register_douyin_commands(application: Application) -> None:

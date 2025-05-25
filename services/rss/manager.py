@@ -78,7 +78,7 @@ class RSSManager:
                             return (True, "今天已经更新过此Feed", current_xml, new_entries)
                         except Exception as e:
                             logging.error(
-                                f"加载或比较已存在的Feed数据失败 for {url}: {str(e)}"
+                                f"加载或比较已存在的Feed数据失败 for {url}: {str(e)}", exc_info=True
                             )
                             # 如果加载或比较失败，继续尝试下载
                             pass # 继续执行下载逻辑
@@ -132,7 +132,7 @@ class RSSManager:
                     logging.info(f"已将旧的current feed文件重命名为latest for {url}")
                 except Exception as e:
                     logging.error(
-                        f"加载或比较旧的Feed数据失败 for {url} during download: {str(e)}"
+                        f"加载或比较旧的Feed数据失败 for {url} during download: {str(e)}", exc_info=True
                     )
                     # 如果加载或比较失败，new_entries将为空，继续保存新的current文件
 
@@ -146,7 +146,7 @@ class RSSManager:
             return True, "", xml_content, new_entries  # 返回原始XML内容和新增条目
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"下载Feed失败: {url} 原因: {str(e)}")
+            logging.error(f"下载Feed失败: {url} 原因: {str(e)}", exc_info=True)
             return False, f"下载失败: {str(e)}", None, []
         except Exception as e:
             logging.error(f"处理Feed失败: {url} 原因: {str(e)}", exc_info=True)
@@ -192,7 +192,7 @@ class RSSManager:
             logging.info(f"比较Feed完成，发现 {len(new_entries)} 个新条目")
             return new_entries
         except Exception as e:
-            logging.error(f"比较Feed条目失败: {str(e)}")
+            logging.error(f"比较Feed条目失败: {str(e)}", exc_info=True)
             return []
 
     def add_feed(self, url: str, chat_id: str = None) -> tuple[bool, str, str | None, list[dict]]:
@@ -233,7 +233,7 @@ class RSSManager:
                         logging.info(f"首次添加Feed，返回所有 {len(all_entries)} 个条目")
                         return True, "首次添加", xml_content, all_entries
                     except Exception as e:
-                        logging.error(f"解析Feed条目失败: {str(e)}")
+                        logging.error(f"解析Feed条目失败: {str(e)}", exc_info=True)
                         return True, "添加成功但解析条目失败", xml_content, []
                 else:
                     return True, "", xml_content, new_entries

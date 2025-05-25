@@ -74,7 +74,7 @@ class FeedStateManager:
             return True
             
         except Exception as e:
-            logging.error(f"创建pending文件失败: {str(e)}")
+            logging.error(f"创建pending文件失败: {str(e)}", exc_info=True)
             return False
     
     def delete_pending_file(self, feed_dir: Path) -> bool:
@@ -99,7 +99,7 @@ class FeedStateManager:
                 return True
                 
         except Exception as e:
-            logging.error(f"删除pending文件失败: {str(e)}")
+            logging.error(f"删除pending文件失败: {str(e)}", exc_info=True)
             return False
     
     def is_pending(self, feed_dir: Path) -> bool:
@@ -119,7 +119,7 @@ class FeedStateManager:
             return exists
             
         except Exception as e:
-            logging.error(f"检查pending状态失败: {str(e)}")
+            logging.error(f"检查pending状态失败: {str(e)}", exc_info=True)
             return False
     
     def get_pending_data(self, feed_dir: Path) -> Optional[Dict[str, Any]]:
@@ -145,7 +145,7 @@ class FeedStateManager:
             return data
             
         except Exception as e:
-            logging.error(f"读取pending数据失败: {str(e)}")
+            logging.error(f"读取pending数据失败: {str(e)}", exc_info=True)
             return None
     
     def cleanup_old_pending_files(self, feed_dir: Path, keep_days: int = 7) -> None:
@@ -174,4 +174,4 @@ class FeedStateManager:
                     logging.warning(f"清理pending文件时出错: {file_path}, 错误: {str(e)}")
                     
         except Exception as e:
-            logging.error(f"清理过期pending文件失败: {str(e)}") 
+            logging.error(f"清理过期pending文件失败: {str(e)}", exc_info=True) 

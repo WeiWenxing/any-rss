@@ -55,7 +55,7 @@ class RSSScheduler:
 
                 except Exception as e:
                     error_count += 1
-                    logging.error(f"处理RSS订阅源失败: {url}, 错误: {str(e)}")
+                    logging.error(f"处理RSS订阅源失败: {url}, 错误: {str(e)}", exc_info=True)
                     continue
 
             # 记录总结日志
@@ -128,14 +128,14 @@ class RSSScheduler:
                         logging.warning(f"RSS订阅源 {url} 发送失败，保留pending状态以便重试")
                         return 0
                 else:
-                    logging.error(f"RSS订阅源 {url} 创建pending文件失败")
+                    logging.error(f"RSS订阅源 {url} 创建pending文件失败", exc_info=True)
                     return 0
             else:
                 logging.info(f"RSS订阅源 {url} 无新增内容")
                 return 0
 
         except Exception as e:
-            logging.error(f"处理Feed失败: {url}, 错误: {str(e)}")
+            logging.error(f"处理Feed失败: {url}, 错误: {str(e)}", exc_info=True)
             return 0
 
     async def _handle_pending_feed(self, bot: Bot, url: str, target_chat_id: str, feed_dir) -> int:
@@ -185,7 +185,7 @@ class RSSScheduler:
                 return 0
 
         except Exception as e:
-            logging.error(f"处理pending Feed失败: {url}, 错误: {str(e)}")
+            logging.error(f"处理pending Feed失败: {url}, 错误: {str(e)}", exc_info=True)
             return 0
 
     async def _send_notification_safe(
@@ -208,7 +208,7 @@ class RSSScheduler:
             await send_update_notification(bot, url, entries, xml_content, target_chat_id)
             return True
         except Exception as e:
-            logging.error(f"发送通知失败: {url}, 错误: {str(e)}")
+            logging.error(f"发送通知失败: {url}, 错误: {str(e)}", exc_info=True)
             return False
 
     def cleanup_old_files(self) -> None:
@@ -220,7 +220,7 @@ class RSSScheduler:
                 self.state_manager.cleanup_old_pending_files(feed_dir)
             logging.info("清理过期pending文件完成")
         except Exception as e:
-            logging.error(f"清理过期文件失败: {str(e)}")
+            logging.error(f"清理过期文件失败: {str(e)}", exc_info=True)
 
 
 # 创建全局调度器实例

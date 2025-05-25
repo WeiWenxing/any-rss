@@ -85,7 +85,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logging.info(f"已尝试发送更新通知 for {url} to {target_chat_id} after add command")
 
     else:
-        logging.error(f"添加Feed监控失败: {url} 原因: {error_msg}")
+        logging.error(f"添加Feed监控失败: {url} 原因: {error_msg}", exc_info=True)
         await update.message.reply_text(
             f"❌ 添加Feed监控失败：{url}\n原因：{error_msg}"
         )
@@ -111,7 +111,7 @@ async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logging.info(f"成功删除RSS订阅: {url}")
         await update.message.reply_text(f"成功删除RSS订阅：{url}")
     else:
-        logging.error(f"删除RSS订阅失败: {url} 原因: {error_msg}")
+        logging.error(f"删除RSS订阅失败: {url} 原因: {error_msg}", exc_info=True)
         await update.message.reply_text(
             f"删除RSS订阅失败：{url}\n原因：{error_msg}"
         )
@@ -194,7 +194,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         except Exception as e:
             error_count += 1
-            logging.error(f"检查订阅源失败: {url}, 错误: {str(e)}")
+            logging.error(f"检查订阅源失败: {url}, 错误: {str(e)}", exc_info=True)
 
     # 发送检查结果摘要
     result_message = (
@@ -317,7 +317,7 @@ async def show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     f"XML解析器错误: {xml_error}\n"
                     f"HTML解析器错误: {html_error}"
                 )
-                logging.error(f"BeautifulSoup解析失败: XML={xml_error}, HTML={html_error}")
+                logging.error(f"BeautifulSoup解析失败: XML={xml_error}, HTML={html_error}", exc_info=True)
                 return
 
         # 检测格式类型

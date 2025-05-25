@@ -82,7 +82,7 @@ def extract_entry_info(entry_data, is_feedparser_entry=True):
         return entry_info
 
     except Exception as e:
-        logging.error(f"提取条目信息失败: {str(e)}")
+        logging.error(f"提取条目信息失败: {str(e)}", exc_info=True)
         # 返回基本信息，避免完全失败
         return {
             'title': '信息提取失败',
@@ -121,18 +121,18 @@ async def send_entry_unified(
         published_time = entry_info.get('published', '')
 
         # 提取媒体
-        media_urls = extract_and_clean_media(content)
+        media_list = extract_and_clean_media(content)
 
         # 根据消息类型决定发送模式
         if message_type == "auto":
             # 自动判断：≥2张图片为图片为主，<2张图片为文字为主
-            mode = "媒体为主" if len(media_urls) >= 2 else "文字为主"
+            mode = "媒体为主" if len(media_list) >= 2 else "文字为主"
         elif message_type == "media":
             mode = "媒体为主"
         else:  # message_type == "text"
             mode = "文字为主"
 
-        logging.info(f"条目发送模式: {mode} (媒体数量: {len(media_urls)}, 类型: {message_type})")
+        logging.info(f"条目发送模式: {mode} (媒体数量: {len(media_list)}, 类型: {message_type})")
 
         # 发送分析信息（仅在调试模式下）
         if show_analysis:
@@ -145,7 +145,7 @@ async def send_entry_unified(
                 f"👤 作者: {author or '无'}\n"
                 f"🔗 链接: {link[:50]}{'...' if len(link) > 50 else ''}\n"
                 f"🕒 时间: {published_time or '无'}\n"
-                f"🎬 媒体数量: {len(media_urls)}\n"
+                f"🎬 媒体数量: {len(media_list)}\n"
                 f"⚙️ 指定类型: {message_type}\n"
                 f"📊 实际模式: {mode}\n"
                 f"📝 内容长度: {len(content)} 字符\n"
@@ -155,18 +155,31 @@ async def send_entry_unified(
             await bot.send_message(chat_id=chat_id, text=analysis_info)
 
         # 根据模式发送消息
-        if mode == "媒体为主" and media_urls:
+        if mode == "媒体为主" and media_list:
             # 媒体为主模式：发送媒体组
-            await send_media_groups_with_caption(bot, chat_id, title, author, media_urls)
-        else:
+            try:
+                await send_media_groups_with_caption(bot, chat_id, title, author, media_list)
+            except Exception as e:
+                # 检查是否是媒体无法访问的错误
+                if "所有媒体都无法访问" in str(e) or "MediaAccessError" in str(type(e).__name__):
+                    logging.warning(f"媒体组发送失败，降级到文字为主模式: {str(e)}")
+                    # 降级到文字为主模式，把媒体链接放到文本消息中
+                    mode = "文字为主"
+                    logging.info(f"已降级到文字为主模式，将发送包含媒体链接的文本消息")
+                else:
+                    # 其他错误直接抛出
+                    raise
+
+        if mode == "文字为主":
             # 文字为主模式
-            if media_urls:
+            if media_list:
                 # 有媒体：把媒体链接放到文本消息开头，利用Telegram自动预览
                 logging.info(f"文字为主模式，有媒体，将媒体链接放到文本消息开头")
 
                 # 格式化媒体链接列表
                 media_links = []
-                for i, media_url in enumerate(media_urls, 1):
+                for i, media_info in enumerate(media_list, 1):
+                    media_url = media_info['url']
                     if i == 1:
                         # 第一个链接不加序号，让Telegram自动预览
                         media_links.append(media_url)
@@ -210,13 +223,14 @@ async def send_entry_unified(
                     message_parts.append(f"\n⏰ {published_time}")
 
                 # 5. 添加原文链接（如果有且不同于媒体链接）
+                media_urls = [media_info['url'] for media_info in media_list]
                 if link and link not in media_urls:
                     message_parts.append(f"\n🔗 {link}")
 
                 # 发送包含媒体链接的文本消息
                 full_message = "".join(message_parts)
                 await bot.send_message(chat_id=chat_id, text=full_message)
-                logging.info(f"✅ 发送包含 {len(media_urls)} 个媒体链接的文本消息")
+                logging.info(f"✅ 发送包含 {len(media_list)} 个媒体链接的文本消息")
             else:
                 # 没有媒体：发送纯文字消息
                 logging.info(f"文字为主模式，无媒体，发送纯文字消息")
@@ -225,7 +239,7 @@ async def send_entry_unified(
         logging.info(f"✅ 条目发送完成: '{title}' ({mode})")
 
     except Exception as e:
-        logging.error(f"❌ 发送条目失败: '{entry_info.get('title', 'Unknown')}', 错误: {str(e)}")
+        logging.error(f"❌ 发送条目失败: '{entry_info.get('title', 'Unknown')}', 错误: {str(e)}", exc_info=True)
         raise
 
 
@@ -256,5 +270,5 @@ async def process_and_send_entry(
         logging.info(f"✅ 条目处理完成: '{entry_info['title']}'")
 
     except Exception as e:
-        logging.error(f"❌ 处理条目失败: {current_index}/{total_count} - {str(e)}")
+        logging.error(f"❌ 处理条目失败: {current_index}/{total_count} - {str(e)}", exc_info=True)
         raise
