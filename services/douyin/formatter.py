@@ -214,6 +214,12 @@ class DouyinFormatter:
                 clean_author = author.replace(' ', '_').replace('@', '').replace('#', '')
                 caption_parts.append(f"#{clean_author}")
 
+            # 最后一行：抖音原链接
+            aweme_id = content_info.get("aweme_id", "").strip()
+            if aweme_id:
+                douyin_link = f"https://www.douyin.com/video/{aweme_id}"
+                caption_parts.append(f"[查看原视频]({douyin_link})")
+
             return "\n\n".join(caption_parts)
 
         except Exception as e:
