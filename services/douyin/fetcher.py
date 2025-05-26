@@ -10,23 +10,47 @@ import hashlib
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 import time
+from services.common.cache import get_cache
 
 
 class DouyinFetcher:
     """抖音内容获取器"""
 
-    def __init__(self):
-        """初始化抖音获取器"""
+    def __init__(self, cache_ttl: int = 21600):
+        """
+        初始化抖音获取器
+
+        Args:
+            cache_ttl: 缓存过期时间（秒），默认6小时
+        """
         self.api_base = "https://api.cenguigui.cn/api/douyin/user.php"
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
         self.timeout = 15
-        logging.info("抖音内容获取器初始化完成")
+
+        # 初始化缓存
+        self.cache = get_cache("douyin_api", ttl=cache_ttl)
+
+        logging.info(f"抖音内容获取器初始化完成，缓存TTL: {cache_ttl}秒")
+
+    def _generate_cache_key(self, douyin_url: str) -> str:
+        """
+        生成缓存键
+
+        Args:
+            douyin_url: 抖音用户主页链接
+
+        Returns:
+            str: 缓存键
+        """
+        # 使用URL生成唯一的缓存键
+        cache_key = hashlib.md5(douyin_url.encode('utf-8')).hexdigest()
+        return f"user_content:{cache_key}"
 
     def fetch_user_content(self, douyin_url: str, cookie: str = None) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
-        获取抖音用户发布的全部内容
+        获取抖音用户发布的全部内容（带缓存）
 
         Args:
             douyin_url: 抖音用户主页链接
@@ -36,6 +60,15 @@ class DouyinFetcher:
             Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 全部内容数据列表)
         """
         try:
+            # 生成缓存键
+            cache_key = self._generate_cache_key(douyin_url)
+
+            # 尝试从缓存获取数据
+            cached_data = self.cache.get(cache_key)
+            if cached_data is not None:
+                logging.info(f"从缓存获取抖音内容: {douyin_url}")
+                return True, "", cached_data
+
             logging.info(f"开始获取抖音用户内容: {douyin_url}")
 
             # 构建请求参数
@@ -69,7 +102,10 @@ class DouyinFetcher:
             if not isinstance(content_list, list) or len(content_list) == 0:
                 return False, "API返回的data字段为空或格式错误", None
 
-            logging.info(f"成功获取抖音内容，共 {len(content_list)} 个")
+            # 缓存成功的结果
+            self.cache.set(cache_key, content_list)
+            logging.info(f"成功获取并缓存抖音内容，共 {len(content_list)} 个")
+
             return True, "", content_list
 
         except requests.exceptions.RequestException as e:
@@ -230,17 +266,73 @@ class DouyinFetcher:
         """
         try:
             parsed = urlparse(url)
-
             # 检查域名
-            valid_domains = [
-                "v.douyin.com",
-                "www.douyin.com",
-                "douyin.com",
-                "www.iesdouyin.com",
-                "iesdouyin.com"
-            ]
+            valid_domains = ['douyin.com', 'www.douyin.com', 'v.douyin.com']
+            if parsed.netloc not in valid_domains:
+                return False
 
-            return parsed.netloc in valid_domains
+            # 检查路径
+            if not parsed.path or parsed.path == '/':
+                return False
 
-        except Exception:
+            return True
+
+        except Exception as e:
+            logging.error(f"验证抖音URL失败: {url}, 错误: {str(e)}")
+            return False
+
+    def clear_cache(self, douyin_url: str = None) -> bool:
+        """
+        清除缓存
+
+        Args:
+            douyin_url: 指定URL的缓存，如果为None则清除所有缓存
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if douyin_url:
+                # 清除指定URL的缓存
+                cache_key = self._generate_cache_key(douyin_url)
+                success = self.cache.delete(cache_key)
+                logging.info(f"清除指定URL缓存: {douyin_url}, 成功: {success}")
+                return success
+            else:
+                # 清除所有缓存
+                success = self.cache.clear()
+                logging.info(f"清除所有抖音API缓存, 成功: {success}")
+                return success
+        except Exception as e:
+            logging.error(f"清除缓存失败: {str(e)}")
+            return False
+
+    def get_cache_info(self) -> Dict:
+        """
+        获取缓存信息
+
+        Returns:
+            Dict: 缓存统计信息
+        """
+        try:
+            return self.cache.get_info()
+        except Exception as e:
+            logging.error(f"获取缓存信息失败: {str(e)}")
+            return {"error": str(e)}
+
+    def is_cache_hit(self, douyin_url: str) -> bool:
+        """
+        检查指定URL是否有缓存
+
+        Args:
+            douyin_url: 抖音用户主页链接
+
+        Returns:
+            bool: 是否有缓存
+        """
+        try:
+            cache_key = self._generate_cache_key(douyin_url)
+            return self.cache.exists(cache_key)
+        except Exception as e:
+            logging.error(f"检查缓存失败: {str(e)}")
             return False
