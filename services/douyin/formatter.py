@@ -109,7 +109,7 @@ class DouyinFormatter:
 
     def format_caption(self, content_info: Dict) -> str:
         """
-        格式化抖音内容为媒体caption（丰富版本）
+        格式化抖音内容为媒体caption（紧凑美观版本）
 
         Args:
             content_info: 内容信息字典
@@ -135,31 +135,43 @@ class DouyinFormatter:
             # 构建caption
             caption_parts = []
 
-            # 标题（使用*粗体*格式，更安全）
-            max_title_length = 80
-            if len(title) > max_title_length:
-                title = title[:max_title_length] + "..."
-            # 转义标题中的特殊字符
-            safe_title = self._escape_markdown(title)
-            caption_parts.append(f"*{safe_title}*")
+            # 第一行：标题 + 作者 + 日期（一行包含所有核心信息）
+            first_line_parts = []
 
-            # 作者信息
-            if nickname and author and nickname != author:
+            # 标题（根据其他信息调整长度）
+            available_length = 50  # 为作者和日期预留空间
+            if nickname:
+                available_length -= len(nickname) + 3  # 3个字符用于" 👤 "
+            elif author:
+                available_length -= len(author) + 3
+            if time_str:
+                available_length -= len(time_str) + 1  # 1个空格
+
+            # 确保标题至少有20个字符
+            title_length = max(20, available_length)
+            if len(title) > title_length:
+                title = title[:title_length] + "..."
+
+            # 转义标题
+            safe_title = self._escape_markdown(title)
+            first_line_parts.append(safe_title)
+
+            # 添加作者
+            if nickname:
                 safe_nickname = self._escape_markdown(nickname)
-                safe_author = self._escape_markdown(author)
-                caption_parts.append(f"👤 {safe_nickname} @{safe_author}")
-            elif nickname:
-                safe_nickname = self._escape_markdown(nickname)
-                caption_parts.append(f"👤 {safe_nickname}")
+                first_line_parts.append(f"👤 {safe_nickname}")
             elif author:
                 safe_author = self._escape_markdown(author)
-                caption_parts.append(f"👤 @{safe_author}")
+                first_line_parts.append(f"👤 {safe_author}")
 
-            # 发布时间
+            # 添加日期
             if time_str:
-                caption_parts.append(f"📅 {time_str}")
+                first_line_parts.append(time_str)
 
-            # 统计信息
+            # 用空格连接第一行的所有部分
+            caption_parts.append(" ".join(first_line_parts))
+
+            # 第二行：统计信息（如果有）
             stats_parts = []
             if like_count > 0:
                 stats_parts.append(f"❤️ {self._format_count(like_count)}")
@@ -169,22 +181,20 @@ class DouyinFormatter:
                 stats_parts.append(f"▶️ {self._format_count(play_count)}")
 
             if stats_parts:
-                # 使用分隔符让统计信息更好看
-                stats_line = " • ".join(stats_parts)
-                caption_parts.append(f"📊 {stats_line}")
+                caption_parts.append(" • ".join(stats_parts))
 
-            # 音乐信息（如果有）
+            # 第三行：音乐信息（如果有）
             if music_info and music_info.get("title"):
                 music_title = music_info.get("title", "").strip()
                 music_author = music_info.get("author", "").strip()
                 music_duration = music_info.get("duration", "").strip()
 
-                # 限制音乐标题长度
-                max_music_length = 50
+                # 音乐标题长度控制
+                max_music_length = 35
                 if len(music_title) > max_music_length:
                     music_title = music_title[:max_music_length] + "..."
 
-                # 转义音乐信息中的特殊字符
+                # 转义音乐信息
                 safe_music_title = self._escape_markdown(music_title)
                 music_text = f"🎵 {safe_music_title}"
 
@@ -199,13 +209,12 @@ class DouyinFormatter:
 
                 caption_parts.append(music_text)
 
-            # 添加标签
+            # 第四行：标签
             if author:
-                # 清理标签中的特殊字符
                 clean_author = author.replace(' ', '_').replace('@', '').replace('#', '')
                 caption_parts.append(f"#{clean_author}")
 
-            return "\n".join(caption_parts)
+            return "\n\n".join(caption_parts)
 
         except Exception as e:
             logging.error(f"格式化抖音caption失败: {str(e)}", exc_info=True)
