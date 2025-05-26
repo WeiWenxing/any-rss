@@ -331,24 +331,42 @@ async def douyin_debug_sample_command(update: Update, context: ContextTypes.DEFA
         # 格式化JSON字符串
         json_str = json.dumps(sample_data, ensure_ascii=False, indent=2)
 
-        help_text = (
-            f"📋 抖音调试数据样例 - {sample_description}\n\n"
-            f"🔹 使用方法:\n"
-            f"1. 复制下面的JSON数据\n"
-            f"2. 使用 `/douyin_debug_show` 或 `/douyin_debug_format` 命令\n"
-            f"3. 将JSON数据作为参数传入\n\n"
-            f"🔹 示例JSON数据:\n"
-            f"```json\n{json_str}\n```\n\n"
-            f"💡 提示:\n"
-            f"• `/douyin_debug_show` - 完整测试（包含媒体发送）\n"
-            f"• `/douyin_debug_format` - 只测试格式化\n"
-            f"• `/douyin_debug_sample` - 显示简单样例数据\n"
-            f"• `/douyin_debug_sample full` - 显示完整样例数据"
-        )
+        # 计算各部分长度
+        header_base = f"📋 抖音调试数据样例 - {sample_description}\n\n🔹 使用方法:\n1. 复制下面的JSON数据\n2. 使用 `/douyin_debug_show` 或 `/douyin_debug_format` 命令\n3. 将JSON数据作为参数传入\n\n🔹 示例JSON数据:\n"
+        footer_base = f"\n💡 提示:\n• `/douyin_debug_show` - 完整测试（包含媒体发送）\n• `/douyin_debug_format` - 只测试格式化\n• `/douyin_debug_sample` - 显示简单样例数据\n• `/douyin_debug_sample full` - 显示完整样例数据"
+        json_with_markdown = f"```json\n{json_str}\n```"
 
-        # 如果消息太长，分段发送
-        if len(help_text) > 4000:
-            # 分段发送
+        # 检查JSON是否太长需要分割
+        if len(json_with_markdown) > 3500:  # 留出一些余量
+            # JSON太长，需要分割发送
+            await update.message.reply_text(header_base)
+
+            # 分割JSON字符串
+            json_lines = json_str.split('\n')
+            current_chunk = "```json\n"
+
+            for line in json_lines:
+                # 检查添加这一行是否会超过限制
+                test_chunk = current_chunk + line + '\n'
+                if len(test_chunk + "```") > 3800:  # 留出余量给结束标记
+                    # 发送当前块
+                    current_chunk += "```"
+                    await update.message.reply_text(current_chunk, parse_mode='Markdown')
+                    # 开始新块
+                    current_chunk = "```json\n" + line + '\n'
+                else:
+                    current_chunk += line + '\n'
+
+            # 发送最后一块
+            if current_chunk.strip() != "```json":
+                current_chunk += "```"
+                await update.message.reply_text(current_chunk, parse_mode='Markdown')
+
+            # 发送提示信息
+            await update.message.reply_text(footer_base)
+
+        elif len(header_base + json_with_markdown + footer_base) > 4000:
+            # 整体太长但JSON不太长，分段发送
             header_text = (
                 f"📋 抖音调试数据样例 - {sample_description}\n\n"
                 f"🔹 使用方法:\n"
@@ -367,9 +385,11 @@ async def douyin_debug_sample_command(update: Update, context: ContextTypes.DEFA
             )
 
             await update.message.reply_text(header_text)
-            await update.message.reply_text(f"```json\n{json_str}\n```", parse_mode='Markdown')
+            await update.message.reply_text(json_with_markdown, parse_mode='Markdown')
             await update.message.reply_text(footer_text)
         else:
+            # 整体长度合适，一次发送
+            help_text = header_base + json_with_markdown + footer_base
             await update.message.reply_text(help_text, parse_mode='Markdown')
 
         logging.info(f"DOUYIN_DEBUG_SAMPLE命令执行成功，类型: {sample_type}")
@@ -379,10 +399,160 @@ async def douyin_debug_sample_command(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
 
 
+async def douyin_debug_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    提供抖音调试数据文件下载
+    用法: /douyin_debug_file [type]
+    type: simple(默认) | full
+    """
+    try:
+        user = update.message.from_user
+        chat_id = update.message.chat_id
+        logging.info(f"收到DOUYIN_DEBUG_FILE命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
+
+        # 检查参数，决定返回简单样例还是完整样例
+        sample_type = "simple"
+        if context.args and len(context.args) > 0:
+            sample_type = context.args[0].lower()
+
+        if sample_type == "full":
+            # 提供完整的示例数据（包含视频信息）
+            sample_data = {
+                "aweme_id": "7478284850366090536",
+                "nickname": "小神仙",
+                "avatar": "https://p3-pc.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-avt-0015_0c674ba9c10210a155778a3b29f2987e.jpeg?from=327834062",
+                "share_url": "https://www.iesdouyin.com/share/video/7478284850366090536/?region=CN&mid=7456268046764739366&u_code=154976742&did=MS4wLjABAAAAaQQlJ5k7rEi3LJKVPpMRgdlMiKvnRcdfjHHxdel0lXeTIITq7Jd5YHddBbu5_TU9&iid=MS4wLjABAAAANwkJuWIRFOzg5uCpDRpMj4OX-QryoDgn-yYlXQnRwQQ&with_sec_did=1&video_share_track_ver=&titleType=title&share_sign=.0pxqWyhpVdxMZjSwJAfbPMwX7SESw6nuq19wVph1mc-&share_version=290100&ts=1748223024&from_aid=6383&from_ssr=1",
+                "author": "小神仙",
+                "title": "人在知足时最幸福",
+                "comment": 663,
+                "play": 0,
+                "like": 40477,
+                "pic": "https://p3-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=7epG7y8Qsr%2Ff0f7rcKwuDxRQnD8%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B",
+                "pic_list": [
+                    "https://p3-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=7epG7y8Qsr%2Ff0f7rcKwuDxRQnD8%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B",
+                    "https://p9-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=NN2ia%2Ff%2FpKEAyHXfIUJnfwUwjtA%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B"
+                ],
+                "type": "视频",
+                "video_info": {
+                    "id": "v0200fg10000cv435mnog65j826sr7og",
+                    "pic": "https://p3-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=7epG7y8Qsr%2Ff0f7rcKwuDxRQnD8%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B",
+                    "pic_list": [
+                        "https://p3-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=7epG7y8Qsr%2Ff0f7rcKwuDxRQnD8%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B",
+                        "https://p9-pc-sign.douyinpic.com/tos-cn-p-0015/oUp8Bi9xQINZvgsBHI3nAs2yNyiAAIIIQzgPI~tplv-dy-360p.jpeg?lk3s=138a59ce&x-expires=1749430800&x-signature=NN2ia%2Ff%2FpKEAyHXfIUJnfwUwjtA%3D&from=327834062&s=PackSourceEnum_PUBLISH&se=false&sc=origin_cover&biz_tag=pcweb_cover&l=202505260930231DBC771B80C9F87B513B"
+                    ],
+                    "height": 635,
+                    "width": 360,
+                    "size": "1.4 MB",
+                    "url": "https://v3-web.douyinvod.com/022c59e81ce506a211255f7363581edc/6833ee6c/video/tos/cn/tos-cn-ve-15/oUDBCbaffIWnFAAmQLWi9PPDgEEACIgRguy6Iy/?a=6383&ch=10010&cr=3&dr=0&lr=all&cd=0%7C0%7C0%7C3&cv=1&br=890&bt=890&cs=0&ds=4&ft=LjhJEL998xsRu.0mD0P5XEhX.xiXO~QjRVJE2wpHpCPD-Ipz&mime_type=video_mp4&qs=0&rc=MzY5Ojs3ZWQ7Zzk2aWU1ZEBpajp2NW05cnA2eTMzNGkzM0A0LzViMDYvNWIxXy4zMy4zYSNsbzM1MmRrMjFgLS1kLS9zcw%3D%3D&btag=80000e00008000&cquery=100x_100z_100o_101r_100B&dy_q=1748223024&feature_id=46a7bb47b4fd1280f3d3825bf2b29388&l=202505260930231DBC771B80C9F87B513B",
+                    "download": "https://www.douyin.com/aweme/v1/play/?video_id=v0200fg10000cv435mnog65j826sr7og&line=0&file_id=6a126b6f13b64de88a2b9438e7862370&sign=5d1445fffb4589320262cdc5ac73b32b&is_play_url=1&source=PackSourceEnum_PUBLISH",
+                    "download2": "https://www.douyin.com/aweme/v1/play/?video_id=v0200fg10000cv435mnog65j826sr7og&ratio=1080p&line=0"
+                },
+                "music_info": {
+                    "id": 7456268046764739366,
+                    "title": "@何存真创作的原声",
+                    "author": "何存真",
+                    "pic": "https://p3-pc.douyinpic.com/aweme/1080x1080/aweme-avatar/tos-cn-avt-0015_f33e41e1b7ce95a229bdf0d697889fc1.jpeg?from=327834062",
+                    "pic_list": [
+                        "https://p3-pc.douyinpic.com/aweme/1080x1080/aweme-avatar/tos-cn-avt-0015_f33e41e1b7ce95a229bdf0d697889fc1.jpeg?from=327834062"
+                    ],
+                    "url": "https://sf5-hl-cdn-tos.douyinstatic.com/obj/ies-music/7456268160275073830.mp3",
+                    "url_list": [
+                        "https://sf5-hl-cdn-tos.douyinstatic.com/obj/ies-music/7456268160275073830.mp3",
+                        "https://sf5-hl-ali-cdn-tos.douyinstatic.com/obj/ies-music/7456268160275073830.mp3"
+                    ],
+                    "duration": "0分14秒",
+                    "height": 720,
+                    "width": 720,
+                    "owner_nickname": "何存真"
+                },
+                "images_info": {
+                    "images": [
+                        "不是图文没有信息"
+                    ],
+                    "height": "不是图文没有信息",
+                    "width": "不是图文没有信息"
+                },
+                "hot_words": {
+                    "text_extra": [],
+                    "hashtag_id": None,
+                    "start": None
+                },
+                "time": "2025-03-05"
+            }
+
+            filename = "douyin_debug_sample_full.json"
+            description = "完整视频数据样例（包含视频下载链接、音乐信息等）"
+        else:
+            # 提供简单的示例数据
+            sample_data = {
+                "aweme_id": "7478284850366090536",
+                "nickname": "小神仙",
+                "avatar": "https://p3-pc.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-avt-0015_0c674ba9c10210a155778a3b29f2987e.jpeg?from=327834062",
+                "share_url": "https://www.iesdouyin.com/share/video/7478284850366090536/",
+                "author": "小神仙",
+                "title": "人在知足时最幸福",
+                "comment": 663,
+                "play": 0,
+                "like": 40477,
+                "type": "视频",
+                "time": "2025-03-05"
+            }
+
+            filename = "douyin_debug_sample_simple.json"
+            description = "简单数据样例（基础字段）"
+
+        # 格式化JSON字符串
+        json_str = json.dumps(sample_data, ensure_ascii=False, indent=2)
+
+        # 创建临时文件
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as temp_file:
+            temp_file.write(json_str)
+            temp_file_path = temp_file.name
+
+        try:
+            # 发送文件
+            with open(temp_file_path, 'rb') as file:
+                await update.message.reply_document(
+                    document=file,
+                    filename=filename,
+                    caption=(
+                        f"📋 抖音调试数据文件 - {description}\n\n"
+                        f"💡 使用方法:\n"
+                        f"1. 下载此JSON文件\n"
+                        f"2. 复制文件内容\n"
+                        f"3. 使用 `/douyin_debug_show` 或 `/douyin_debug_format` 命令\n"
+                        f"4. 将JSON数据作为参数传入\n\n"
+                        f"🔧 其他命令:\n"
+                        f"• `/douyin_debug_sample` - 显示简单样例（消息形式）\n"
+                        f"• `/douyin_debug_sample full` - 显示完整样例（消息形式）\n"
+                        f"• `/douyin_debug_file` - 下载简单样例文件\n"
+                        f"• `/douyin_debug_file full` - 下载完整样例文件"
+                    ),
+                    parse_mode='Markdown'
+                )
+
+            logging.info(f"DOUYIN_DEBUG_FILE命令执行成功，类型: {sample_type}")
+
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logging.warning(f"清理临时文件失败: {str(cleanup_error)}")
+
+    except Exception as e:
+        logging.error(f"DOUYIN_DEBUG_FILE命令执行失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+
+
 def register_douyin_debug_commands(application: Application) -> None:
     """注册抖音调试命令"""
     application.add_handler(CommandHandler("douyin_debug_show", douyin_debug_show_command))
     application.add_handler(CommandHandler("douyin_debug_format", douyin_debug_format_command))
     application.add_handler(CommandHandler("douyin_debug_sample", douyin_debug_sample_command))
+    application.add_handler(CommandHandler("douyin_debug_file", douyin_debug_file_command))
 
     logging.info("✅ 抖音调试命令注册完成")
