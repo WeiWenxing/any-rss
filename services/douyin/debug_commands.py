@@ -335,15 +335,15 @@ async def douyin_debug_sample_command(update: Update, context: ContextTypes.DEFA
             f"📋 抖音调试数据样例 - {sample_description}\n\n"
             f"🔹 使用方法:\n"
             f"1. 复制下面的JSON数据\n"
-            f"2. 使用 /douyin_debug_show 或 /douyin_debug_format 命令\n"
+            f"2. 使用 `/douyin_debug_show` 或 `/douyin_debug_format` 命令\n"
             f"3. 将JSON数据作为参数传入\n\n"
             f"🔹 示例JSON数据:\n"
             f"```json\n{json_str}\n```\n\n"
             f"💡 提示:\n"
-            f"• /douyin_debug_show - 完整测试（包含媒体发送）\n"
-            f"• /douyin_debug_format - 只测试格式化\n"
-            f"• /douyin_debug_sample - 显示简单样例数据\n"
-            f"• /douyin_debug_sample full - 显示完整样例数据"
+            f"• `/douyin_debug_show` - 完整测试（包含媒体发送）\n"
+            f"• `/douyin_debug_format` - 只测试格式化\n"
+            f"• `/douyin_debug_sample` - 显示简单样例数据\n"
+            f"• `/douyin_debug_sample full` - 显示完整样例数据"
         )
 
         # 如果消息太长，分段发送
@@ -353,17 +353,17 @@ async def douyin_debug_sample_command(update: Update, context: ContextTypes.DEFA
                 f"📋 抖音调试数据样例 - {sample_description}\n\n"
                 f"🔹 使用方法:\n"
                 f"1. 复制下面的JSON数据\n"
-                f"2. 使用 /douyin_debug_show 或 /douyin_debug_format 命令\n"
+                f"2. 使用 `/douyin_debug_show` 或 `/douyin_debug_format` 命令\n"
                 f"3. 将JSON数据作为参数传入\n\n"
                 f"🔹 示例JSON数据:"
             )
 
             footer_text = (
                 f"💡 提示:\n"
-                f"• /douyin_debug_show - 完整测试（包含媒体发送）\n"
-                f"• /douyin_debug_format - 只测试格式化\n"
-                f"• /douyin_debug_sample - 显示简单样例数据\n"
-                f"• /douyin_debug_sample full - 显示完整样例数据"
+                f"• `/douyin_debug_show` - 完整测试（包含媒体发送）\n"
+                f"• `/douyin_debug_format` - 只测试格式化\n"
+                f"• `/douyin_debug_sample` - 显示简单样例数据\n"
+                f"• `/douyin_debug_sample full` - 显示完整样例数据"
             )
 
             await update.message.reply_text(header_text)
