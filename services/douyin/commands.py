@@ -70,6 +70,29 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
 
     if success:
+        # 检查是否需要历史对齐
+        if isinstance(content_info, dict) and content_info.get("need_alignment"):
+            # 需要历史对齐的情况
+            known_item_ids = content_info.get("known_item_ids", [])
+            primary_channel = content_info.get("primary_channel")
+            new_channel = content_info.get("new_channel")
+
+            await update.message.reply_text(
+                f"✅ 成功添加抖音订阅：{douyin_url}\n"
+                f"📺 目标频道：{target_chat_id}\n"
+                f"🔄 正在进行历史对齐，从主频道 {primary_channel} 转发 {len(known_item_ids)} 个历史内容..."
+            )
+
+            # TODO: 实施历史对齐转发逻辑
+            # 这里需要从primary_channel转发所有known_item_ids对应的消息到new_channel
+            # 暂时先显示提示信息
+            await update.message.reply_text(
+                f"⚠️ 历史对齐功能正在开发中\n"
+                f"📊 需要对齐 {len(known_item_ids)} 个历史内容\n"
+                f"🔄 系统将继续自动监控新内容"
+            )
+            return
+
         # 判断是否为更新现有订阅
         is_update = "更新成功" in error_msg
 
@@ -95,12 +118,12 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if check_success and new_items:
                 logging.info(f"订阅检查到 {len(new_items)} 个新内容，开始发送")
 
-                # 导入调度器来处理批量发送
+                # 使用调度器的多频道批量处理逻辑
                 from .scheduler import DouyinScheduler
                 scheduler = DouyinScheduler()
+                sent_count = await scheduler._process_batch_with_forwarding(context.bot, new_items, douyin_url, [target_chat_id])
 
-                # 使用调度器的批量处理逻辑（包含排序和发送间隔控制）
-                sent_count = await scheduler._process_batch(context.bot, new_items, douyin_url, target_chat_id)
+                logging.info(f"抖音订阅 {douyin_url} 成功发送 {sent_count}/{len(new_items)} 个内容到 1 个频道")
 
                 # 根据操作类型显示不同的完成消息
                 if is_update:
@@ -195,13 +218,22 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 构建订阅列表
     subscription_list = []
-    for douyin_url, target_chat_id in subscriptions.items():
+    for douyin_url, target_channels in subscriptions.items():
         # 缩短URL显示
         short_url = douyin_url
         if len(douyin_url) > 50:
             short_url = douyin_url[:25] + "..." + douyin_url[-20:]
 
-        subscription_list.append(f"🔗 {short_url}\n📺 → {target_chat_id}")
+        # 处理多频道显示
+        if isinstance(target_channels, list):
+            if len(target_channels) == 1:
+                subscription_list.append(f"🔗 {short_url}\n📺 → {target_channels[0]}")
+            else:
+                channels_text = "\n".join([f"📺 → {ch}" for ch in target_channels])
+                subscription_list.append(f"🔗 {short_url}\n{channels_text}")
+        else:
+            # 兼容旧格式
+            subscription_list.append(f"🔗 {short_url}\n📺 → {target_channels}")
 
     subscription_text = "\n\n".join(subscription_list)
     logging.info(f"显示抖音订阅列表，共 {len(subscriptions)} 个")
@@ -229,20 +261,29 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
     success_count = 0
     error_count = 0
 
-    for douyin_url, target_chat_id in subscriptions.items():
+    for douyin_url, target_channels in subscriptions.items():
         try:
-            logging.info(f"强制检查抖音订阅: {douyin_url} -> 频道: {target_chat_id}")
+            # 确保target_channels是列表格式
+            if isinstance(target_channels, str):
+                target_channels = [target_channels]
 
-            # 检查更新
-            success, error_msg, content_info = douyin_manager.check_updates(douyin_url)
+            logging.info(f"强制检查抖音订阅: {douyin_url} -> 频道: {target_channels}")
+
+            # 检查更新（返回的内容已包含target_channels信息）
+            success, error_msg, new_items = douyin_manager.check_updates(douyin_url)
 
             if success:
                 success_count += 1
-                if content_info:  # 有新内容
-                    logging.info(f"抖音订阅 {douyin_url} 发现新内容")
-                    # 发送新内容到绑定的频道
-                    await send_douyin_content(context.bot, content_info, douyin_url, target_chat_id)
-                    new_content_count += 1
+                if new_items:  # 有新内容
+                    logging.info(f"抖音订阅 {douyin_url} 发现 {len(new_items)} 个新内容")
+
+                    # 使用调度器的多频道批量处理逻辑
+                    from .scheduler import DouyinScheduler
+                    scheduler = DouyinScheduler()
+                    sent_count = await scheduler._process_batch_with_forwarding(context.bot, new_items, douyin_url, target_channels)
+
+                    new_content_count += sent_count
+                    logging.info(f"抖音订阅 {douyin_url} 成功发送 {sent_count}/{len(new_items)} 个内容到 {len(target_channels)} 个频道")
                 else:
                     logging.info(f"抖音订阅 {douyin_url} 无新内容")
             else:

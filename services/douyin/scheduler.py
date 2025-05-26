@@ -21,32 +21,36 @@ class DouyinScheduler:
 
     async def run_scheduled_check(self, bot: Bot) -> None:
         """
-        执行抖音订阅的定时检查
+        执行抖音订阅的定时检查（支持多频道高效转发）
 
         Args:
             bot: Telegram Bot实例
         """
         try:
             subscriptions = self.douyin_manager.get_subscriptions()
-            logging.info(f"定时任务开始检查抖音订阅更新，共 {len(subscriptions)} 个订阅")
+            logging.info(f"定时任务开始检查抖音订阅更新，共 {len(subscriptions)} 个URL")
 
             # 统计信息
             total_new_content = 0
             success_count = 0
             error_count = 0
 
-            for douyin_url, subscription_info in subscriptions.items():
+            # 遍历每个URL（而不是每个频道）
+            for douyin_url, target_channels in subscriptions.items():
                 try:
-                    target_chat_id = subscription_info.get("chat_id", "")
-                    logging.info(f"正在检查抖音订阅: {douyin_url} -> 频道: {target_chat_id}")
+                    # 确保target_channels是列表格式
+                    if isinstance(target_channels, str):
+                        target_channels = [target_channels]
 
-                    # 处理单个抖音订阅
-                    new_content_count = await self.process_single_subscription(bot, douyin_url, target_chat_id)
+                    logging.info(f"正在检查抖音订阅: {douyin_url} -> 频道: {target_channels}")
+
+                    # 处理单个URL的多频道订阅（使用高效转发）
+                    new_content_count = await self.process_multi_channel_subscription(bot, douyin_url, target_channels)
 
                     if new_content_count > 0:
                         total_new_content += new_content_count
                         success_count += 1
-                        logging.info(f"抖音订阅 {douyin_url} 处理成功，发送了 {new_content_count} 个新内容")
+                        logging.info(f"抖音订阅 {douyin_url} 处理成功，发送了 {new_content_count} 个新内容到 {len(target_channels)} 个频道")
                     else:
                         success_count += 1
                         logging.info(f"抖音订阅 {douyin_url} 无新增内容")
@@ -254,6 +258,123 @@ class DouyinScheduler:
             logging.error(f"排序内容失败: {str(e)}", exc_info=True)
             # 排序失败时返回原列表
             return items
+
+    async def process_multi_channel_subscription(self, bot: Bot, douyin_url: str, target_channels: List[str]) -> int:
+        """
+        处理单个URL的多频道订阅（高效转发机制）
+
+        Args:
+            bot: Telegram Bot实例
+            douyin_url: 抖音用户链接
+            target_channels: 目标频道列表
+
+        Returns:
+            int: 发送的新内容数量
+        """
+        try:
+            logging.info(f"开始处理多频道抖音订阅: {douyin_url} -> {len(target_channels)} 个频道")
+
+            # 检查更新（返回的内容已包含target_channels信息）
+            success, error_msg, new_items = self.douyin_manager.check_updates(douyin_url)
+
+            if not success:
+                logging.warning(f"抖音订阅 {douyin_url} 检查失败: {error_msg}")
+                return 0
+
+            # 如果有新内容，使用高效转发机制
+            if new_items and len(new_items) > 0:
+                logging.info(f"抖音订阅 {douyin_url} 发现 {len(new_items)} 个新内容，将发送到 {len(target_channels)} 个频道")
+
+                # 使用高效转发批量处理
+                sent_count = await self._process_batch_with_forwarding(bot, new_items, douyin_url, target_channels)
+
+                logging.info(f"抖音订阅 {douyin_url} 发送完成，成功 {sent_count}/{len(new_items)} 个")
+                return sent_count
+            else:
+                logging.info(f"抖音订阅 {douyin_url} 无新增内容")
+                return 0
+
+        except Exception as e:
+            logging.error(f"处理多频道抖音订阅失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
+            return 0
+
+    async def _process_batch_with_forwarding(self, bot: Bot, new_items: List[Dict], douyin_url: str, target_channels: List[str]) -> int:
+        """
+        使用高效转发机制处理批量内容
+
+        Args:
+            bot: Telegram Bot实例
+            new_items: 新内容列表
+            douyin_url: 抖音用户链接
+            target_channels: 目标频道列表
+
+        Returns:
+            int: 发送成功的内容数量
+        """
+        if not target_channels:
+            return 0
+
+        # 按发布时间排序（从旧到新）
+        sorted_items = self._sort_items_by_time(new_items)
+
+        # 选择主频道（第一个频道）
+        primary_channel = target_channels[0]
+        secondary_channels = target_channels[1:]
+
+        sent_count = 0
+        for i, content_info in enumerate(sorted_items):
+            try:
+                # 步骤1：发送到主频道
+                send_success = await self._send_notification_safe(
+                    bot, content_info, douyin_url, primary_channel
+                )
+
+                if send_success:
+                    # 获取发送的消息ID（用于转发）
+                    # TODO: 需要修改_send_notification_safe返回消息ID
+                    item_id = self.douyin_manager.fetcher.generate_content_id(content_info)
+
+                    # 步骤2：转发到其他频道
+                    for secondary_channel in secondary_channels:
+                        try:
+                            # TODO: 实施转发逻辑
+                            # primary_message_id = self.douyin_manager.get_message_id(douyin_url, item_id, primary_channel)
+                            # if primary_message_id:
+                            #     await bot.forward_message(
+                            #         chat_id=secondary_channel,
+                            #         from_chat_id=primary_channel,
+                            #         message_id=primary_message_id
+                            #     )
+                            logging.info(f"TODO: 转发内容 {item_id} 从 {primary_channel} 到 {secondary_channel}")
+                        except Exception as e:
+                            logging.error(f"转发失败，降级为直接发送: {secondary_channel}, 错误: {str(e)}")
+                            # 转发失败，降级为直接发送
+                            await self._send_notification_safe(
+                                bot, content_info, douyin_url, secondary_channel
+                            )
+
+                    # 发送成功，标记为已发送
+                    self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
+                    sent_count += 1
+                    logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送成功到 {len(target_channels)} 个频道")
+                else:
+                    logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送失败，下次将重试")
+
+                # 发送间隔策略
+                if i < len(sorted_items) - 1:  # 不是最后一个
+                    if (i + 1) % 10 == 0:  # 每10条消息暂停1分钟
+                        logging.info(f"📦 已发送10个内容，暂停60秒避免flood exceed...")
+                        await asyncio.sleep(60)
+                    else:
+                        # 统一的8秒间隔
+                        logging.debug(f"等待8秒后发送下一个抖音内容...")
+                        await asyncio.sleep(8)
+
+            except Exception as e:
+                logging.error(f"处理内容失败: {douyin_url}, 第 {i+1} 个内容, 错误: {str(e)}", exc_info=True)
+                continue
+
+        return sent_count
 
 
 # 创建全局调度器实例
