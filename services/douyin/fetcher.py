@@ -162,6 +162,7 @@ class DouyinFetcher:
                     "width": video_info.get("width", 0),
                     "height": video_info.get("height", 0),
                     "size": video_info.get("size", ""),
+                    "video_info": video_info,  # 保留完整的video_info对象
                 })
             # 检查是否有images_info字段（图片内容）
             elif "images_info" in data and data["images_info"] and data["images_info"].get("images"):
