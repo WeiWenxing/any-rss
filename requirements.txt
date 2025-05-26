@@ -6,3 +6,4 @@ requests
 feedparser
 beautifulsoup4
 lxml
+redis>=4.0.0
