@@ -83,27 +83,42 @@ class DouyinScheduler:
             logging.info(f"开始处理抖音订阅: {douyin_url}")
 
             # 检查更新
-            success, error_msg, content_info = self.douyin_manager.check_updates(douyin_url)
+            success, error_msg, new_items = self.douyin_manager.check_updates(douyin_url)
 
             if not success:
                 logging.warning(f"抖音订阅 {douyin_url} 检查失败: {error_msg}")
                 return 0
 
-            # 如果有新内容，发送通知
-            if content_info:
-                logging.info(f"抖音订阅 {douyin_url} 发现新内容")
+            # 如果有新内容，逐个发送通知
+            if new_items and len(new_items) > 0:
+                logging.info(f"抖音订阅 {douyin_url} 发现 {len(new_items)} 个新内容")
 
-                # 发送通知
-                send_success = await self._send_notification_safe(
-                    bot, content_info, douyin_url, target_chat_id
-                )
+                sent_count = 0
+                for i, content_info in enumerate(new_items):
+                    try:
+                        # 发送单个内容
+                        send_success = await self._send_notification_safe(
+                            bot, content_info, douyin_url, target_chat_id
+                        )
 
-                if send_success:
-                    logging.info(f"抖音订阅 {douyin_url} 发送成功")
-                    return 1
-                else:
-                    logging.warning(f"抖音订阅 {douyin_url} 发送失败")
-                    return 0
+                        if send_success:
+                            # 发送成功，标记为已发送
+                            self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
+                            sent_count += 1
+                            logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送成功")
+                        else:
+                            logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送失败，下次将重试")
+
+                        # 添加发送间隔，避免频率限制
+                        if i < len(new_items) - 1:  # 不是最后一个
+                            await asyncio.sleep(1)  # 等待1秒
+
+                    except Exception as e:
+                        logging.error(f"发送抖音内容失败: {douyin_url} 第 {i+1} 个, 错误: {str(e)}", exc_info=True)
+                        continue
+
+                logging.info(f"抖音订阅 {douyin_url} 发送完成，成功 {sent_count}/{len(new_items)} 个")
+                return sent_count
             else:
                 logging.info(f"抖音订阅 {douyin_url} 无新增内容")
                 return 0
@@ -170,4 +185,4 @@ async def run_scheduled_check(bot: Bot) -> None:
     Args:
         bot: Telegram Bot实例
     """
-    await douyin_scheduler.run_scheduled_check(bot) 
+    await douyin_scheduler.run_scheduled_check(bot)
