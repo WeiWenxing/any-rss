@@ -6,6 +6,7 @@
 import logging
 import os
 import tempfile
+import asyncio
 from typing import Tuple, List, Optional, Dict, Any
 from telegram import Bot, InputMediaVideo, InputMediaPhoto
 from telegram.error import TelegramError
@@ -110,6 +111,11 @@ class DouyinSender:
 
         # 第一阶段全部失败，进入第二阶段：下载文件发送
         logging.info(f"第一阶段全部失败，进入第二阶段：下载文件发送")
+
+        # 阶段间等待，避免过快重试
+        if video_urls:  # 如果第一阶段有尝试过
+            logging.debug("第一阶段失败，等待2秒后进入第二阶段...")
+            await asyncio.sleep(2)
 
         # 获取下载URL列表（跳过url，只用download和download2）
         download_urls = self._get_download_urls_by_priority(video_info)
@@ -235,6 +241,11 @@ class DouyinSender:
             except Exception as e:
                 logging.error(f"❌ 第 {batch_num}/{total_batches} 批图片发送失败: {str(e)}")
                 continue
+
+            # 批次间隔：避免连续发送触发flood control
+            if batch_num < total_batches:  # 不是最后一批
+                logging.debug(f"等待3秒后发送下一批图片...")
+                await asyncio.sleep(3)  # 批次间隔3秒
 
         # 检查发送结果
         if not any_batch_success:

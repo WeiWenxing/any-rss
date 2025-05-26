@@ -6,7 +6,7 @@
 import logging
 import asyncio
 from telegram import Bot
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 from .manager import DouyinManager
 from .commands import send_douyin_content
 
@@ -93,29 +93,14 @@ class DouyinScheduler:
             if new_items and len(new_items) > 0:
                 logging.info(f"抖音订阅 {douyin_url} 发现 {len(new_items)} 个新内容")
 
-                sent_count = 0
-                for i, content_info in enumerate(new_items):
-                    try:
-                        # 发送单个内容
-                        send_success = await self._send_notification_safe(
-                            bot, content_info, douyin_url, target_chat_id
-                        )
+                # 根据内容数量选择处理策略
+                is_large_batch = len(new_items) >= 10
+                if is_large_batch:
+                    logging.info(f"🚀 启用大批量处理模式: {len(new_items)} 个内容")
+                else:
+                    logging.info(f"📤 启用常规处理模式: {len(new_items)} 个内容")
 
-                        if send_success:
-                            # 发送成功，标记为已发送
-                            self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
-                            sent_count += 1
-                            logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送成功")
-                        else:
-                            logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送失败，下次将重试")
-
-                        # 添加发送间隔，避免频率限制
-                        if i < len(new_items) - 1:  # 不是最后一个
-                            await asyncio.sleep(1)  # 等待1秒
-
-                    except Exception as e:
-                        logging.error(f"发送抖音内容失败: {douyin_url} 第 {i+1} 个, 错误: {str(e)}", exc_info=True)
-                        continue
+                sent_count = await self._process_batch(bot, new_items, douyin_url, target_chat_id)
 
                 logging.info(f"抖音订阅 {douyin_url} 发送完成，成功 {sent_count}/{len(new_items)} 个")
                 return sent_count
@@ -171,6 +156,53 @@ class DouyinScheduler:
             logging.info("抖音模块清理任务完成（暂无需清理的文件）")
         except Exception as e:
             logging.error(f"抖音模块清理文件失败: {str(e)}", exc_info=True)
+
+    async def _process_batch(self, bot: Bot, new_items: List[Dict], douyin_url: str, target_chat_id: str) -> int:
+        """
+        处理批量内容，使用统一的发送策略
+
+        Args:
+            bot: Telegram Bot实例
+            new_items: 新内容列表
+            douyin_url: 抖音用户链接
+            target_chat_id: 目标聊天ID
+
+        Returns:
+            int: 发送成功的内容数量
+        """
+        sent_count = 0
+        for i, content_info in enumerate(new_items):
+            try:
+                # 发送单个内容
+                send_success = await self._send_notification_safe(
+                    bot, content_info, douyin_url, target_chat_id
+                )
+
+                if send_success:
+                    # 发送成功，标记为已发送
+                    self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
+                    sent_count += 1
+                    logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送成功")
+                else:
+                    logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送失败，下次将重试")
+
+                # 发送间隔策略
+                if i < len(new_items) - 1:  # 不是最后一个
+                    if (i + 1) % 10 == 0:  # 每10条消息暂停1分钟（只有大批量模式才可能达到）
+                        logging.info(f"📦 已发送10个内容，暂停60秒避免flood exceed...")
+                        await asyncio.sleep(60)
+                    else:
+                        # 统一的8秒间隔（大批量的常规间隔 + 常规模式的间隔）
+                        logging.debug(f"等待8秒后发送下一个抖音内容...")
+                        await asyncio.sleep(8)
+
+            except Exception as e:
+                logging.error(f"发送抖音内容失败: {douyin_url} 第 {i+1} 个, 错误: {str(e)}", exc_info=True)
+                # 出错后也要等待，避免连续错误
+                await asyncio.sleep(5)
+                continue
+
+        return sent_count
 
 
 # 创建全局调度器实例
