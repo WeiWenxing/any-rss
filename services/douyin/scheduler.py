@@ -6,7 +6,7 @@
 import logging
 import asyncio
 from telegram import Bot
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 from .manager import DouyinManager
 from .commands import send_douyin_content
 
@@ -118,9 +118,9 @@ class DouyinScheduler:
 
     async def _send_notification_safe(
         self, bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str
-    ) -> bool:
+    ) -> Tuple[bool, Optional[int]]:
         """
-        安全地发送通知，捕获异常并返回发送结果
+        安全地发送通知，返回发送结果和消息ID
 
         Args:
             bot: Telegram Bot实例
@@ -129,14 +129,22 @@ class DouyinScheduler:
             target_chat_id: 目标聊天ID
 
         Returns:
-            bool: 是否发送成功
+            Tuple[bool, Optional[int]]: (是否发送成功, 消息ID)
         """
         try:
-            await send_douyin_content(bot, content_info, douyin_url, target_chat_id)
-            return True
+            message = await send_douyin_content(bot, content_info, douyin_url, target_chat_id)
+            
+            # 提取消息ID
+            if hasattr(message, 'message_id'):
+                return True, message.message_id
+            elif isinstance(message, list) and len(message) > 0:
+                # 如果是图片组，返回第一张图片的消息ID
+                return True, message[0].message_id
+            else:
+                return True, None
         except Exception as e:
             logging.error(f"发送抖音通知失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
-            return False
+            return False, None
 
     def get_subscription_count(self) -> int:
         """
@@ -181,7 +189,7 @@ class DouyinScheduler:
         for i, content_info in enumerate(sorted_items):
             try:
                 # 发送单个内容
-                send_success = await self._send_notification_safe(
+                send_success, message_id = await self._send_notification_safe(
                     bot, content_info, douyin_url, target_chat_id
                 )
 
@@ -325,33 +333,59 @@ class DouyinScheduler:
         for i, content_info in enumerate(sorted_items):
             try:
                 # 步骤1：发送到主频道
-                send_success = await self._send_notification_safe(
+                send_success, message_id = await self._send_notification_safe(
                     bot, content_info, douyin_url, primary_channel
                 )
 
                 if send_success:
                     # 获取发送的消息ID（用于转发）
-                    # TODO: 需要修改_send_notification_safe返回消息ID
                     item_id = self.douyin_manager.fetcher.generate_content_id(content_info)
+
+                    # 存储主频道的消息ID
+                    if message_id:
+                        self.douyin_manager.save_message_id(douyin_url, item_id, primary_channel, message_id)
+                        logging.debug(f"保存主频道消息ID: {item_id} -> {primary_channel} -> {message_id}")
 
                     # 步骤2：转发到其他频道
                     for secondary_channel in secondary_channels:
                         try:
-                            # TODO: 实施转发逻辑
-                            # primary_message_id = self.douyin_manager.get_message_id(douyin_url, item_id, primary_channel)
-                            # if primary_message_id:
-                            #     await bot.forward_message(
-                            #         chat_id=secondary_channel,
-                            #         from_chat_id=primary_channel,
-                            #         message_id=primary_message_id
-                            #     )
-                            logging.info(f"TODO: 转发内容 {item_id} 从 {primary_channel} 到 {secondary_channel}")
+                            # 获取主频道的消息ID
+                            primary_message_id = self.douyin_manager.get_message_id(douyin_url, item_id, primary_channel)
+                            
+                            if primary_message_id:
+                                # 执行转发
+                                forwarded_message = await bot.forward_message(
+                                    chat_id=secondary_channel,
+                                    from_chat_id=primary_channel,
+                                    message_id=primary_message_id
+                                )
+                                
+                                # 存储转发后的消息ID
+                                if hasattr(forwarded_message, 'message_id'):
+                                    self.douyin_manager.save_message_id(
+                                        douyin_url, item_id, secondary_channel, forwarded_message.message_id
+                                    )
+                                    logging.info(f"✅ 转发成功: {item_id} 从 {primary_channel} 到 {secondary_channel}")
+                                else:
+                                    logging.warning(f"转发成功但无法获取消息ID: {item_id} -> {secondary_channel}")
+                            else:
+                                raise Exception("无法获取主频道消息ID")
+                                
                         except Exception as e:
                             logging.error(f"转发失败，降级为直接发送: {secondary_channel}, 错误: {str(e)}")
                             # 转发失败，降级为直接发送
-                            await self._send_notification_safe(
+                            fallback_success, fallback_message_id = await self._send_notification_safe(
                                 bot, content_info, douyin_url, secondary_channel
                             )
+                            
+                            # 存储降级发送的消息ID
+                            if fallback_success and fallback_message_id:
+                                self.douyin_manager.save_message_id(douyin_url, item_id, secondary_channel, fallback_message_id)
+                                logging.debug(f"保存降级发送消息ID: {item_id} -> {secondary_channel} -> {fallback_message_id}")
+                                
+                        # 转发间隔，避免flood control
+                        if secondary_channel != secondary_channels[-1]:  # 不是最后一个频道
+                            await asyncio.sleep(1)
 
                     # 发送成功，标记为已发送
                     self.douyin_manager.mark_item_as_sent(douyin_url, content_info)

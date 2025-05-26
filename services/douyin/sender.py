@@ -23,7 +23,7 @@ class DouyinSender:
         self.manager = DouyinManager()
         self.formatter = DouyinFormatter()
 
-    async def send_content(self, bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str) -> None:
+    async def send_content(self, bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str):
         """
         发送抖音内容到指定频道 - 统一使用MediaGroup形式
 
@@ -32,6 +32,9 @@ class DouyinSender:
             content_info: 内容信息
             douyin_url: 抖音用户链接
             target_chat_id: 目标频道ID
+            
+        Returns:
+            发送的消息对象或消息列表
         """
         try:
             logging.info(f"开始发送抖音内容: {content_info.get('title', '无标题')} to {target_chat_id}")
@@ -43,21 +46,24 @@ class DouyinSender:
             # 检查是否有媒体内容
             if not media_type or media_type not in ["video", "image", "images"]:
                 logging.info(f"抖音内容无媒体文件，跳过发送: {content_info.get('title', '无标题')}")
-                return
+                return None
 
             # 根据媒体类型发送
             if media_type == "video":
-                await self._send_video_content(bot, content_info, caption, target_chat_id)
+                message = await self._send_video_content(bot, content_info, caption, target_chat_id)
             elif media_type in ["image", "images"]:  # 统一处理所有图片类型
-                await self._send_images_content(bot, content_info, caption, target_chat_id)
+                message = await self._send_images_content(bot, content_info, caption, target_chat_id)
+            else:
+                return None
 
             logging.info(f"抖音内容发送成功: {content_info.get('title', '无标题')}")
+            return message
 
         except Exception as e:
             logging.error(f"发送抖音内容失败: {str(e)}", exc_info=True)
             raise
 
-    async def _send_video_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str) -> None:
+    async def _send_video_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str):
         """
         发送视频内容，支持两阶段容错机制：
         第一阶段：直接发送URL链接 (url -> download -> download2)
@@ -68,6 +74,9 @@ class DouyinSender:
             content_info: 内容信息
             caption: 媒体标题
             target_chat_id: 目标频道ID
+            
+        Returns:
+            发送的消息列表
         """
         video_info = content_info.get("video_info", {})
 
@@ -76,7 +85,7 @@ class DouyinSender:
 
         if not video_urls:
             logging.warning(f"视频内容无可用URL: {content_info.get('title', '无标题')}")
-            return
+            return None
 
         # 第一阶段：尝试直接发送URL链接
         logging.info(f"第一阶段：尝试直接发送URL链接，共 {len(video_urls)} 个URL")
@@ -94,13 +103,13 @@ class DouyinSender:
                 ]
 
                 # 发送媒体组
-                await bot.send_media_group(
+                messages = await bot.send_media_group(
                     chat_id=target_chat_id,
                     media=media_group
                 )
 
                 logging.info(f"视频URL发送成功 ({url_type}): {content_info.get('title', '无标题')}")
-                return  # 成功发送，退出函数
+                return messages  # 成功发送，返回消息列表
 
             except TelegramError as telegram_error:
                 logging.warning(f"Telegram URL发送失败 ({url_type}): {str(telegram_error)}")
@@ -148,13 +157,13 @@ class DouyinSender:
                     ]
 
                     # 发送媒体组
-                    await bot.send_media_group(
+                    messages = await bot.send_media_group(
                         chat_id=target_chat_id,
                         media=media_group
                     )
 
                     logging.info(f"视频文件发送成功 ({url_type}): {content_info.get('title', '无标题')}")
-                    return  # 成功发送，退出函数
+                    return messages  # 成功发送，返回消息列表
 
                 except TelegramError as telegram_error:
                     logging.warning(f"Telegram文件发送失败 ({url_type}): {str(telegram_error)}")
@@ -171,7 +180,7 @@ class DouyinSender:
         # 两个阶段都失败了
         raise Exception(f"所有发送方式都失败：URL发送尝试了 {len(video_urls)} 个链接，文件发送尝试了 {len(download_urls)} 个链接")
 
-    async def _send_images_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str) -> None:
+    async def _send_images_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str):
         """
         发送多图内容 - 参考RSS策略，使用纯URL发送，支持分批处理
 
@@ -180,12 +189,15 @@ class DouyinSender:
             content_info: 内容信息
             caption: 媒体标题
             target_chat_id: 目标频道ID
+            
+        Returns:
+            发送的消息列表（第一批的消息列表）
         """
         images = content_info.get("images", [])
 
         if not images:
             logging.warning(f"多图内容无图片URL: {content_info.get('title', '无标题')}")
-            return
+            return None
 
         logging.info(f"开始发送多图内容: {len(images)} 张图片")
 
@@ -198,6 +210,7 @@ class DouyinSender:
         # 按批次发送
         image_index = 0
         any_batch_success = False
+        first_batch_messages = None  # 保存第一批的消息列表用于返回
 
         for batch_num, batch_size in enumerate(batch_sizes, 1):
             # 获取当前批次的图片
@@ -230,13 +243,17 @@ class DouyinSender:
                     telegram_media.append(media_item)
 
                 # 发送媒体组
-                await bot.send_media_group(
+                messages = await bot.send_media_group(
                     chat_id=target_chat_id,
                     media=telegram_media
                 )
 
                 logging.info(f"✅ 第 {batch_num}/{total_batches} 批图片发送成功 ({batch_size}张图片)")
                 any_batch_success = True
+                
+                # 保存第一批的消息列表
+                if batch_num == 1:
+                    first_batch_messages = messages
 
             except Exception as e:
                 logging.error(f"❌ 第 {batch_num}/{total_batches} 批图片发送失败: {str(e)}")
@@ -254,6 +271,8 @@ class DouyinSender:
             logging.info(f"🎉 多图发送完成: 成功发送了部分或全部批次")
         else:
             logging.info(f"🎉 图片发送成功: {len(images)} 张图片")
+            
+        return first_batch_messages  # 返回第一批的消息列表
 
     def _calculate_balanced_batches(self, total_images: int, max_per_batch: int = 10) -> list[int]:
         """
@@ -356,7 +375,7 @@ class DouyinSender:
 douyin_sender = DouyinSender()
 
 
-async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str) -> None:
+async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str):
     """
     发送抖音内容的统一接口
 
@@ -365,5 +384,8 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
         content_info: 内容信息
         douyin_url: 抖音用户链接
         target_chat_id: 目标频道ID
+        
+    Returns:
+        发送的消息对象或消息列表
     """
-    await douyin_sender.send_content(bot, content_info, douyin_url, target_chat_id)
+    return await douyin_sender.send_content(bot, content_info, douyin_url, target_chat_id)

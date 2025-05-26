@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes, CommandHandler, Application
 from .manager import DouyinManager
 from .formatter import DouyinFormatter
 from .sender import send_douyin_content
+from .alignment import perform_historical_alignment
 
 
 # 全局实例
@@ -83,14 +84,23 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"🔄 正在进行历史对齐，从主频道 {primary_channel} 转发 {len(known_item_ids)} 个历史内容..."
             )
 
-            # TODO: 实施历史对齐转发逻辑
-            # 这里需要从primary_channel转发所有known_item_ids对应的消息到new_channel
-            # 暂时先显示提示信息
-            await update.message.reply_text(
-                f"⚠️ 历史对齐功能正在开发中\n"
-                f"📊 需要对齐 {len(known_item_ids)} 个历史内容\n"
-                f"🔄 系统将继续自动监控新内容"
+            # 实施历史对齐转发
+            alignment_success = await perform_historical_alignment(
+                context.bot, douyin_url, known_item_ids, primary_channel, new_channel
             )
+            
+            if alignment_success:
+                await update.message.reply_text(
+                    f"🎉 历史对齐完成！\n"
+                    f"📊 成功转发 {len(known_item_ids)} 个历史内容\n"
+                    f"🔄 系统将继续自动监控新内容"
+                )
+            else:
+                await update.message.reply_text(
+                    f"⚠️ 历史对齐部分失败\n"
+                    f"📊 尝试转发 {len(known_item_ids)} 个历史内容\n"
+                    f"🔄 系统将继续自动监控新内容"
+                )
             return
 
         # 判断是否为更新现有订阅
