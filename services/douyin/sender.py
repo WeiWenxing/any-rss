@@ -47,10 +47,8 @@ class DouyinSender:
             # 根据媒体类型发送
             if media_type == "video":
                 await self._send_video_content(bot, content_info, caption, target_chat_id)
-            elif media_type == "images":
+            elif media_type in ["image", "images"]:  # 统一处理所有图片类型
                 await self._send_images_content(bot, content_info, caption, target_chat_id)
-            elif media_type == "image":
-                await self._send_single_image_content(bot, content_info, caption, target_chat_id)
 
             logging.info(f"抖音内容发送成功: {content_info.get('title', '无标题')}")
 
@@ -169,7 +167,7 @@ class DouyinSender:
 
     async def _send_images_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str) -> None:
         """
-        发送多图内容
+        发送多图内容 - 参考RSS策略，使用纯URL发送，支持分批处理
 
         Args:
             bot: Telegram Bot实例
@@ -183,103 +181,100 @@ class DouyinSender:
             logging.warning(f"多图内容无图片URL: {content_info.get('title', '无标题')}")
             return
 
-        media_group = []
-        temp_files = []
+        logging.info(f"开始发送多图内容: {len(images)} 张图片")
 
-        try:
-            # 下载所有图片（最多10张，Telegram限制）
-            for i, image_url in enumerate(images[:10]):
-                try:
-                    logging.info(f"下载图片 {i+1}/{min(len(images), 10)}: {image_url[:100]}...")
+        # 计算分批方案（每批最多10张，参考RSS策略）
+        batch_sizes = self._calculate_balanced_batches(len(images), max_per_batch=10)
+        total_batches = len(batch_sizes)
 
-                    success, error_msg, local_path = self.manager.download_and_save_media(
-                        content_info, image_url, "image"
-                    )
+        logging.info(f"📦 分批发送方案: {total_batches} 批，分批大小: {batch_sizes}")
 
-                    if success:
-                        media_group.append(
-                            InputMediaPhoto(
-                                media=open(local_path, 'rb'),
-                                caption=caption if i == 0 else None,  # 只在第一张图片添加caption
-                                parse_mode='Markdown'
-                            )
-                        )
-                        temp_files.append(local_path)
-                    else:
-                        logging.warning(f"图片下载失败 {i+1}: {error_msg}")
+        # 按批次发送
+        image_index = 0
+        any_batch_success = False
 
-                except Exception as e:
-                    logging.warning(f"处理图片失败 {i+1}: {str(e)}")
-                    continue
+        for batch_num, batch_size in enumerate(batch_sizes, 1):
+            # 获取当前批次的图片
+            batch_images = images[image_index:image_index + batch_size]
+            image_index += batch_size
 
-            if not media_group:
-                raise Exception("所有图片下载都失败了")
+            logging.info(f"📤 准备发送第 {batch_num}/{total_batches} 批，包含 {batch_size} 张图片")
 
-            # 发送媒体组
-            await bot.send_media_group(
-                chat_id=target_chat_id,
-                media=media_group
-            )
-
-            logging.info(f"多图发送成功: {len(media_group)} 张图片")
-
-        finally:
-            # 清理所有临时文件
-            for temp_file in temp_files:
-                self._cleanup_temp_file(temp_file)
-
-    async def _send_single_image_content(self, bot: Bot, content_info: dict, caption: str, target_chat_id: str) -> None:
-        """
-        发送单图内容
-
-        Args:
-            bot: Telegram Bot实例
-            content_info: 内容信息
-            caption: 媒体标题
-            target_chat_id: 目标频道ID
-        """
-        image_url = content_info.get("media_url", "")
-
-        if not image_url:
-            logging.warning(f"单图内容无图片URL: {content_info.get('title', '无标题')}")
-            return
-
-        try:
-            logging.info(f"下载单图: {image_url[:100]}...")
-
-            # 下载图片文件
-            success, error_msg, local_path = self.manager.download_and_save_media(
-                content_info, image_url, "image"
-            )
-
-            if not success:
-                raise Exception(f"图片下载失败: {error_msg}")
+            # 构建当前批次的caption
+            if total_batches > 1:
+                if batch_num == 1:
+                    # 第一批：使用完整caption + 批次信息
+                    batch_caption = f"{caption}\n\n📸 {batch_num}/{total_batches}"
+                else:
+                    # 后续批次：只显示批次信息
+                    batch_caption = f"📸 {batch_num}/{total_batches}"
+            else:
+                # 只有一批，直接使用完整caption
+                batch_caption = caption
 
             try:
-                # 创建媒体组（只包含一张图片）
-                media_group = [
-                    InputMediaPhoto(
-                        media=open(local_path, 'rb'),
-                        caption=caption,
+                # 构建媒体组（纯URL发送，参考RSS策略）
+                telegram_media = []
+                for i, image_url in enumerate(batch_images):
+                    media_item = InputMediaPhoto(
+                        media=image_url,  # 直接使用URL，不下载
+                        caption=batch_caption if i == 0 else None,  # 只在第一张图片添加caption
                         parse_mode='Markdown'
                     )
-                ]
+                    telegram_media.append(media_item)
 
                 # 发送媒体组
                 await bot.send_media_group(
                     chat_id=target_chat_id,
-                    media=media_group
+                    media=telegram_media
                 )
 
-                logging.info(f"单图发送成功: {content_info.get('title', '无标题')}")
+                logging.info(f"✅ 第 {batch_num}/{total_batches} 批图片发送成功 ({batch_size}张图片)")
+                any_batch_success = True
 
-            finally:
-                # 清理临时文件
-                self._cleanup_temp_file(local_path)
+            except Exception as e:
+                logging.error(f"❌ 第 {batch_num}/{total_batches} 批图片发送失败: {str(e)}")
+                continue
 
-        except Exception as e:
-            logging.error(f"发送单图失败: {str(e)}", exc_info=True)
-            raise
+        # 检查发送结果
+        if not any_batch_success:
+            raise Exception(f"所有 {total_batches} 批图片都发送失败")
+        elif total_batches > 1:
+            logging.info(f"🎉 多图发送完成: 成功发送了部分或全部批次")
+        else:
+            logging.info(f"🎉 图片发送成功: {len(images)} 张图片")
+
+    def _calculate_balanced_batches(self, total_images: int, max_per_batch: int = 10) -> list[int]:
+        """
+        计算均衡的图片分批方案（参考RSS实现）
+
+        Args:
+            total_images: 总图片数量
+            max_per_batch: 每批最大图片数量
+
+        Returns:
+            list[int]: 每批的图片数量列表
+        """
+        if total_images <= max_per_batch:
+            return [total_images]
+
+        # 计算需要多少批
+        num_batches = (total_images + max_per_batch - 1) // max_per_batch
+
+        # 计算基础每批数量
+        base_size = total_images // num_batches
+        remainder = total_images % num_batches
+
+        # 构建分批方案：前remainder批多1张，后面的批次为base_size
+        batch_sizes = []
+        for i in range(num_batches):
+            if i < remainder:
+                batch_sizes.append(base_size + 1)
+            else:
+                batch_sizes.append(base_size)
+
+        logging.info(f"均衡分批方案: 总数{total_images}, 分{num_batches}批, 方案{batch_sizes}")
+        return batch_sizes
 
     def _get_video_urls_by_priority(self, video_info: dict) -> List[Tuple[str, str]]:
         """
