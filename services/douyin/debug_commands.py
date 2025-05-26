@@ -117,12 +117,26 @@ async def _process_debug_show(update: Update, context: ContextTypes.DEFAULT_TYPE
         source: 数据来源描述
     """
     try:
+        # 导入fetcher来处理内容信息
+        from .fetcher import DouyinFetcher
+        fetcher = DouyinFetcher()
+
+        # 使用extract_content_info处理原始JSON数据，确保media_type等字段被正确设置
+        processed_content_info = fetcher.extract_content_info(content_info)
+        if not processed_content_info:
+            await update.message.reply_text("❌ 处理内容信息失败")
+            return
+
+        # 使用处理后的数据
+        content_info = processed_content_info
+
         title = content_info.get('title', 'Unknown')
         aweme_id = content_info.get('aweme_id', 'Unknown')
         content_type = content_info.get('type', 'Unknown')
+        media_type = content_info.get('media_type', 'Unknown')
         chat_id = update.message.chat_id
 
-        logging.info(f"解析到内容: ID={aweme_id}, 标题={title}, 类型={content_type}, 来源={source}")
+        logging.info(f"解析到内容: ID={aweme_id}, 标题={title}, 类型={content_type}, 媒体类型={media_type}, 来源={source}")
 
         # 发送状态消息
         status_msg = await update.message.reply_text(
@@ -130,6 +144,7 @@ async def _process_debug_show(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📋 ID: {aweme_id}\n"
             f"📝 标题: {title}\n"
             f"📱 类型: {content_type}\n"
+            f"🎬 媒体类型: {media_type}\n"
             f"📥 数据来源: {source}"
         )
 
@@ -678,12 +693,14 @@ async def _handle_debug_show_upload(update: Update, context: ContextTypes.DEFAUL
         title = content_info.get('title', 'Unknown')
         aweme_id = content_info.get('aweme_id', 'Unknown')
         content_type = content_info.get('type', 'Unknown')
+        media_type = content_info.get('media_type', 'Unknown')
 
         await status_msg.edit_text(
             f"✅ JSON文件解析成功！\n"
             f"📋 ID: {aweme_id}\n"
             f"📝 标题: {title}\n"
             f"📱 类型: {content_type}\n"
+            f"🎬 媒体类型: {media_type}\n"
             f"📁 文件: {document.file_name}\n\n"
             f"🔄 开始完整调试处理..."
         )
@@ -733,12 +750,14 @@ async def _handle_general_upload(update: Update, context: ContextTypes.DEFAULT_T
         title = content_info.get('title', 'Unknown')
         aweme_id = content_info.get('aweme_id', 'Unknown')
         content_type = content_info.get('type', 'Unknown')
+        media_type = content_info.get('media_type', 'Unknown')
 
         await status_msg.edit_text(
             f"✅ JSON文件解析成功！\n"
             f"📋 ID: {aweme_id}\n"
             f"📝 标题: {title}\n"
             f"📱 类型: {content_type}\n"
+            f"🎬 媒体类型: {media_type}\n"
             f"📁 文件: {document.file_name}\n\n"
             f"🔄 开始调试处理..."
         )
@@ -858,12 +877,14 @@ async def douyin_debug_url_command(update: Update, context: ContextTypes.DEFAULT
             title = content_info.get('title', 'Unknown')
             aweme_id = content_info.get('aweme_id', 'Unknown')
             content_type = content_info.get('type', 'Unknown')
+            media_type = content_info.get('media_type', 'Unknown')
 
             await status_msg.edit_text(
                 f"✅ 抖音内容获取成功！\n"
                 f"📋 ID: {aweme_id}\n"
                 f"📝 标题: {title}\n"
-                f"📱 类型: {content_type}\n\n"
+                f"📱 类型: {content_type}\n"
+                f"🎬 媒体类型: {media_type}\n\n"
                 f"🔄 开始调试处理..."
             )
 
