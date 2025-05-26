@@ -422,36 +422,6 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"保存已知item IDs失败: {douyin_url}", exc_info=True)
 
-    def _save_content_data(self, douyin_url: str, content_info: Dict):
-        """
-        保存内容数据到文件
-
-        Args:
-            douyin_url: 抖音用户主页链接
-            content_info: 内容信息
-        """
-        try:
-            user_dir = self._get_user_dir(douyin_url)
-
-            # 保存内容信息
-            content_file = user_dir / f"content_{content_info.get('aweme_id', 'unknown')}.json"
-            content_file.write_text(
-                json.dumps(content_info, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            # 保存最新内容引用
-            latest_file = user_dir / "latest.json"
-            latest_file.write_text(
-                json.dumps(content_info, indent=2, ensure_ascii=False),
-                encoding='utf-8'
-            )
-
-            logging.debug(f"内容数据已保存: {content_file}")
-
-        except Exception as e:
-            logging.error(f"保存内容数据失败: {douyin_url}", exc_info=True)
-
     def _save_all_content_data(self, douyin_url: str, all_content_data: List[Dict]):
         """
         保存全部内容数据到文件

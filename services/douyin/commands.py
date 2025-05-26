@@ -128,10 +128,8 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if check_success and new_items:
                 logging.info(f"订阅检查到 {len(new_items)} 个新内容，开始发送")
 
-                # 使用调度器的多频道批量处理逻辑
-                from .scheduler import DouyinScheduler
-                scheduler = DouyinScheduler()
-                sent_count = await scheduler._process_batch_with_forwarding(context.bot, new_items, douyin_url, [target_chat_id])
+                # 使用Manager的批量发送方法
+                sent_count = await douyin_manager.send_content_batch(context.bot, new_items, douyin_url, [target_chat_id])
 
                 logging.info(f"抖音订阅 {douyin_url} 成功发送 {sent_count}/{len(new_items)} 个内容到 1 个频道")
 
@@ -287,10 +285,8 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 if new_items:  # 有新内容
                     logging.info(f"抖音订阅 {douyin_url} 发现 {len(new_items)} 个新内容")
 
-                    # 使用调度器的多频道批量处理逻辑
-                    from .scheduler import DouyinScheduler
-                    scheduler = DouyinScheduler()
-                    sent_count = await scheduler._process_batch_with_forwarding(context.bot, new_items, douyin_url, target_channels)
+                    # 使用Manager的批量发送方法
+                    sent_count = await douyin_manager.send_content_batch(context.bot, new_items, douyin_url, target_channels)
 
                     new_content_count += sent_count
                     logging.info(f"抖音订阅 {douyin_url} 成功发送 {sent_count}/{len(new_items)} 个内容到 {len(target_channels)} 个频道")

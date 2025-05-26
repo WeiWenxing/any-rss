@@ -183,7 +183,7 @@ class DouyinScheduler:
             int: 发送成功的内容数量
         """
         # 按发布时间排序（从旧到新）
-        sorted_items = self._sort_items_by_time(new_items)
+        sorted_items = self.douyin_manager._sort_items_by_time(new_items)
 
         sent_count = 0
         for i, content_info in enumerate(sorted_items):
@@ -218,54 +218,6 @@ class DouyinScheduler:
                 continue
 
         return sent_count
-
-    def _sort_items_by_time(self, items: List[Dict]) -> List[Dict]:
-        """
-        按发布时间排序内容列表（从旧到新）
-
-        Args:
-            items: 内容列表
-
-        Returns:
-            List[Dict]: 排序后的内容列表
-        """
-        try:
-            def get_sort_key(item):
-                """获取排序键"""
-                time_str = item.get("time", "")
-                if not time_str:
-                    # 没有时间信息的放到最后
-                    return "9999-12-31"
-
-                # 处理不同的时间格式
-                if isinstance(time_str, str):
-                    # 如果是日期格式如 "2025-03-05"，直接返回
-                    if len(time_str) >= 10 and time_str[4] == '-' and time_str[7] == '-':
-                        return time_str
-                    # 如果是其他格式，尝试提取日期部分
-                    import re
-                    date_match = re.search(r'(\d{4}-\d{2}-\d{2})', time_str)
-                    if date_match:
-                        return date_match.group(1)
-
-                # 无法解析的时间格式，使用原始字符串
-                return str(time_str)
-
-            # 排序（从旧到新）
-            sorted_items = sorted(items, key=get_sort_key)
-
-            # 记录排序信息
-            if len(items) > 1:
-                first_time = sorted_items[0].get("time", "Unknown")
-                last_time = sorted_items[-1].get("time", "Unknown")
-                logging.info(f"📅 内容按时间排序完成: {len(items)} 个内容，时间范围: {first_time} ~ {last_time}")
-
-            return sorted_items
-
-        except Exception as e:
-            logging.error(f"排序内容失败: {str(e)}", exc_info=True)
-            # 排序失败时返回原列表
-            return items
 
     async def process_multi_channel_subscription(self, bot: Bot, douyin_url: str, target_channels: List[str]) -> int:
         """
@@ -319,96 +271,8 @@ class DouyinScheduler:
         Returns:
             int: 发送成功的内容数量
         """
-        if not target_channels:
-            return 0
-
-        # 按发布时间排序（从旧到新）
-        sorted_items = self._sort_items_by_time(new_items)
-
-        # 选择主频道（第一个频道）
-        primary_channel = target_channels[0]
-        secondary_channels = target_channels[1:]
-
-        sent_count = 0
-        for i, content_info in enumerate(sorted_items):
-            try:
-                # 步骤1：发送到主频道
-                send_success, message_id = await self._send_notification_safe(
-                    bot, content_info, douyin_url, primary_channel
-                )
-
-                if send_success:
-                    # 获取发送的消息ID（用于转发）
-                    item_id = self.douyin_manager.fetcher.generate_content_id(content_info)
-
-                    # 存储主频道的消息ID
-                    if message_id:
-                        self.douyin_manager.save_message_id(douyin_url, item_id, primary_channel, message_id)
-                        logging.debug(f"保存主频道消息ID: {item_id} -> {primary_channel} -> {message_id}")
-
-                    # 步骤2：转发到其他频道
-                    for secondary_channel in secondary_channels:
-                        try:
-                            # 获取主频道的消息ID
-                            primary_message_id = self.douyin_manager.get_message_id(douyin_url, item_id, primary_channel)
-                            
-                            if primary_message_id:
-                                # 执行转发
-                                forwarded_message = await bot.forward_message(
-                                    chat_id=secondary_channel,
-                                    from_chat_id=primary_channel,
-                                    message_id=primary_message_id
-                                )
-                                
-                                # 存储转发后的消息ID
-                                if hasattr(forwarded_message, 'message_id'):
-                                    self.douyin_manager.save_message_id(
-                                        douyin_url, item_id, secondary_channel, forwarded_message.message_id
-                                    )
-                                    logging.info(f"✅ 转发成功: {item_id} 从 {primary_channel} 到 {secondary_channel}")
-                                else:
-                                    logging.warning(f"转发成功但无法获取消息ID: {item_id} -> {secondary_channel}")
-                            else:
-                                raise Exception("无法获取主频道消息ID")
-                                
-                        except Exception as e:
-                            logging.error(f"转发失败，降级为直接发送: {secondary_channel}, 错误: {str(e)}")
-                            # 转发失败，降级为直接发送
-                            fallback_success, fallback_message_id = await self._send_notification_safe(
-                                bot, content_info, douyin_url, secondary_channel
-                            )
-                            
-                            # 存储降级发送的消息ID
-                            if fallback_success and fallback_message_id:
-                                self.douyin_manager.save_message_id(douyin_url, item_id, secondary_channel, fallback_message_id)
-                                logging.debug(f"保存降级发送消息ID: {item_id} -> {secondary_channel} -> {fallback_message_id}")
-                                
-                        # 转发间隔，避免flood control
-                        if secondary_channel != secondary_channels[-1]:  # 不是最后一个频道
-                            await asyncio.sleep(1)
-
-                    # 发送成功，标记为已发送
-                    self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
-                    sent_count += 1
-                    logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送成功到 {len(target_channels)} 个频道")
-                else:
-                    logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送失败，下次将重试")
-
-                # 发送间隔策略
-                if i < len(sorted_items) - 1:  # 不是最后一个
-                    if (i + 1) % 10 == 0:  # 每10条消息暂停1分钟
-                        logging.info(f"📦 已发送10个内容，暂停60秒避免flood exceed...")
-                        await asyncio.sleep(60)
-                    else:
-                        # 统一的8秒间隔
-                        logging.debug(f"等待8秒后发送下一个抖音内容...")
-                        await asyncio.sleep(8)
-
-            except Exception as e:
-                logging.error(f"处理内容失败: {douyin_url}, 第 {i+1} 个内容, 错误: {str(e)}", exc_info=True)
-                continue
-
-        return sent_count
+        # 直接使用Manager的批量发送方法
+        return await self.douyin_manager.send_content_batch(bot, new_items, douyin_url, target_channels)
 
 
 # 创建全局调度器实例
