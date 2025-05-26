@@ -109,7 +109,7 @@ async def douyin_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     douyin_url = context.args[0]
     logging.info(f"执行douyin_del命令，URL: {douyin_url}")
-    
+
     success, error_msg = douyin_manager.remove_subscription(douyin_url)
     if success:
         logging.info(f"成功删除抖音订阅: {douyin_url}")
@@ -139,7 +139,7 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         chat_id_info = subscription_info.get("chat_id", "")
         nickname = subscription_info.get("nickname", "")
         author = subscription_info.get("author", "")
-        
+
         # 构建用户显示名
         if nickname and author and nickname != author:
             user_display = f"{nickname} (@{author})"
@@ -149,12 +149,12 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             user_display = f"@{author}"
         else:
             user_display = "未知用户"
-        
+
         # 缩短URL显示
         short_url = douyin_url
         if len(douyin_url) > 50:
             short_url = douyin_url[:25] + "..." + douyin_url[-20:]
-        
+
         subscription_list.append(f"👤 {user_display}\n🔗 {short_url}\n📺 → {chat_id_info}")
 
     subscription_text = "\n\n".join(subscription_list)
@@ -228,7 +228,7 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str) -> None:
     """
     发送抖音内容到指定频道
-    
+
     Args:
         bot: Telegram Bot实例
         content_info: 内容信息
@@ -237,17 +237,17 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
     """
     try:
         logging.info(f"开始发送抖音内容: {content_info.get('title', '无标题')} to {target_chat_id}")
-        
+
         # 格式化消息
         message_text = douyin_formatter.format_content_message(content_info)
         caption = douyin_formatter.format_caption(content_info)
-        
+
         media_type = content_info.get("media_type", "")
-        
+
         if media_type == "video":
             # 尝试下载并发送视频
             success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
-            
+
             if success and local_path:
                 # 发送视频文件
                 try:
@@ -275,11 +275,11 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
                     text=message_text,
                     disable_web_page_preview=False
                 )
-                
+
         elif media_type in ["image", "images"]:
             # 尝试下载并发送图片
             success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
-            
+
             if success and local_path:
                 # 发送图片文件
                 try:
@@ -313,9 +313,9 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
                 text=message_text,
                 disable_web_page_preview=False
             )
-            
+
         logging.info(f"✅ 抖音内容发送完成: {content_info.get('title', '无标题')}")
-        
+
     except Exception as e:
         logging.error(f"❌ 发送抖音内容失败: {content_info.get('title', 'Unknown')}, 错误: {str(e)}", exc_info=True)
 
@@ -326,4 +326,9 @@ def register_douyin_commands(application: Application) -> None:
     application.add_handler(CommandHandler("douyin_del", douyin_del_command))
     application.add_handler(CommandHandler("douyin_list", douyin_list_command))
     application.add_handler(CommandHandler("douyin_check", douyin_check_command))
-    logging.info("抖音命令处理器注册完成") 
+
+    # 注册调试命令
+    from .debug_commands import register_douyin_debug_commands
+    register_douyin_debug_commands(application)
+
+    logging.info("抖音命令处理器注册完成")
