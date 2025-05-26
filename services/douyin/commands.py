@@ -28,15 +28,16 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not context.args:
         logging.info("显示DOUYIN_ADD命令帮助信息")
         await update.message.reply_text(
-            "请提供抖音用户主页链接和目标频道ID\n"
-            "格式：/douyin_add <抖音链接> <CHAT_ID>\n\n"
-            "例如：\n"
-            "/douyin_add https://v.douyin.com/iM5g7LsM/ @my_channel\n"
-            "/douyin_add https://www.douyin.com/user/MS4wLjABAAAAxxx -1001234567890\n\n"
-            "支持的链接格式：\n"
-            "- https://v.douyin.com/xxx (手机分享链接)\n"
-            "- https://www.douyin.com/user/xxx (电脑端用户主页)\n"
-            "注意：首次添加订阅时，会展示用户最新发布的内容"
+            "🎵 抖音订阅功能\n\n"
+            "使用方法：\n"
+            "/douyin_add <抖音链接> <频道ID> - 添加抖音订阅\n"
+            "/douyin_del <抖音链接> - 删除抖音订阅\n"
+            "/douyin_list - 查看所有抖音订阅\n"
+            "/douyin_check - 手动检查更新\n\n"
+            "支持的抖音链接格式：\n"
+            "• https://www.douyin.com/user/xxx\n"
+            "• https://v.douyin.com/xxx (短链接)\n\n"
+            "系统会自动监控并推送新内容到指定频道"
         )
         return
 
@@ -69,18 +70,13 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
 
     if success:
-        if "首次添加" in error_msg:
-            await update.message.reply_text(
-                f"✅ 成功添加抖音订阅：{douyin_url}\n"
-                f"📺 目标频道：{target_chat_id}\n"
-                f"📋 这是首次添加，将展示最新内容"
-            )
-        elif "更新成功" in error_msg:
+        if "更新成功" in error_msg:
             await update.message.reply_text(f"✅ 抖音订阅已更新，频道改为：{target_chat_id}")
         else:
             await update.message.reply_text(
                 f"✅ 成功添加抖音订阅：{douyin_url}\n"
-                f"📺 目标频道：{target_chat_id}"
+                f"📺 目标频道：{target_chat_id}\n"
+                f"💡 系统将自动检查并推送新内容"
             )
 
         # 如果有内容信息，发送到指定频道

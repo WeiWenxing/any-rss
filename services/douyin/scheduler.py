@@ -170,8 +170,11 @@ class DouyinScheduler:
         Returns:
             int: 发送成功的内容数量
         """
+        # 按发布时间排序（从旧到新）
+        sorted_items = self._sort_items_by_time(new_items)
+
         sent_count = 0
-        for i, content_info in enumerate(new_items):
+        for i, content_info in enumerate(sorted_items):
             try:
                 # 发送单个内容
                 send_success = await self._send_notification_safe(
@@ -182,12 +185,12 @@ class DouyinScheduler:
                     # 发送成功，标记为已发送
                     self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
                     sent_count += 1
-                    logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送成功")
+                    logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送成功")
                 else:
-                    logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(new_items)} 个内容发送失败，下次将重试")
+                    logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送失败，下次将重试")
 
                 # 发送间隔策略
-                if i < len(new_items) - 1:  # 不是最后一个
+                if i < len(sorted_items) - 1:  # 不是最后一个
                     if (i + 1) % 10 == 0:  # 每10条消息暂停1分钟（只有大批量模式才可能达到）
                         logging.info(f"📦 已发送10个内容，暂停60秒避免flood exceed...")
                         await asyncio.sleep(60)
@@ -203,6 +206,54 @@ class DouyinScheduler:
                 continue
 
         return sent_count
+
+    def _sort_items_by_time(self, items: List[Dict]) -> List[Dict]:
+        """
+        按发布时间排序内容列表（从旧到新）
+
+        Args:
+            items: 内容列表
+
+        Returns:
+            List[Dict]: 排序后的内容列表
+        """
+        try:
+            def get_sort_key(item):
+                """获取排序键"""
+                time_str = item.get("time", "")
+                if not time_str:
+                    # 没有时间信息的放到最后
+                    return "9999-12-31"
+
+                # 处理不同的时间格式
+                if isinstance(time_str, str):
+                    # 如果是日期格式如 "2025-03-05"，直接返回
+                    if len(time_str) >= 10 and time_str[4] == '-' and time_str[7] == '-':
+                        return time_str
+                    # 如果是其他格式，尝试提取日期部分
+                    import re
+                    date_match = re.search(r'(\d{4}-\d{2}-\d{2})', time_str)
+                    if date_match:
+                        return date_match.group(1)
+
+                # 无法解析的时间格式，使用原始字符串
+                return str(time_str)
+
+            # 排序（从旧到新）
+            sorted_items = sorted(items, key=get_sort_key)
+
+            # 记录排序信息
+            if len(items) > 1:
+                first_time = sorted_items[0].get("time", "Unknown")
+                last_time = sorted_items[-1].get("time", "Unknown")
+                logging.info(f"📅 内容按时间排序完成: {len(items)} 个内容，时间范围: {first_time} ~ {last_time}")
+
+            return sorted_items
+
+        except Exception as e:
+            logging.error(f"排序内容失败: {str(e)}", exc_info=True)
+            # 排序失败时返回原列表
+            return items
 
 
 # 创建全局调度器实例

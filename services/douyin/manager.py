@@ -101,7 +101,7 @@ class DouyinManager:
             is_new_subscription = douyin_url not in subscriptions
 
             if is_new_subscription:
-                # 首次添加，获取全部内容数据
+                # 新订阅：获取内容信息用于验证，但不标记任何内容为已知
                 success, error_msg, all_content_data = self.fetcher.fetch_user_content(douyin_url)
                 if not success:
                     return False, f"无法获取抖音内容: {error_msg}", None
@@ -114,14 +114,6 @@ class DouyinManager:
                 content_info = self.fetcher.extract_content_info(latest_content_data)
                 if not content_info:
                     return False, "解析抖音内容失败", None
-
-                # 提取所有item IDs并保存为已知IDs（首次添加时，所有当前内容都视为已知）
-                current_item_ids = []
-                for content_data in all_content_data:
-                    item_info = self.fetcher.extract_content_info(content_data)
-                    if item_info:
-                        item_id = self.fetcher.generate_content_id(item_info)
-                        current_item_ids.append(item_id)
 
                 # 保存订阅信息
                 subscriptions[douyin_url] = {
@@ -138,11 +130,12 @@ class DouyinManager:
                 # 保存全部内容数据
                 self._save_all_content_data(douyin_url, all_content_data)
 
-                # 保存已知item IDs（首次添加时，当前所有内容都标记为已知）
-                self._save_known_item_ids(douyin_url, current_item_ids)
+                # 新订阅不标记任何内容为已知，让check_updates自然处理所有历史内容
+                # 初始化空的已知列表
+                self._save_known_item_ids(douyin_url, [])
 
-                logging.info(f"成功添加抖音订阅: {douyin_url} -> 频道: {chat_id}，保存了 {len(all_content_data)} 个内容，初始化了 {len(current_item_ids)} 个已知IDs")
-                return True, "首次添加", content_info
+                logging.info(f"成功添加抖音订阅: {douyin_url} -> 频道: {chat_id}，获取了 {len(all_content_data)} 个内容，等待自然检查更新")
+                return True, "添加成功", content_info
 
             else:
                 # 更新现有订阅的频道ID
