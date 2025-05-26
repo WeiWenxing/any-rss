@@ -97,94 +97,77 @@ class DouyinManager:
             # 获取当前订阅列表
             subscriptions = self.get_subscriptions()
 
-            # 检查是否已存在
-            is_new_subscription = douyin_url not in subscriptions
+            # 检查是否已存在相同的URL+频道组合
+            existing_mapping = subscriptions.get(douyin_url)
+            is_update = existing_mapping == chat_id
 
-            if is_new_subscription:
-                # 新订阅：获取内容信息用于验证，但不标记任何内容为已知
-                success, error_msg, all_content_data = self.fetcher.fetch_user_content(douyin_url)
-                if not success:
-                    return False, f"无法获取抖音内容: {error_msg}", None
+            if is_update:
+                return True, "订阅已存在", None
 
-                if not all_content_data or len(all_content_data) == 0:
-                    return False, "获取到的内容数据为空", None
+            # 新订阅：获取内容信息用于验证，但不标记任何内容为已知
+            success, error_msg, all_content_data = self.fetcher.fetch_user_content(douyin_url)
+            if not success:
+                return False, f"无法获取抖音内容: {error_msg}", None
 
-                # 提取第一个（最新）内容的信息用于订阅记录
-                latest_content_data = all_content_data[0]
-                content_info = self.fetcher.extract_content_info(latest_content_data)
-                if not content_info:
-                    return False, "解析抖音内容失败", None
+            if not all_content_data or len(all_content_data) == 0:
+                return False, "获取到的内容数据为空", None
 
-                # 保存订阅信息
-                subscriptions[douyin_url] = {
-                    "chat_id": chat_id,
-                    "nickname": content_info.get("nickname", ""),
-                    "author": content_info.get("author", ""),
-                    "created_at": datetime.now().isoformat(),
-                    "last_check": datetime.now().isoformat(),
-                    "last_content_id": self.fetcher.generate_content_id(content_info)
-                }
+            # 提取第一个（最新）内容的信息用于验证
+            latest_content_data = all_content_data[0]
+            content_info = self.fetcher.extract_content_info(latest_content_data)
+            if not content_info:
+                return False, "解析抖音内容失败", None
 
-                self._save_subscriptions(subscriptions)
+            # 添加新的URL->频道映射
+            subscriptions[douyin_url] = chat_id
+            self._save_subscriptions(subscriptions)
 
-                # 保存全部内容数据
-                self._save_all_content_data(douyin_url, all_content_data)
+            # 保存全部内容数据（按URL存储，与频道无关）
+            self._save_all_content_data(douyin_url, all_content_data)
 
-                # 新订阅不标记任何内容为已知，让check_updates自然处理所有历史内容
-                # 初始化空的已知列表
-                self._save_known_item_ids(douyin_url, [])
+            # 新订阅不标记任何内容为已知，让check_updates自然处理所有历史内容
+            # 初始化空的已知列表（按URL存储）
+            self._save_known_item_ids(douyin_url, [])
 
-                logging.info(f"成功添加抖音订阅: {douyin_url} -> 频道: {chat_id}，获取了 {len(all_content_data)} 个内容，等待自然检查更新")
-                return True, "添加成功", content_info
-
-            else:
-                # 更新现有订阅的频道ID
-                old_chat_id = subscriptions[douyin_url]["chat_id"]
-                subscriptions[douyin_url]["chat_id"] = chat_id
-                subscriptions[douyin_url]["last_check"] = datetime.now().isoformat()
-
-                self._save_subscriptions(subscriptions)
-
-                logging.info(f"更新抖音订阅频道: {douyin_url} 从 {old_chat_id} 改为 {chat_id}")
-
-                # 尝试获取最新内容
-                success, error_msg, all_content_data = self.fetcher.fetch_user_content(douyin_url)
-                if success and all_content_data:
-                    content_info = self.fetcher.extract_content_info(all_content_data[0])
-                    return True, "更新成功", content_info
-                else:
-                    return True, "更新成功但获取内容失败", None
+            logging.info(f"成功添加抖音订阅: {douyin_url} -> 频道: {chat_id}，获取了 {len(all_content_data)} 个内容，等待自然检查更新")
+            return True, "添加成功", content_info
 
         except Exception as e:
             logging.error(f"添加抖音订阅失败: {douyin_url}", exc_info=True)
             return False, f"添加失败: {str(e)}", None
 
-    def remove_subscription(self, douyin_url: str) -> Tuple[bool, str]:
+    def remove_subscription(self, douyin_url: str, chat_id: str = None) -> Tuple[bool, str]:
         """
         删除抖音订阅
 
         Args:
             douyin_url: 抖音用户主页链接
+            chat_id: 目标频道ID，如果为None则删除该URL的订阅
 
         Returns:
             Tuple[bool, str]: (是否成功, 错误信息)
         """
         try:
-            logging.info(f"尝试删除抖音订阅: {douyin_url}")
+            logging.info(f"尝试删除抖音订阅: {douyin_url} -> 频道: {chat_id}")
 
             subscriptions = self.get_subscriptions()
 
             if douyin_url not in subscriptions:
                 return False, "该抖音订阅不存在"
 
-            # 获取订阅信息
-            subscription_info = subscriptions.pop(douyin_url)
-            chat_id = subscription_info.get("chat_id", "")
+            # 如果指定了频道，检查是否匹配
+            if chat_id is not None:
+                current_chat_id = subscriptions.get(douyin_url)
+                if current_chat_id != chat_id:
+                    return False, f"该URL订阅的频道是 {current_chat_id}，不是 {chat_id}"
+
+            # 删除订阅映射
+            removed_chat_id = subscriptions.pop(douyin_url)
 
             # 保存更新后的订阅列表
             self._save_subscriptions(subscriptions)
 
-            logging.info(f"成功删除抖音订阅: {douyin_url} (原频道: {chat_id})")
+            logging.info(f"成功删除抖音订阅: {douyin_url} (原频道: {removed_chat_id})")
             return True, ""
 
         except Exception as e:
@@ -196,11 +179,28 @@ class DouyinManager:
         获取所有抖音订阅
 
         Returns:
-            Dict: 订阅字典 {url: subscription_info}
+            Dict: 订阅字典 {url: chat_id}
         """
         try:
             content = self.subscriptions_file.read_text(encoding='utf-8')
-            return json.loads(content)
+            data = json.loads(content)
+
+            # 兼容旧格式：如果是复杂对象，转换为简单映射
+            if data and isinstance(list(data.values())[0], dict):
+                logging.info("检测到旧格式的subscriptions.json，正在转换为新格式")
+                # 将复杂对象转换为简单映射
+                simple_subscriptions = {}
+                for url, subscription_info in data.items():
+                    chat_id = subscription_info.get("chat_id")
+                    if chat_id:
+                        simple_subscriptions[url] = chat_id
+
+                # 保存新格式
+                self._save_subscriptions(simple_subscriptions)
+                logging.info(f"已转换 {len(simple_subscriptions)} 个订阅到新格式")
+                return simple_subscriptions
+
+            return data
         except Exception as e:
             logging.error("读取抖音订阅文件失败", exc_info=True)
             return {}
@@ -210,7 +210,7 @@ class DouyinManager:
         保存订阅数据到文件
 
         Args:
-            subscriptions: 订阅字典
+            subscriptions: 订阅字典 {url: chat_id}
         """
         try:
             self.subscriptions_file.write_text(
@@ -240,8 +240,6 @@ class DouyinManager:
             if douyin_url not in subscriptions:
                 return False, "订阅不存在", None
 
-            subscription_info = subscriptions[douyin_url]
-
             # 获取当前全部内容
             success, error_msg, all_content_data = self.fetcher.fetch_user_content(douyin_url)
             if not success:
@@ -266,28 +264,13 @@ class DouyinManager:
                         new_items.append(content_info)
                         logging.info(f"发现新内容: {content_info.get('title', '无标题')} (ID: {item_id})")
 
-            # 更新订阅信息（只更新检查时间）
-            subscription_info["last_check"] = datetime.now().isoformat()
-
             if new_items:
-                # 更新最新内容ID（用于兼容性）
-                latest_content_info = self.fetcher.extract_content_info(all_content_data[0])
-                if latest_content_info:
-                    subscription_info["last_content_id"] = self.fetcher.generate_content_id(latest_content_info)
-
-                subscriptions[douyin_url] = subscription_info
-                self._save_subscriptions(subscriptions)
-
                 # 保存完整数据
                 self._save_all_content_data(douyin_url, all_content_data)
 
                 logging.info(f"发现 {len(new_items)} 个新内容（包括之前发送失败的）")
                 return True, f"发现 {len(new_items)} 个新内容", new_items
             else:
-                # 无新内容，只更新检查时间
-                subscriptions[douyin_url] = subscription_info
-                self._save_subscriptions(subscriptions)
-
                 logging.info(f"无新内容: {douyin_url}")
                 return True, "无新内容", None
 
@@ -518,5 +501,4 @@ class DouyinManager:
             Optional[str]: 频道ID，如果不存在则返回None
         """
         subscriptions = self.get_subscriptions()
-        subscription_info = subscriptions.get(douyin_url, {})
-        return subscription_info.get("chat_id")
+        return subscriptions.get(douyin_url)

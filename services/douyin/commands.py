@@ -157,24 +157,27 @@ async def douyin_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.message.chat_id
     logging.info(f"收到DOUYIN_DEL命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
 
-    if not context.args:
-        logging.warning("douyin_del命令缺少URL参数")
+    if len(context.args) < 2:
         await update.message.reply_text(
-            "请提供要删除的抖音链接\n例如：/douyin_del https://v.douyin.com/iM5g7LsM/"
+            "❌ 参数不足\n"
+            "请提供抖音链接和目标频道ID\n"
+            "格式：/douyin_del <抖音链接> <频道ID>\n\n"
+            "例如：/douyin_del https://v.douyin.com/iM5g7LsM/ @my_channel"
         )
         return
 
     douyin_url = context.args[0]
-    logging.info(f"执行douyin_del命令，URL: {douyin_url}")
+    target_chat_id = context.args[1]
+    logging.info(f"执行douyin_del命令，URL: {douyin_url}, 频道: {target_chat_id}")
 
-    success, error_msg = douyin_manager.remove_subscription(douyin_url)
+    success, error_msg = douyin_manager.remove_subscription(douyin_url, target_chat_id)
     if success:
-        logging.info(f"成功删除抖音订阅: {douyin_url}")
-        await update.message.reply_text(f"✅ 成功删除抖音订阅：{douyin_url}")
+        logging.info(f"成功删除抖音订阅: {douyin_url} -> {target_chat_id}")
+        await update.message.reply_text(f"✅ 成功删除抖音订阅：{douyin_url} -> {target_chat_id}")
     else:
-        logging.error(f"删除抖音订阅失败: {douyin_url} 原因: {error_msg}", exc_info=True)
+        logging.error(f"删除抖音订阅失败: {douyin_url} -> {target_chat_id} 原因: {error_msg}", exc_info=True)
         await update.message.reply_text(
-            f"❌ 删除抖音订阅失败：{douyin_url}\n原因：{error_msg}"
+            f"❌ 删除抖音订阅失败：{douyin_url} -> {target_chat_id}\n原因：{error_msg}"
         )
 
 
@@ -192,27 +195,13 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 构建订阅列表
     subscription_list = []
-    for douyin_url, subscription_info in subscriptions.items():
-        chat_id_info = subscription_info.get("chat_id", "")
-        nickname = subscription_info.get("nickname", "")
-        author = subscription_info.get("author", "")
-
-        # 构建用户显示名
-        if nickname and author and nickname != author:
-            user_display = f"{nickname} (@{author})"
-        elif nickname:
-            user_display = nickname
-        elif author:
-            user_display = f"@{author}"
-        else:
-            user_display = "未知用户"
-
+    for douyin_url, target_chat_id in subscriptions.items():
         # 缩短URL显示
         short_url = douyin_url
         if len(douyin_url) > 50:
             short_url = douyin_url[:25] + "..." + douyin_url[-20:]
 
-        subscription_list.append(f"👤 {user_display}\n🔗 {short_url}\n📺 → {chat_id_info}")
+        subscription_list.append(f"🔗 {short_url}\n📺 → {target_chat_id}")
 
     subscription_text = "\n\n".join(subscription_list)
     logging.info(f"显示抖音订阅列表，共 {len(subscriptions)} 个")
@@ -240,9 +229,8 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
     success_count = 0
     error_count = 0
 
-    for douyin_url, subscription_info in subscriptions.items():
+    for douyin_url, target_chat_id in subscriptions.items():
         try:
-            target_chat_id = subscription_info.get("chat_id", "")
             logging.info(f"强制检查抖音订阅: {douyin_url} -> 频道: {target_chat_id}")
 
             # 检查更新
