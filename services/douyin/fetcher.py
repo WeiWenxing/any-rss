@@ -183,39 +183,124 @@ class DouyinFetcher:
                 "like": data.get("like", 0),
             }
 
-            # 检查是否有video_info字段（视频内容）
-            if "video_info" in data and data["video_info"]:
-                video_info = data["video_info"]
-                content_info.update({
-                    "media_type": "video",
-                    "media_url": video_info.get("url", ""),
-                    "cover_url": video_info.get("pic", ""),
-                    "width": video_info.get("width", 0),
-                    "height": video_info.get("height", 0),
-                    "size": video_info.get("size", ""),
-                    "video_info": video_info,  # 保留完整的video_info对象
-                })
-            # 检查是否有images_info字段（图片内容）
-            elif "images_info" in data and data["images_info"] and data["images_info"].get("images"):
-                images_info = data["images_info"]
-                content_info.update({
-                    "media_type": "images",
-                    "images": images_info.get("images", []),
-                    "width": images_info.get("width", 0),
-                    "height": images_info.get("height", 0),
-                })
-            # 检查是否有pic_list字段（多张图片）
-            elif "pic_list" in data and data["pic_list"]:
-                content_info.update({
-                    "media_type": "images",
-                    "images": data.get("pic_list", []),
-                })
+            # 优先使用API返回的type字段判断媒体类型
+            api_type = data.get("type", "").lower()
+
+            if api_type == "图片":
+                # 图片内容：优先使用images_info，fallback到pic_list
+                if "images_info" in data and data["images_info"] and data["images_info"].get("images"):
+                    images_info = data["images_info"]
+                    content_info.update({
+                        "media_type": "images",
+                        "images": images_info.get("images", []),
+                        "width": images_info.get("width", 0),
+                        "height": images_info.get("height", 0),
+                    })
+                elif "pic_list" in data and data["pic_list"]:
+                    content_info.update({
+                        "media_type": "images",
+                        "images": data.get("pic_list", []),
+                    })
+                else:
+                    # 使用封面图作为单张图片
+                    content_info.update({
+                        "media_type": "image",
+                        "media_url": data.get("pic", ""),
+                    })
+            elif api_type == "视频" or api_type == "video":
+                # 视频内容
+                if "video_info" in data and data["video_info"]:
+                    video_info = data["video_info"]
+                    # 检查video_info是否有效（不是"不是视频没有信息"）
+                    if (video_info.get("url") and video_info.get("url") != "不是视频没有信息") or \
+                       (video_info.get("download")) or (video_info.get("download2")):
+                        content_info.update({
+                            "media_type": "video",
+                            "media_url": video_info.get("url", ""),
+                            "cover_url": video_info.get("pic", ""),
+                            "width": video_info.get("width", 0),
+                            "height": video_info.get("height", 0),
+                            "size": video_info.get("size", ""),
+                            "video_info": video_info,  # 保留完整的video_info对象
+                        })
+                    else:
+                        # video_info无效，可能是图片内容被错误标记
+                        logging.warning(f"API标记为视频但video_info无效，尝试作为图片处理: {content_info['title']}")
+                        # 尝试作为图片处理
+                        if "images_info" in data and data["images_info"] and data["images_info"].get("images"):
+                            images_info = data["images_info"]
+                            content_info.update({
+                                "media_type": "images",
+                                "images": images_info.get("images", []),
+                                "width": images_info.get("width", 0),
+                                "height": images_info.get("height", 0),
+                            })
+                        else:
+                            content_info.update({
+                                "media_type": "image",
+                                "media_url": data.get("pic", ""),
+                            })
+                else:
+                    logging.warning(f"API标记为视频但缺少video_info: {content_info['title']}")
+                    content_info.update({
+                        "media_type": "image",
+                        "media_url": data.get("pic", ""),
+                    })
             else:
-                # 使用封面图作为默认媒体
-                content_info.update({
-                    "media_type": "image",
-                    "media_url": data.get("pic", ""),
-                })
+                # API没有明确的type字段，使用原有的fallback逻辑
+                logging.info(f"API未提供明确的type字段({api_type})，使用fallback逻辑: {content_info['title']}")
+
+                # 检查是否有video_info字段（视频内容）
+                if "video_info" in data and data["video_info"]:
+                    video_info = data["video_info"]
+                    # 检查video_info是否有效
+                    if (video_info.get("url") and video_info.get("url") != "不是视频没有信息") or \
+                       (video_info.get("download")) or (video_info.get("download2")):
+                        content_info.update({
+                            "media_type": "video",
+                            "media_url": video_info.get("url", ""),
+                            "cover_url": video_info.get("pic", ""),
+                            "width": video_info.get("width", 0),
+                            "height": video_info.get("height", 0),
+                            "size": video_info.get("size", ""),
+                            "video_info": video_info,  # 保留完整的video_info对象
+                        })
+                    else:
+                        # video_info无效，尝试图片
+                        if "images_info" in data and data["images_info"] and data["images_info"].get("images"):
+                            images_info = data["images_info"]
+                            content_info.update({
+                                "media_type": "images",
+                                "images": images_info.get("images", []),
+                                "width": images_info.get("width", 0),
+                                "height": images_info.get("height", 0),
+                            })
+                        else:
+                            content_info.update({
+                                "media_type": "image",
+                                "media_url": data.get("pic", ""),
+                            })
+                # 检查是否有images_info字段（图片内容）
+                elif "images_info" in data and data["images_info"] and data["images_info"].get("images"):
+                    images_info = data["images_info"]
+                    content_info.update({
+                        "media_type": "images",
+                        "images": images_info.get("images", []),
+                        "width": images_info.get("width", 0),
+                        "height": images_info.get("height", 0),
+                    })
+                # 检查是否有pic_list字段（多张图片）
+                elif "pic_list" in data and data["pic_list"]:
+                    content_info.update({
+                        "media_type": "images",
+                        "images": data.get("pic_list", []),
+                    })
+                else:
+                    # 使用封面图作为默认媒体
+                    content_info.update({
+                        "media_type": "image",
+                        "media_url": data.get("pic", ""),
+                    })
 
             # 提取音乐信息（如果有）
             if "music_info" in data and data["music_info"]:
@@ -227,7 +312,7 @@ class DouyinFetcher:
                     "duration": music_info.get("duration", ""),
                 }
 
-            logging.info(f"内容信息提取完成: {content_info['title']}")
+            logging.info(f"内容信息提取完成: {content_info['title']}, 媒体类型: {content_info.get('media_type', 'unknown')}")
             return content_info
 
         except Exception as e:
