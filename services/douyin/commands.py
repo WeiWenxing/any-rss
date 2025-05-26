@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes, CommandHandler, Application
 
 from .manager import DouyinManager
 from .formatter import DouyinFormatter
+from .sender import send_douyin_content
 
 
 # 全局实例
@@ -223,78 +224,6 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text(result_message)
     logging.info(f"DOUYIN_CHECK命令执行完成，共处理 {len(subscriptions)} 个订阅，发现 {new_content_count} 个新内容")
-
-
-async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str) -> None:
-    """
-    发送抖音内容到指定频道 - 统一使用MediaGroup形式
-
-    Args:
-        bot: Telegram Bot实例
-        content_info: 内容信息
-        douyin_url: 抖音用户链接
-        target_chat_id: 目标频道ID
-    """
-    try:
-        logging.info(f"开始发送抖音内容: {content_info.get('title', '无标题')} to {target_chat_id}")
-
-        # 格式化caption
-        caption = douyin_formatter.format_caption(content_info)
-        media_type = content_info.get("media_type", "")
-
-        # 检查是否有媒体内容
-        if not media_type or media_type not in ["video", "image", "images"]:
-            logging.info(f"抖音内容无媒体文件，跳过发送: {content_info.get('title', '无标题')}")
-            return
-
-        # 尝试下载媒体文件
-        success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
-
-        if not success or not local_path:
-            logging.warning(f"媒体文件下载失败，跳过发送: {error_msg}")
-            return
-
-        # 准备MediaGroup
-        media_list = []
-
-        try:
-            if media_type == "video":
-                # 视频文件
-                with open(local_path, 'rb') as video_file:
-                    from telegram import InputMediaVideo
-                    media_list.append(InputMediaVideo(
-                        media=video_file.read(),
-                        caption=caption,
-                        supports_streaming=True
-                    ))
-
-            elif media_type in ["image", "images"]:
-                # 图片文件
-                with open(local_path, 'rb') as photo_file:
-                    from telegram import InputMediaPhoto
-                    media_list.append(InputMediaPhoto(
-                        media=photo_file.read(),
-                        caption=caption
-                    ))
-
-            # 发送MediaGroup
-            if media_list:
-                await bot.send_media_group(
-                    chat_id=target_chat_id,
-                    media=media_list
-                )
-                logging.info(f"✅ 成功发送抖音MediaGroup: {local_path}")
-            else:
-                logging.warning(f"MediaGroup为空，跳过发送")
-
-        except Exception as e:
-            logging.error(f"发送MediaGroup失败: {str(e)}", exc_info=True)
-            # 不再降级为文本消息，直接跳过
-
-        logging.info(f"✅ 抖音内容发送完成: {content_info.get('title', '无标题')}")
-
-    except Exception as e:
-        logging.error(f"❌ 发送抖音内容失败: {content_info.get('title', 'Unknown')}, 错误: {str(e)}", exc_info=True)
 
 
 def register_douyin_commands(application: Application) -> None:

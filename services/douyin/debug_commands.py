@@ -13,7 +13,7 @@ from telegram import Update, Bot
 from telegram.ext import ContextTypes, CommandHandler, Application, MessageHandler, filters
 
 from .formatter import DouyinFormatter
-from .commands import send_douyin_content
+from .sender import send_douyin_content
 
 
 # 全局实例
