@@ -227,7 +227,7 @@ async def douyin_check_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, target_chat_id: str) -> None:
     """
-    发送抖音内容到指定频道
+    发送抖音内容到指定频道 - 统一使用MediaGroup形式
 
     Args:
         bot: Telegram Bot实例
@@ -238,81 +238,58 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
     try:
         logging.info(f"开始发送抖音内容: {content_info.get('title', '无标题')} to {target_chat_id}")
 
-        # 格式化消息
-        message_text = douyin_formatter.format_content_message(content_info)
+        # 格式化caption
         caption = douyin_formatter.format_caption(content_info)
-
         media_type = content_info.get("media_type", "")
 
-        if media_type == "video":
-            # 尝试下载并发送视频
-            success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
+        # 检查是否有媒体内容
+        if not media_type or media_type not in ["video", "image", "images"]:
+            logging.info(f"抖音内容无媒体文件，跳过发送: {content_info.get('title', '无标题')}")
+            return
 
-            if success and local_path:
-                # 发送视频文件
-                try:
-                    with open(local_path, 'rb') as video_file:
-                        await bot.send_video(
-                            chat_id=target_chat_id,
-                            video=video_file,
-                            caption=caption,
-                            supports_streaming=True
-                        )
-                    logging.info(f"✅ 成功发送抖音视频: {local_path}")
-                except Exception as e:
-                    logging.error(f"发送视频文件失败: {str(e)}", exc_info=True)
-                    # 降级：发送文字消息
-                    await bot.send_message(
-                        chat_id=target_chat_id,
-                        text=message_text,
-                        disable_web_page_preview=False
-                    )
-            else:
-                # 下载失败，发送文字消息
-                logging.warning(f"视频下载失败: {error_msg}")
-                await bot.send_message(
+        # 尝试下载媒体文件
+        success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
+
+        if not success or not local_path:
+            logging.warning(f"媒体文件下载失败，跳过发送: {error_msg}")
+            return
+
+        # 准备MediaGroup
+        media_list = []
+
+        try:
+            if media_type == "video":
+                # 视频文件
+                with open(local_path, 'rb') as video_file:
+                    from telegram import InputMediaVideo
+                    media_list.append(InputMediaVideo(
+                        media=video_file.read(),
+                        caption=caption,
+                        supports_streaming=True
+                    ))
+
+            elif media_type in ["image", "images"]:
+                # 图片文件
+                with open(local_path, 'rb') as photo_file:
+                    from telegram import InputMediaPhoto
+                    media_list.append(InputMediaPhoto(
+                        media=photo_file.read(),
+                        caption=caption
+                    ))
+
+            # 发送MediaGroup
+            if media_list:
+                await bot.send_media_group(
                     chat_id=target_chat_id,
-                    text=message_text,
-                    disable_web_page_preview=False
+                    media=media_list
                 )
-
-        elif media_type in ["image", "images"]:
-            # 尝试下载并发送图片
-            success, error_msg, local_path = douyin_manager.download_and_save_media(content_info, douyin_url)
-
-            if success and local_path:
-                # 发送图片文件
-                try:
-                    with open(local_path, 'rb') as photo_file:
-                        await bot.send_photo(
-                            chat_id=target_chat_id,
-                            photo=photo_file,
-                            caption=caption
-                        )
-                    logging.info(f"✅ 成功发送抖音图片: {local_path}")
-                except Exception as e:
-                    logging.error(f"发送图片文件失败: {str(e)}", exc_info=True)
-                    # 降级：发送文字消息
-                    await bot.send_message(
-                        chat_id=target_chat_id,
-                        text=message_text,
-                        disable_web_page_preview=False
-                    )
+                logging.info(f"✅ 成功发送抖音MediaGroup: {local_path}")
             else:
-                # 下载失败，发送文字消息
-                logging.warning(f"图片下载失败: {error_msg}")
-                await bot.send_message(
-                    chat_id=target_chat_id,
-                    text=message_text,
-                    disable_web_page_preview=False
-                )
-        else:
-            # 其他类型或无媒体，发送文字消息
-            await bot.send_message(
-                chat_id=target_chat_id,
-                text=message_text,
-                disable_web_page_preview=False
-            )
+                logging.warning(f"MediaGroup为空，跳过发送")
+
+        except Exception as e:
+            logging.error(f"发送MediaGroup失败: {str(e)}", exc_info=True)
+            # 不再降级为文本消息，直接跳过
 
         logging.info(f"✅ 抖音内容发送完成: {content_info.get('title', '无标题')}")
 
