@@ -6,8 +6,11 @@
 import logging
 import json
 import asyncio
+import tempfile
+import os
+import time
 from telegram import Update, Bot
-from telegram.ext import ContextTypes, CommandHandler, Application
+from telegram.ext import ContextTypes, CommandHandler, Application, MessageHandler, filters
 
 from .formatter import DouyinFormatter
 from .commands import send_douyin_content
@@ -16,11 +19,16 @@ from .commands import send_douyin_content
 # 全局实例
 douyin_formatter = DouyinFormatter()
 
+# 用户状态管理
+user_upload_states = {}
+STATE_TIMEOUT = 300  # 5分钟超时
+
 
 async def douyin_debug_show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     调试版本的抖音内容展示命令，用于测试单个抖音数据的格式化和发送
-    用法: /douyin_debug_show <JSON数据>
+    用法1: /douyin_debug_show (无参数，提示上传文件)
+    用法2: /douyin_debug_show <JSON数据> (传统方式，适用于短JSON)
     """
     try:
         user = update.message.from_user
@@ -28,23 +36,38 @@ async def douyin_debug_show_command(update: Update, context: ContextTypes.DEFAUL
         logging.info(f"收到DOUYIN_DEBUG_SHOW命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
 
         if not context.args:
+            # 无参数模式：提示用户上传文件
+            user_upload_states[user.id] = {
+                'command': 'debug_show',
+                'timestamp': time.time(),
+                'chat_id': chat_id
+            }
+
             help_text = (
-                "❌ 请提供抖音内容JSON数据\n\n"
-                "用法: /douyin_debug_show <JSON数据>\n\n"
-                "示例JSON格式:\n"
-                "{\n"
-                '  "aweme_id": "7478284850366090536",\n'
-                '  "nickname": "小神仙",\n'
-                '  "title": "人在知足时最幸福",\n'
-                '  "type": "视频",\n'
-                '  "video_info": {...},\n'
-                '  "time": "2025-03-05"\n'
-                "}\n\n"
-                "💡 此命令用于测试抖音内容的格式化和发送功能"
+                "📁 **抖音内容调试 - 文件上传模式**\n\n"
+                "请上传包含抖音内容数据的JSON文件进行调试。\n\n"
+                "📋 **文件要求：**\n"
+                "• 文件格式：.json\n"
+                "• 文件大小：< 10MB\n"
+                "• 必要字段：aweme_id, title, type\n\n"
+                "🔧 **获取样例文件：**\n"
+                "• `/douyin_debug_file simple` - 基础样例\n"
+                "• `/douyin_debug_file full` - 完整样例\n\n"
+                "⏰ **注意：**\n"
+                "• 请在5分钟内上传文件\n"
+                "• 上传文件后将自动进行完整调试\n"
+                "• 包含格式化预览和实际媒体发送\n\n"
+                "💡 **其他调试方式：**\n"
+                "• `/douyin_debug_url <链接>` - 通过抖音链接调试\n"
+                "• `/douyin_debug_format` - 只测试格式化\n"
+                "• 直接上传JSON文件（无需命令）"
             )
-            await update.message.reply_text(help_text)
+
+            await update.message.reply_text(help_text, parse_mode='Markdown')
+            logging.info(f"用户 {user.id} 进入文件上传等待状态")
             return
 
+        # 有参数模式：传统JSON参数处理（保持向后兼容）
         # 合并所有参数作为JSON字符串
         json_str = " ".join(context.args)
         logging.info(f"DOUYIN_DEBUG_SHOW命令接收到的JSON长度: {len(json_str)} 字符")
@@ -57,7 +80,10 @@ async def douyin_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             logging.error(f"JSON解析失败: {str(e)}")
             await update.message.reply_text(
                 f"❌ JSON格式错误: {str(e)}\n\n"
-                "请确保提供有效的JSON格式数据"
+                "💡 **建议使用文件上传模式：**\n"
+                "1. 发送 `/douyin_debug_show` (无参数)\n"
+                "2. 按提示上传JSON文件\n\n"
+                "这样可以避免长JSON的问题！"
             )
             return
 
@@ -72,18 +98,39 @@ async def douyin_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             )
             return
 
+        # 执行调试处理
+        await _process_debug_show(update, context, content_info, "参数传入")
+
+    except Exception as e:
+        logging.error(f"DOUYIN_DEBUG_SHOW命令执行失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+
+
+async def _process_debug_show(update: Update, context: ContextTypes.DEFAULT_TYPE, content_info: dict, source: str) -> None:
+    """
+    处理抖音调试展示的核心逻辑
+
+    Args:
+        update: Telegram更新对象
+        context: 上下文对象
+        content_info: 抖音内容信息
+        source: 数据来源描述
+    """
+    try:
         title = content_info.get('title', 'Unknown')
         aweme_id = content_info.get('aweme_id', 'Unknown')
         content_type = content_info.get('type', 'Unknown')
+        chat_id = update.message.chat_id
 
-        logging.info(f"解析到内容: ID={aweme_id}, 标题={title}, 类型={content_type}")
+        logging.info(f"解析到内容: ID={aweme_id}, 标题={title}, 类型={content_type}, 来源={source}")
 
         # 发送状态消息
         status_msg = await update.message.reply_text(
             f"🔄 开始调试抖音内容...\n"
             f"📋 ID: {aweme_id}\n"
             f"📝 标题: {title}\n"
-            f"📱 类型: {content_type}"
+            f"📱 类型: {content_type}\n"
+            f"📥 数据来源: {source}"
         )
 
         # 格式化消息预览
@@ -119,20 +166,20 @@ async def douyin_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             await send_douyin_content(
                 bot=context.bot,
                 content_info=content_info,
-                douyin_url="debug://test",  # 调试用的虚拟URL
+                douyin_url=f"debug://{source}",  # 调试用的虚拟URL
                 target_chat_id=str(chat_id)
             )
 
-            await update.message.reply_text("✅ 抖音内容调试发送成功！")
-            logging.info(f"DOUYIN_DEBUG_SHOW命令执行成功: {aweme_id}")
+            await update.message.reply_text(f"✅ 抖音内容调试发送成功！\n📥 数据来源: {source}")
+            logging.info(f"DOUYIN_DEBUG_SHOW命令执行成功: {aweme_id}, 来源: {source}")
 
         except Exception as send_error:
             logging.error(f"发送抖音内容失败: {str(send_error)}", exc_info=True)
             await update.message.reply_text(f"❌ 发送失败: {str(send_error)}")
 
     except Exception as e:
-        logging.error(f"DOUYIN_DEBUG_SHOW命令执行失败: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+        logging.error(f"处理调试展示失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
 
 
 async def douyin_debug_format_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -505,9 +552,6 @@ async def douyin_debug_file_command(update: Update, context: ContextTypes.DEFAUL
         json_str = json.dumps(sample_data, ensure_ascii=False, indent=2)
 
         # 创建临时文件
-        import tempfile
-        import os
-
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as temp_file:
             temp_file.write(json_str)
             temp_file_path = temp_file.name
@@ -548,11 +592,345 @@ async def douyin_debug_file_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
 
 
+async def douyin_debug_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理用户上传的JSON文件进行抖音调试
+    支持.json文件上传，根据用户状态决定处理方式
+    """
+    try:
+        user = update.message.from_user
+        chat_id = update.message.chat_id
+
+        # 检查是否有文件
+        if not update.message.document:
+            return
+
+        document = update.message.document
+
+        # 检查文件类型
+        if not (document.file_name.endswith('.json') or document.mime_type == 'application/json'):
+            return
+
+        logging.info(f"收到JSON文件上传 - 用户: {user.username}(ID:{user.id}) 文件: {document.file_name}")
+
+        # 清理超时的用户状态
+        _cleanup_expired_states()
+
+        # 检查用户状态
+        user_state = user_upload_states.get(user.id)
+        if user_state:
+            # 用户在等待文件上传状态
+            command_type = user_state.get('command')
+            logging.info(f"用户 {user.id} 处于 {command_type} 等待状态，处理文件上传")
+
+            # 清除用户状态
+            del user_upload_states[user.id]
+
+            # 根据命令类型处理
+            if command_type == 'debug_show':
+                await _handle_debug_show_upload(update, context, document)
+            else:
+                await update.message.reply_text(f"❌ 未知的命令类型: {command_type}")
+        else:
+            # 用户没有等待状态，使用通用处理
+            logging.info(f"用户 {user.id} 无等待状态，使用通用文件处理")
+            await _handle_general_upload(update, context, document)
+
+    except Exception as e:
+        logging.error(f"处理JSON文件上传失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理文件失败: {str(e)}")
+
+
+async def _handle_debug_show_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, document) -> None:
+    """
+    处理debug_show命令的文件上传
+    """
+    try:
+        # 检查文件大小（限制10MB）
+        if document.file_size > 10 * 1024 * 1024:
+            await update.message.reply_text("❌ 文件太大，请上传小于10MB的JSON文件")
+            return
+
+        # 发送处理状态
+        status_msg = await update.message.reply_text(
+            f"🔄 正在处理JSON文件: {document.file_name}\n"
+            f"📏 文件大小: {document.file_size} 字节\n"
+            f"🎯 调试模式: 完整展示（格式化+发送）"
+        )
+
+        # 下载并解析文件
+        content_info = await _download_and_parse_json(context, document, status_msg)
+        if not content_info:
+            return
+
+        # 验证必要字段
+        required_fields = ["aweme_id", "title", "type"]
+        missing_fields = [field for field in required_fields if field not in content_info]
+
+        if missing_fields:
+            await status_msg.edit_text(
+                f"❌ 缺少必要字段: {', '.join(missing_fields)}\n\n"
+                f"必要字段: {', '.join(required_fields)}"
+            )
+            return
+
+        # 更新状态
+        title = content_info.get('title', 'Unknown')
+        aweme_id = content_info.get('aweme_id', 'Unknown')
+        content_type = content_info.get('type', 'Unknown')
+
+        await status_msg.edit_text(
+            f"✅ JSON文件解析成功！\n"
+            f"📋 ID: {aweme_id}\n"
+            f"📝 标题: {title}\n"
+            f"📱 类型: {content_type}\n"
+            f"📁 文件: {document.file_name}\n\n"
+            f"🔄 开始完整调试处理..."
+        )
+
+        # 执行调试处理
+        await _process_debug_show(update, context, content_info, f"文件上传({document.file_name})")
+
+    except Exception as e:
+        logging.error(f"处理debug_show文件上传失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
+
+
+async def _handle_general_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, document) -> None:
+    """
+    处理通用的JSON文件上传（原有逻辑）
+    """
+    try:
+        # 检查文件大小（限制10MB）
+        if document.file_size > 10 * 1024 * 1024:
+            await update.message.reply_text("❌ 文件太大，请上传小于10MB的JSON文件")
+            return
+
+        # 发送处理状态
+        status_msg = await update.message.reply_text(
+            f"🔄 正在处理JSON文件: {document.file_name}\n"
+            f"📏 文件大小: {document.file_size} 字节\n"
+            f"🎯 调试模式: 通用处理"
+        )
+
+        # 下载并解析文件
+        content_info = await _download_and_parse_json(context, document, status_msg)
+        if not content_info:
+            return
+
+        # 验证必要字段
+        required_fields = ["aweme_id", "title", "type"]
+        missing_fields = [field for field in required_fields if field not in content_info]
+
+        if missing_fields:
+            await status_msg.edit_text(
+                f"❌ 缺少必要字段: {', '.join(missing_fields)}\n\n"
+                f"必要字段: {', '.join(required_fields)}"
+            )
+            return
+
+        # 更新状态
+        title = content_info.get('title', 'Unknown')
+        aweme_id = content_info.get('aweme_id', 'Unknown')
+        content_type = content_info.get('type', 'Unknown')
+
+        await status_msg.edit_text(
+            f"✅ JSON文件解析成功！\n"
+            f"📋 ID: {aweme_id}\n"
+            f"📝 标题: {title}\n"
+            f"📱 类型: {content_type}\n"
+            f"📁 文件: {document.file_name}\n\n"
+            f"🔄 开始调试处理..."
+        )
+
+        # 执行调试处理
+        await _process_debug_show(update, context, content_info, f"通用上传({document.file_name})")
+
+    except Exception as e:
+        logging.error(f"处理通用文件上传失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理失败: {str(e)}")
+
+
+async def _download_and_parse_json(context: ContextTypes.DEFAULT_TYPE, document, status_msg) -> dict:
+    """
+    下载并解析JSON文件
+
+    Returns:
+        dict: 解析后的JSON数据，失败时返回None
+    """
+    try:
+        # 下载文件
+        file = await context.bot.get_file(document.file_id)
+
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(mode='w+b', suffix='.json', delete=False) as temp_file:
+            temp_file_path = temp_file.name
+
+        try:
+            # 下载到临时文件
+            await file.download_to_drive(temp_file_path)
+
+            # 读取并解析JSON
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                json_content = f.read()
+
+            # 解析JSON
+            try:
+                content_info = json.loads(json_content)
+                logging.info(f"成功解析JSON文件，包含字段: {list(content_info.keys())}")
+                return content_info
+            except json.JSONDecodeError as e:
+                await status_msg.edit_text(f"❌ JSON格式错误: {str(e)}")
+                return None
+
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logging.warning(f"清理临时文件失败: {str(cleanup_error)}")
+
+    except Exception as e:
+        logging.error(f"下载解析JSON文件失败: {str(e)}", exc_info=True)
+        await status_msg.edit_text(f"❌ 下载文件失败: {str(e)}")
+        return None
+
+
+def _cleanup_expired_states():
+    """清理超时的用户状态"""
+    current_time = time.time()
+    expired_users = []
+
+    for user_id, state in user_upload_states.items():
+        if current_time - state['timestamp'] > STATE_TIMEOUT:
+            expired_users.append(user_id)
+
+    for user_id in expired_users:
+        del user_upload_states[user_id]
+        logging.info(f"清理用户 {user_id} 的超时状态")
+
+    if expired_users:
+        logging.info(f"清理了 {len(expired_users)} 个超时的用户状态")
+
+
+async def douyin_debug_url_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    通过URL获取JSON数据进行调试
+    用法: /douyin_debug_url <抖音链接>
+    """
+    try:
+        user = update.message.from_user
+        chat_id = update.message.chat_id
+        logging.info(f"收到DOUYIN_DEBUG_URL命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
+
+        if not context.args:
+            await update.message.reply_text(
+                "❌ 请提供抖音链接\n\n"
+                "用法: /douyin_debug_url <抖音链接>\n\n"
+                "示例:\n"
+                "• /douyin_debug_url https://v.douyin.com/iM5g7LsM/\n"
+                "• /douyin_debug_url https://www.douyin.com/video/7478284850366090536\n\n"
+                "💡 此命令会自动获取抖音内容并进行调试"
+            )
+            return
+
+        douyin_url = context.args[0]
+        logging.info(f"DOUYIN_DEBUG_URL命令接收到的链接: {douyin_url}")
+
+        # 发送状态消息
+        status_msg = await update.message.reply_text(
+            f"🔄 正在获取抖音内容...\n"
+            f"🔗 链接: {douyin_url}"
+        )
+
+        # 导入抖音获取器
+        try:
+            from .fetcher import DouyinFetcher
+            fetcher = DouyinFetcher()
+
+            # 获取抖音内容
+            content_info = await fetcher.fetch_content(douyin_url)
+
+            if not content_info:
+                await status_msg.edit_text("❌ 无法获取抖音内容，请检查链接是否有效")
+                return
+
+            title = content_info.get('title', 'Unknown')
+            aweme_id = content_info.get('aweme_id', 'Unknown')
+            content_type = content_info.get('type', 'Unknown')
+
+            await status_msg.edit_text(
+                f"✅ 抖音内容获取成功！\n"
+                f"📋 ID: {aweme_id}\n"
+                f"📝 标题: {title}\n"
+                f"📱 类型: {content_type}\n\n"
+                f"🔄 开始调试处理..."
+            )
+
+        except Exception as fetch_error:
+            logging.error(f"获取抖音内容失败: {str(fetch_error)}", exc_info=True)
+            await status_msg.edit_text(f"❌ 获取抖音内容失败: {str(fetch_error)}")
+            return
+
+        # 格式化预览
+        try:
+            message_text = douyin_formatter.format_content_message(content_info)
+            caption = douyin_formatter.format_caption(content_info)
+
+            preview_text = (
+                f"📊 格式化结果预览:\n\n"
+                f"🔹 消息文本 (前200字符):\n"
+                f"{message_text[:200]}{'...' if len(message_text) > 200 else ''}\n\n"
+                f"🔹 媒体标题 (前100字符):\n"
+                f"{caption[:100]}{'...' if len(caption) > 100 else ''}\n\n"
+                f"📏 消息长度: {len(message_text)} 字符\n"
+                f"📏 标题长度: {len(caption)} 字符"
+            )
+
+            await update.message.reply_text(preview_text)
+
+            # 等待一下再发送实际内容
+            await asyncio.sleep(2)
+
+        except Exception as format_error:
+            logging.error(f"格式化预览失败: {str(format_error)}", exc_info=True)
+            await update.message.reply_text(f"❌ 格式化预览失败: {str(format_error)}")
+            return
+
+        # 发送实际内容
+        try:
+            await update.message.reply_text("🚀 开始发送实际内容...")
+
+            # 使用抖音内容发送函数
+            await send_douyin_content(
+                bot=context.bot,
+                content_info=content_info,
+                douyin_url=douyin_url,
+                target_chat_id=str(chat_id)
+            )
+
+            await update.message.reply_text("✅ 抖音内容调试发送成功！")
+            logging.info(f"DOUYIN_DEBUG_URL命令执行成功: {douyin_url} -> {aweme_id}")
+
+        except Exception as send_error:
+            logging.error(f"发送抖音内容失败: {str(send_error)}", exc_info=True)
+            await update.message.reply_text(f"❌ 发送失败: {str(send_error)}")
+
+    except Exception as e:
+        logging.error(f"DOUYIN_DEBUG_URL命令执行失败: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ 命令执行失败: {str(e)}")
+
+
 def register_douyin_debug_commands(application: Application) -> None:
     """注册抖音调试命令"""
     application.add_handler(CommandHandler("douyin_debug_show", douyin_debug_show_command))
     application.add_handler(CommandHandler("douyin_debug_format", douyin_debug_format_command))
     application.add_handler(CommandHandler("douyin_debug_sample", douyin_debug_sample_command))
     application.add_handler(CommandHandler("douyin_debug_file", douyin_debug_file_command))
+    application.add_handler(CommandHandler("douyin_debug_url", douyin_debug_url_command))
+
+    # 添加文件上传处理器（只处理JSON文件）
+    json_file_filter = filters.Document.FileExtension("json") | filters.Document.MimeType("application/json")
+    application.add_handler(MessageHandler(json_file_filter, douyin_debug_upload_handler))
 
     logging.info("✅ 抖音调试命令注册完成")
