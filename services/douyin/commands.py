@@ -70,19 +70,79 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
 
     if success:
-        if "更新成功" in error_msg:
-            await update.message.reply_text(f"✅ 抖音订阅已更新，频道改为：{target_chat_id}")
+        # 判断是否为更新现有订阅
+        is_update = "更新成功" in error_msg
+
+        # 根据操作类型显示不同的初始消息
+        if is_update:
+            await update.message.reply_text(
+                f"✅ 抖音订阅已更新，频道改为：{target_chat_id}\n"
+                f"💡 正在检查并推送内容..."
+            )
         else:
             await update.message.reply_text(
                 f"✅ 成功添加抖音订阅：{douyin_url}\n"
                 f"📺 目标频道：{target_chat_id}\n"
-                f"💡 系统将自动检查并推送新内容"
+                f"💡 正在检查并推送内容..."
             )
 
-        # 如果有内容信息，发送到指定频道
-        if content_info:
-            await send_douyin_content(context.bot, content_info, douyin_url, target_chat_id)
-            logging.info(f"已尝试发送抖音内容 for {douyin_url} to {target_chat_id} after add command")
+        # 统一逻辑：立即检查更新并发送所有新内容
+        # 首次订阅时：new_items = 所有历史内容
+        # 非首次订阅时：new_items = 真正的新内容
+        try:
+            check_success, check_error_msg, new_items = douyin_manager.check_updates(douyin_url)
+
+            if check_success and new_items:
+                logging.info(f"订阅检查到 {len(new_items)} 个新内容，开始发送")
+
+                # 导入调度器来处理批量发送
+                from .scheduler import DouyinScheduler
+                scheduler = DouyinScheduler()
+
+                # 使用调度器的批量处理逻辑（包含排序和发送间隔控制）
+                sent_count = await scheduler._process_batch(context.bot, new_items, douyin_url, target_chat_id)
+
+                # 根据操作类型显示不同的完成消息
+                if is_update:
+                    await update.message.reply_text(
+                        f"🎉 订阅更新完成！\n"
+                        f"📊 成功推送 {sent_count}/{len(new_items)} 个内容\n"
+                        f"🔄 系统将继续自动监控新内容"
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"🎉 首次订阅完成！\n"
+                        f"📊 成功推送 {sent_count}/{len(new_items)} 个历史内容\n"
+                        f"🔄 系统将继续自动监控新内容"
+                    )
+
+            elif check_success:
+                # 根据操作类型显示不同的无内容消息
+                if is_update:
+                    await update.message.reply_text(
+                        f"✅ 订阅更新成功，当前没有新内容\n"
+                        f"🔄 系统将自动监控新内容"
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"✅ 订阅添加成功，但当前没有内容\n"
+                        f"🔄 系统将自动监控新内容"
+                    )
+            else:
+                logging.warning(f"订阅后检查更新失败: {check_error_msg}")
+                await update.message.reply_text(
+                    f"✅ 订阅操作成功\n"
+                    f"⚠️ 但检查内容时出现问题: {check_error_msg}\n"
+                    f"🔄 系统将在下次定时检查时重试"
+                )
+
+        except Exception as e:
+            logging.error(f"订阅后立即检查失败: {str(e)}", exc_info=True)
+            await update.message.reply_text(
+                f"✅ 订阅操作成功\n"
+                f"⚠️ 但立即检查时出现错误\n"
+                f"🔄 系统将在下次定时检查时处理"
+            )
 
     else:
         logging.error(f"添加抖音订阅失败: {douyin_url} 原因: {error_msg}", exc_info=True)
