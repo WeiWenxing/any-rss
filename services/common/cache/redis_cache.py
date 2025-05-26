@@ -7,6 +7,7 @@ Redis缓存实现
 
 import json
 import time
+import os
 from typing import Any, Optional
 from .base import CacheInterface
 
@@ -53,16 +54,24 @@ class RedisCache(CacheInterface):
 
         # 创建Redis连接
         try:
-            self.redis_client = redis.Redis(
-                host=host,
-                port=port,
-                db=db,
-                password=password,
-                decode_responses=decode_responses,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                **kwargs
-            )
+            # 检查是否有Redis URL（最简单的方式）
+            redis_url = kwargs.get('redis_url') or os.getenv('REDIS_URL')
+
+            if redis_url:
+                # 直接使用Redis URL创建连接
+                self.redis_client = redis.Redis.from_url(redis_url, decode_responses=decode_responses)
+            else:
+                # 使用单独参数创建连接
+                connection_params = {
+                    "host": host,
+                    "port": port,
+                    "db": db,
+                    "password": password,
+                    "decode_responses": decode_responses,
+                }
+                # 添加其他参数
+                connection_params.update(kwargs)
+                self.redis_client = redis.Redis(**connection_params)
 
             # 测试连接
             self.redis_client.ping()
@@ -76,7 +85,7 @@ class RedisCache(CacheInterface):
             raise
 
     def _get_full_key(self, key: str) -> str:
-        """
+        """\
         获取完整的缓存键（包含前缀）
 
         Args:
