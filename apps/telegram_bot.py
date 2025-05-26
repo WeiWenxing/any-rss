@@ -201,45 +201,16 @@ async def scheduled_task(token):
         return
 
     # 导入服务模块
-    from services.rss.scheduler import run_scheduled_check
-    from services.douyin.commands import douyin_manager, send_douyin_content
+    from services.rss.scheduler import run_scheduled_check as rss_run_scheduled_check
+    from services.douyin.scheduler import run_scheduled_check as douyin_run_scheduled_check
 
     while True:
         try:
-            # RSS订阅检查 - 使用新的调度器
-            await run_scheduled_check(bot)
+            # RSS订阅检查 - 使用RSS调度器
+            await rss_run_scheduled_check(bot)
 
-            # 抖音订阅检查
-            douyin_subscriptions = douyin_manager.get_subscriptions()
-            logging.info(f"定时任务开始检查抖音订阅更新，共 {len(douyin_subscriptions)} 个订阅")
-
-            douyin_new_content_count = 0
-            for douyin_url, subscription_info in douyin_subscriptions.items():
-                try:
-                    target_chat_id = subscription_info.get("chat_id", "")
-                    logging.info(f"正在检查抖音订阅: {douyin_url} -> 频道: {target_chat_id}")
-
-                    # 检查更新
-                    success, error_msg, content_info = douyin_manager.check_updates(douyin_url)
-
-                    if success:
-                        if content_info:  # 有新内容
-                            logging.info(f"抖音订阅 {douyin_url} 发现新内容")
-                            # 发送新内容到绑定的频道
-                            await send_douyin_content(bot, content_info, douyin_url, target_chat_id)
-                            douyin_new_content_count += 1
-                        else:
-                            logging.info(f"抖音订阅 {douyin_url} 无新内容")
-                    else:
-                        logging.warning(f"抖音订阅 {douyin_url} 检查失败: {error_msg}")
-
-                except Exception as e:
-                    logging.error(f"检查抖音订阅失败: {douyin_url}, 错误: {str(e)}", exc_info=True)
-
-            if douyin_new_content_count > 0:
-                logging.info(f"抖音定时任务完成，共发现 {douyin_new_content_count} 个新内容")
-            else:
-                logging.info("抖音定时任务完成，无新增内容")
+            # 抖音订阅检查 - 使用抖音调度器
+            await douyin_run_scheduled_check(bot)
 
             logging.info("所有订阅源检查完成，等待下一次检查")
             await asyncio.sleep(3600)  # 保持1小时检查间隔
