@@ -63,7 +63,7 @@ async def perform_historical_alignment(
             for source_channel, source_message_ids in all_available_sources:
                 try:
                     # 转发整个MediaGroup到新频道
-                    forwarded_messages = await bot.forward_messages(
+                    forwarded_messages = await bot.copy_messages(
                         chat_id=new_channel,
                         from_chat_id=source_channel,
                         message_ids=source_message_ids

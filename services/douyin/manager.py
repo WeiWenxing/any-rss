@@ -819,7 +819,7 @@ class DouyinManager:
                         if source_channel != channel:  # 不从自己转发给自己
                             try:
                                 logging.info(f"尝试转发: {source_channel} -> {channel}")
-                                forwarded_messages = await bot.forward_messages(
+                                forwarded_messages = await bot.copy_messages(
                                     chat_id=channel,
                                     from_chat_id=source_channel,
                                     message_ids=source_msg_ids
