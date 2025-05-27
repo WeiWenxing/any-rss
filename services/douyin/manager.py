@@ -779,16 +779,16 @@ class DouyinManager:
                     content['item_id'] = self.fetcher.generate_content_id(content)
                     logging.warning(f"内容缺少item_id，动态生成: {content['item_id']}")
 
-                # 步骤1：主频道发送
+                                # 步骤1：主频道发送
                 logging.info(f"发送到主频道 {primary_channel}: {content.get('title', '无标题')}")
                 messages = await send_douyin_content(bot, content, douyin_url, primary_channel)
                 if not messages:
                     logging.warning(f"主频道发送失败，跳过内容: {content.get('title', '无标题')}")
                     continue
 
-                # 处理返回的消息（可能是单个消息或消息列表）
-                if isinstance(messages, list):
-                    # MediaGroup情况：多个消息
+                # 处理返回的消息（可能是单个消息、消息列表或消息元组）
+                if isinstance(messages, (list, tuple)):
+                    # MediaGroup情况：多个消息（list或tuple）
                     primary_message_ids = [msg.message_id for msg in messages]
                     self.save_message_ids(douyin_url, content['item_id'], primary_channel, primary_message_ids)
                     successful_channels[primary_channel] = primary_message_ids  # 内存记录
@@ -847,7 +847,7 @@ class DouyinManager:
                         try:
                             fallback_messages = await send_douyin_content(bot, content, douyin_url, channel)
                             if fallback_messages:
-                                if isinstance(fallback_messages, list):
+                                if isinstance(fallback_messages, (list, tuple)):
                                     fallback_ids = [msg.message_id for msg in fallback_messages]
                                 else:
                                     fallback_ids = [fallback_messages.message_id]

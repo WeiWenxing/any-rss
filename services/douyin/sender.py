@@ -32,7 +32,7 @@ class DouyinSender:
             content_info: 内容信息
             douyin_url: 抖音用户链接
             target_chat_id: 目标频道ID
-            
+
         Returns:
             发送的消息对象或消息列表
         """
@@ -74,7 +74,7 @@ class DouyinSender:
             content_info: 内容信息
             caption: 媒体标题
             target_chat_id: 目标频道ID
-            
+
         Returns:
             发送的消息列表
         """
@@ -189,7 +189,7 @@ class DouyinSender:
             content_info: 内容信息
             caption: 媒体标题
             target_chat_id: 目标频道ID
-            
+
         Returns:
             发送的消息列表（第一批的消息列表）
         """
@@ -250,7 +250,7 @@ class DouyinSender:
 
                 logging.info(f"✅ 第 {batch_num}/{total_batches} 批图片发送成功 ({batch_size}张图片)")
                 any_batch_success = True
-                
+
                 # 保存第一批的消息列表
                 if batch_num == 1:
                     first_batch_messages = messages
@@ -271,7 +271,7 @@ class DouyinSender:
             logging.info(f"🎉 多图发送完成: 成功发送了部分或全部批次")
         else:
             logging.info(f"🎉 图片发送成功: {len(images)} 张图片")
-            
+
         return first_batch_messages  # 返回第一批的消息列表
 
     def _calculate_balanced_batches(self, total_images: int, max_per_batch: int = 10) -> list[int]:
@@ -384,7 +384,7 @@ async def send_douyin_content(bot: Bot, content_info: dict, douyin_url: str, tar
         content_info: 内容信息
         douyin_url: 抖音用户链接
         target_chat_id: 目标频道ID
-        
+
     Returns:
         发送的消息对象或消息列表
     """
