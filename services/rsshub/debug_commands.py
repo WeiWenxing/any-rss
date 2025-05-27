@@ -43,7 +43,7 @@ async def rsshub_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             # 构造完整的RSS XML文档
             if not xml_str.strip().startswith('<item'):
                 xml_str = f"<item>{xml_str}</item>"
-
+            
             # 构造完整的RSS文档
             full_rss_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -60,21 +60,47 @@ async def rsshub_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             # 使用系统RSSParser解析
             parser = create_rss_parser()
             entries = parser._parse_rss_content(full_rss_xml, "debug://test")
-
+            
             if not entries:
                 await status_msg.edit_text("❌ 系统RSS解析器未能解析出任何条目")
                 return
-
+            
             # 取第一个条目
             rss_entry = entries[0]
             logging.info(f"✅ 系统解析成功: {rss_entry.item_id}")
-
+            
+            # 详细调试信息
+            logging.info(f"🔍 调试信息:")
+            logging.info(f"  - 标题: {rss_entry.title}")
+            logging.info(f"  - 描述长度: {len(rss_entry.description)} 字符")
+            logging.info(f"  - 内容长度: {len(rss_entry.content or '')} 字符")
+            logging.info(f"  - 有效内容长度: {len(rss_entry.effective_content)} 字符")
+            logging.info(f"  - 媒体附件数量: {len(rss_entry.enclosures)}")
+            
+            # 显示媒体附件详情
+            for i, enc in enumerate(rss_entry.enclosures):
+                logging.info(f"  - 媒体{i+1}: {enc.mime_type} - {enc.url}")
+            
+            # 检查原始内容中的图片
+            original_img_count = xml_str.count('<img')
+            logging.info(f"  - 原始XML中的<img>标签数量: {original_img_count}")
+            
+            # 检查有效内容中是否还有图片标签
+            effective_img_count = rss_entry.effective_content.count('<img')
+            logging.info(f"  - 有效内容中的<img>标签数量: {effective_img_count}")
+            
+            # 显示有效内容的前200字符用于调试
+            effective_preview = rss_entry.effective_content[:200] + "..." if len(rss_entry.effective_content) > 200 else rss_entry.effective_content
+            logging.info(f"  - 有效内容预览: {effective_preview}")
+            
             await status_msg.edit_text(
                 f"✅ 系统RSS解析成功！\n"
                 f"📋 GUID: {rss_entry.item_id}\n"
                 f"📝 标题: {rss_entry.title}\n"
                 f"👤 作者: {rss_entry.author or '无'}\n"
-                f"📎 媒体附件: {len(rss_entry.enclosures)} 个"
+                f"📎 媒体附件: {len(rss_entry.enclosures)} 个\n"
+                f"🖼️ 原始图片标签: {original_img_count} 个\n"
+                f"📄 有效内容: {len(rss_entry.effective_content)} 字符"
             )
 
         except Exception as parse_error:
@@ -86,11 +112,21 @@ async def rsshub_debug_show_command(update: Update, context: ContextTypes.DEFAUL
         try:
             # 创建RSS转换器
             converter = create_rss_converter()
-
+            
             # 转换为TelegramMessage
             telegram_message = converter.convert(rss_entry)
+            
+            # 显示转换结果调试信息
+            logging.info(f"🔄 转换结果:")
+            logging.info(f"  - 消息文本长度: {len(telegram_message.text)} 字符")
+            logging.info(f"  - 媒体组数量: {len(telegram_message.media_group)}")
+            logging.info(f"  - 解析模式: {telegram_message.parse_mode}")
+            
+            # 显示媒体组详情
+            for i, media in enumerate(telegram_message.media_group):
+                logging.info(f"  - 媒体组{i+1}: {media.type} - {media.url}")
 
-                        # 使用统一发送器发送消息
+            # 使用统一发送器发送消息
             from services.common.unified_sender import UnifiedTelegramSender
             
             sender = UnifiedTelegramSender()
@@ -104,7 +140,13 @@ async def rsshub_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             success = len(sent_messages) > 0
 
             if success:
-                await status_msg.edit_text(f"✅ RSSHub系统调试发送成功！")
+                await status_msg.edit_text(
+                    f"✅ RSSHub系统调试发送成功！\n"
+                    f"📊 发送统计:\n"
+                    f"  - 媒体附件: {len(rss_entry.enclosures)} 个\n"
+                    f"  - 媒体组: {len(telegram_message.media_group)} 个\n"
+                    f"  - 发送消息: {len(sent_messages)} 条"
+                )
                 logging.info(f"🎉 RSSHUB_DEBUG_SHOW命令执行成功: {rss_entry.item_id}")
             else:
                 await status_msg.edit_text(f"❌ 发送失败，请检查日志")
