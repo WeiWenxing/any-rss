@@ -32,6 +32,11 @@ async def perform_historical_alignment(
         logging.info("无历史内容需要对齐")
         return True
 
+    from .interval_manager import MessageSendingIntervalManager
+
+    # 初始化间隔管理器（历史对齐场景）
+    interval_manager = MessageSendingIntervalManager("alignment")
+
     douyin_manager = DouyinManager()
     success_count = 0
 
@@ -39,6 +44,13 @@ async def perform_historical_alignment(
 
     for i, item_id in enumerate(known_item_ids, 1):
         try:
+            # 发送前等待（使用配置化间隔管理器）
+            await interval_manager.wait_before_send(
+                content_index=i-1,  # 转换为0基索引
+                total_content=len(known_item_ids),
+                recent_error_rate=interval_manager.get_recent_error_rate()
+            )
+
             # 获取主频道的MediaGroup消息ID列表
             primary_message_ids = douyin_manager.get_message_ids(douyin_url, item_id, primary_channel)
 
@@ -59,17 +71,30 @@ async def perform_historical_alignment(
                 success_count += 1
                 logging.info(f"历史对齐MediaGroup转发成功 ({i}/{len(known_item_ids)}): {item_id}, 消息ID列表: {forwarded_ids}")
 
-                # 转发间隔，避免flood control
-                await asyncio.sleep(1)
+                # 更新统计信息（转发成功）
+                interval_manager.update_statistics(success=True)
             else:
                 logging.warning(f"无法获取历史内容的消息ID ({i}/{len(known_item_ids)}): {item_id}")
+                # 更新统计信息（转发失败）
+                interval_manager.update_statistics(success=False)
 
         except Exception as e:
-            logging.error(f"历史对齐转发失败 ({i}/{len(known_item_ids)}): {item_id}, 错误: {str(e)}")
+            logging.error(f"历史对齐转发失败 ({i}/{len(known_item_ids)}): {item_id}, 错误: {str(e)}", exc_info=True)
+            # 更新统计信息（转发失败）
+            interval_manager.update_statistics(success=False)
+
+            # 错误后等待
+            if "flood control" in str(e).lower():
+                await interval_manager.wait_after_error("flood_control")
+            elif "rate limit" in str(e).lower():
+                await interval_manager.wait_after_error("rate_limit")
+            else:
+                await interval_manager.wait_after_error("other")
             continue
 
     success_rate = success_count / len(known_item_ids) * 100
     logging.info(f"历史对齐完成: {success_count}/{len(known_item_ids)} 成功 ({success_rate:.1f}%)")
+    logging.info(f"📊 {interval_manager.get_statistics_summary()}")
 
     return success_count == len(known_item_ids)
 

@@ -133,7 +133,7 @@ class DouyinScheduler:
         """
         try:
             message = await send_douyin_content(bot, content_info, douyin_url, target_chat_id)
-            
+
             # 提取消息ID
             if hasattr(message, 'message_id'):
                 return True, message.message_id
@@ -182,12 +182,24 @@ class DouyinScheduler:
         Returns:
             int: 发送成功的内容数量
         """
+        from .interval_manager import MessageSendingIntervalManager
+
+        # 初始化间隔管理器（批量发送场景）
+        interval_manager = MessageSendingIntervalManager("batch_send")
+
         # 按发布时间排序（从旧到新）
-        sorted_items = self.douyin_manager._sort_items_by_time(new_items)
+        sorted_items = self.douyin_manager._sort_content_by_time(new_items)
 
         sent_count = 0
         for i, content_info in enumerate(sorted_items):
             try:
+                # 发送前等待（使用配置化间隔管理器）
+                await interval_manager.wait_before_send(
+                    content_index=i,
+                    total_content=len(sorted_items),
+                    recent_error_rate=interval_manager.get_recent_error_rate()
+                )
+
                 # 发送单个内容
                 send_success, message_id = await self._send_notification_safe(
                     bot, content_info, douyin_url, target_chat_id
@@ -198,25 +210,28 @@ class DouyinScheduler:
                     self.douyin_manager.mark_item_as_sent(douyin_url, content_info)
                     sent_count += 1
                     logging.info(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送成功")
+                    # 更新统计信息（发送成功）
+                    interval_manager.update_statistics(success=True)
                 else:
                     logging.warning(f"抖音订阅 {douyin_url} 第 {i+1}/{len(sorted_items)} 个内容发送失败，下次将重试")
-
-                # 发送间隔策略
-                if i < len(sorted_items) - 1:  # 不是最后一个
-                    if (i + 1) % 10 == 0:  # 每10条消息暂停1分钟（只有大批量模式才可能达到）
-                        logging.info(f"📦 已发送10个内容，暂停60秒避免flood exceed...")
-                        await asyncio.sleep(60)
-                    else:
-                        # 统一的8秒间隔（大批量的常规间隔 + 常规模式的间隔）
-                        logging.debug(f"等待8秒后发送下一个抖音内容...")
-                        await asyncio.sleep(8)
+                    # 更新统计信息（发送失败）
+                    interval_manager.update_statistics(success=False)
 
             except Exception as e:
                 logging.error(f"发送抖音内容失败: {douyin_url} 第 {i+1} 个, 错误: {str(e)}", exc_info=True)
-                # 出错后也要等待，避免连续错误
-                await asyncio.sleep(5)
+                # 更新统计信息（发送失败）
+                interval_manager.update_statistics(success=False)
+
+                # 错误后等待
+                if "flood control" in str(e).lower():
+                    await interval_manager.wait_after_error("flood_control")
+                elif "rate limit" in str(e).lower():
+                    await interval_manager.wait_after_error("rate_limit")
+                else:
+                    await interval_manager.wait_after_error("other")
                 continue
 
+        logging.info(f"📊 {interval_manager.get_statistics_summary()}")
         return sent_count
 
     async def process_multi_channel_subscription(self, bot: Bot, douyin_url: str, target_channels: List[str]) -> int:

@@ -758,8 +758,12 @@ class DouyinManager:
         """
         import asyncio
         from .sender import send_douyin_content
+        from .interval_manager import MessageSendingIntervalManager
 
         logging.info(f"开始批量发送 {len(content_items)} 个内容到 {len(target_channels)} 个频道")
+
+        # 初始化间隔管理器（批量发送场景）
+        interval_manager = MessageSendingIntervalManager("batch_send")
 
         # 多频道转发机制（单频道时other_channels自动为空数组）
         primary_channel = target_channels[0]
@@ -769,21 +773,30 @@ class DouyinManager:
         # 按时间排序（从旧到新）
         sorted_items = self._sort_content_by_time(content_items)
 
-        for content in sorted_items:
+        for i, content in enumerate(sorted_items):
             # 为当前内容项维护成功记录（内存中）
             successful_channels = {}  # {channel_id: [message_id1, message_id2, ...]}
 
             try:
+                # 发送前等待（使用配置化间隔管理器）
+                await interval_manager.wait_before_send(
+                    content_index=i,
+                    total_content=len(sorted_items),
+                    recent_error_rate=interval_manager.get_recent_error_rate()
+                )
+
                 # 确保content有item_id字段
                 if 'item_id' not in content:
                     content['item_id'] = self.fetcher.generate_content_id(content)
                     logging.warning(f"内容缺少item_id，动态生成: {content['item_id']}")
 
-                                # 步骤1：主频道发送
+                # 步骤1：主频道发送
                 logging.info(f"发送到主频道 {primary_channel}: {content.get('title', '无标题')}")
                 messages = await send_douyin_content(bot, content, douyin_url, primary_channel)
                 if not messages:
                     logging.warning(f"主频道发送失败，跳过内容: {content.get('title', '无标题')}")
+                    # 更新统计信息（发送失败）
+                    interval_manager.update_statistics(success=False)
                     continue
 
                 # 处理返回的消息（可能是单个消息、消息列表或消息元组）
@@ -800,9 +813,23 @@ class DouyinManager:
                     successful_channels[primary_channel] = primary_message_ids  # 内存记录
                     logging.info(f"主频道发送成功，消息ID: {messages.message_id}")
 
+                # 更新统计信息（主频道发送成功）
+                interval_manager.update_statistics(success=True)
+
                 # 步骤2：其他频道转发（单频道时自动跳过）
-                for channel in other_channels:
+                if other_channels:
+                    # 初始化转发专用间隔管理器
+                    forward_interval_manager = MessageSendingIntervalManager("forward")
+
+                for channel_index, channel in enumerate(other_channels):
                     success = False
+
+                    # 转发前等待（使用转发专用间隔管理器）
+                    await forward_interval_manager.wait_before_send(
+                        content_index=channel_index,
+                        total_content=len(other_channels),
+                        recent_error_rate=forward_interval_manager.get_recent_error_rate()
+                    )
 
                     # 尝试从主频道转发
                     try:
@@ -816,9 +843,20 @@ class DouyinManager:
                         self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
                         successful_channels[channel] = forwarded_ids  # 内存记录
                         logging.info(f"转发成功: {primary_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
+                        # 更新转发统计信息（转发成功）
+                        forward_interval_manager.update_statistics(success=True)
                         success = True
                     except Exception as forward_error:
                         logging.warning(f"从主频道转发失败: {channel}, 错误: {forward_error}", exc_info=True)
+                        # 更新转发统计信息（转发失败）
+                        forward_interval_manager.update_statistics(success=False)
+                        # 检查是否是Flood Control错误（使用转发专用间隔管理器）
+                        if "flood control" in str(forward_error).lower():
+                            await forward_interval_manager.wait_after_error("flood_control")
+                        elif "rate limit" in str(forward_error).lower():
+                            await forward_interval_manager.wait_after_error("rate_limit")
+                        else:
+                            await forward_interval_manager.wait_after_error("other")
 
                     # 转发失败，从内存中的成功频道转发
                     if not success:
@@ -835,10 +873,14 @@ class DouyinManager:
                                     self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
                                     successful_channels[channel] = forwarded_ids  # 内存记录
                                     logging.info(f"转发成功: {existing_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
+                                    # 更新转发统计信息（重试转发成功）
+                                    forward_interval_manager.update_statistics(success=True)
                                     success = True
                                     break
                                 except Exception as retry_error:
                                     logging.warning(f"从 {existing_channel} 转发失败: {retry_error}", exc_info=True)
+                                    # 更新转发统计信息（重试转发失败）
+                                    forward_interval_manager.update_statistics(success=False)
                                     continue
 
                     # 所有转发都失败，最后降级为直接发送
@@ -854,22 +896,38 @@ class DouyinManager:
                                 self.save_message_ids(douyin_url, content['item_id'], channel, fallback_ids)
                                 successful_channels[channel] = fallback_ids  # 内存记录
                                 logging.info(f"降级发送成功: {channel}")
+                                # 更新转发统计信息（降级发送成功）
+                                forward_interval_manager.update_statistics(success=True)
                         except Exception as send_error:
                             logging.error(f"降级发送也失败: {channel}, 错误: {send_error}", exc_info=True)
+                            # 更新转发统计信息（降级发送失败）
+                            forward_interval_manager.update_statistics(success=False)
                             continue
+
+                # 输出转发统计摘要（如果有转发操作）
+                if other_channels:
+                    logging.info(f"📊 转发统计: {forward_interval_manager.get_statistics_summary()}")
 
                 # 步骤3：标记内容已发送
                 self.mark_item_as_sent(douyin_url, content)
                 sent_count += 1
 
-                # 发送间隔，避免频率限制
-                await asyncio.sleep(1)
-
             except Exception as e:
                 logging.error(f"发送内容失败: {content.get('title', '无标题')}, 错误: {e}", exc_info=True)
+                # 更新统计信息（发送失败）
+                interval_manager.update_statistics(success=False)
+
+                # 错误后等待
+                if "flood control" in str(e).lower():
+                    await interval_manager.wait_after_error("flood_control")
+                elif "rate limit" in str(e).lower():
+                    await interval_manager.wait_after_error("rate_limit")
+                else:
+                    await interval_manager.wait_after_error("other")
                 continue
 
         logging.info(f"批量发送完成: 成功 {sent_count}/{len(content_items)} 个内容到 {len(target_channels)} 个频道")
+        logging.info(f"📊 {interval_manager.get_statistics_summary()}")
         return sent_count
 
     def _sort_content_by_time(self, content_items: List[Dict]) -> List[Dict]:
