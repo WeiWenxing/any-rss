@@ -552,9 +552,7 @@ storage/douyin/
 
 **交互流程**：
 ```
-用户输入命令 → 参数验证 → URL解析
-    ↓
-检查订阅状态
+用户输入命令 → 参数验证 → 检查订阅状态
     ↓
 ┌─────────────┬─────────────┬─────────────┐
 │  首个频道   │  后续频道   │  重复订阅   │
@@ -616,13 +614,7 @@ async def douyin_add_command(douyin_url: str, chat_id: str):
     if not validate_chat_id(chat_id):
         return error_response("频道ID格式不正确")
 
-    # 2. URL解析
-    try:
-        parsed_url = parse_douyin_url(douyin_url)
-    except Exception:
-        return error_response("抖音链接解析失败")
-
-    # 3. 检查订阅状态
+    # 2. 检查订阅状态
     subscription_status = check_subscription_status(douyin_url, chat_id)
 
     if subscription_status == "duplicate":
