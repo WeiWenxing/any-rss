@@ -327,7 +327,8 @@ class DouyinManager:
 
                     # 如果这个item ID不在已知列表中，说明是新的
                     if item_id not in known_item_ids:
-                        # 添加频道信息到内容中，用于后续发送
+                        # 添加item_id和频道信息到内容中，用于后续发送
+                        content_info["item_id"] = item_id
                         content_info["target_channels"] = subscribed_channels.copy()
                         content_info["primary_channel"] = subscribed_channels[0]  # 第一个频道作为主频道
                         new_items.append(content_info)
@@ -689,6 +690,11 @@ class DouyinManager:
             successful_channels = {}  # {channel_id: message_id}
 
             try:
+                # 确保content有item_id字段
+                if 'item_id' not in content:
+                    content['item_id'] = self.fetcher.generate_content_id(content)
+                    logging.warning(f"内容缺少item_id，动态生成: {content['item_id']}")
+
                 # 步骤1：主频道发送
                 logging.info(f"发送到主频道 {primary_channel}: {content.get('title', '无标题')}")
                 message = await send_douyin_content(bot, content, douyin_url, primary_channel)
