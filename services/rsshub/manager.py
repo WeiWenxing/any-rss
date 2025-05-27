@@ -47,12 +47,17 @@ class RSSHubManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         # 数据文件路径（完全复用douyin模块的文件结构）
-        self.subscriptions_file = self.data_dir / "subscriptions.json"
-        self.message_mappings_file = self.data_dir / "message_mappings.json"
-        self.known_items_dir = self.data_dir / "known_items"
+        self.config_dir = self.data_dir / "config"
+        self.data_storage_dir = self.data_dir / "data"
+        self.media_dir = self.data_dir / "media"
+        
+        self.subscriptions_file = self.config_dir / "subscriptions.json"
+        self.message_mappings_file = self.config_dir / "message_mappings.json"
 
-        # 确保known_items目录存在
-        self.known_items_dir.mkdir(exist_ok=True)
+        # 确保目录存在
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.data_storage_dir.mkdir(parents=True, exist_ok=True)
+        self.media_dir.mkdir(parents=True, exist_ok=True)
 
         # 内存缓存（完全复用douyin模块的缓存结构）
         self._subscriptions_cache = {}
@@ -128,32 +133,20 @@ class RSSHubManager:
         Args:
             rss_url: RSS源URL
             chat_id: 频道ID
-            rss_title: RSS源标题（可选）
+            rss_title: RSS源标题（可选，仅用于日志）
 
         Returns:
             bool: 是否添加成功
         """
         try:
-            # 初始化RSS源数据结构（复用douyin的Subscription结构）
+            # 初始化RSS源数据结构（完全复用douyin的简单映射格式）
             if rss_url not in self._subscriptions_cache:
-                self._subscriptions_cache[rss_url] = {
-                    "rss_url": rss_url,
-                    "rss_title": rss_title,
-                    "channels": [],
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
-                }
+                self._subscriptions_cache[rss_url] = []
 
             # 检查频道是否已存在
-            channels = self._subscriptions_cache[rss_url]["channels"]
+            channels = self._subscriptions_cache[rss_url]
             if chat_id not in channels:
                 channels.append(chat_id)
-                self._subscriptions_cache[rss_url]["updated_at"] = datetime.now().isoformat()
-
-                # 更新RSS标题（如果提供）
-                if rss_title:
-                    self._subscriptions_cache[rss_url]["rss_title"] = rss_title
-
                 self._save_subscriptions()
                 self.logger.info(f"添加RSS订阅成功: {rss_url} -> {chat_id}")
                 return True
@@ -181,10 +174,9 @@ class RSSHubManager:
                 self.logger.warning(f"RSS源不存在: {rss_url}")
                 return False
 
-            channels = self._subscriptions_cache[rss_url]["channels"]
+            channels = self._subscriptions_cache[rss_url]
             if chat_id in channels:
                 channels.remove(chat_id)
-                self._subscriptions_cache[rss_url]["updated_at"] = datetime.now().isoformat()
 
                 # 如果没有频道订阅了，删除整个RSS源
                 if not channels:
@@ -213,7 +205,7 @@ class RSSHubManager:
             List[str]: 订阅频道ID列表
         """
         if rss_url in self._subscriptions_cache:
-            return self._subscriptions_cache[rss_url]["channels"].copy()
+            return self._subscriptions_cache[rss_url].copy()
         return []
 
     def get_all_rss_urls(self) -> List[str]:
@@ -225,7 +217,7 @@ class RSSHubManager:
         """
         return list(self._subscriptions_cache.keys())
 
-    def get_channel_subscriptions(self, chat_id: str) -> List[Dict[str, Any]]:
+    def get_channel_subscriptions(self, chat_id: str) -> List[str]:
         """
         获取频道的所有RSS订阅
 
@@ -233,17 +225,12 @@ class RSSHubManager:
             chat_id: 频道ID
 
         Returns:
-            List[Dict[str, Any]]: 订阅信息列表
+            List[str]: RSS源URL列表
         """
         subscriptions = []
-        for rss_url, data in self._subscriptions_cache.items():
-            if chat_id in data["channels"]:
-                subscriptions.append({
-                    "rss_url": rss_url,
-                    "rss_title": data.get("rss_title", ""),
-                    "created_at": data.get("created_at", ""),
-                    "updated_at": data.get("updated_at", "")
-                })
+        for rss_url, channels in self._subscriptions_cache.items():
+            if chat_id in channels:
+                subscriptions.append(rss_url)
         return subscriptions
 
     # ==================== 消息映射接口（完全复用douyin逻辑）====================
@@ -341,8 +328,11 @@ class RSSHubManager:
             if rss_url in self._known_items_cache:
                 return self._known_items_cache[rss_url].copy()
 
-            # 从文件加载
-            known_items_file = self.known_items_dir / f"{self._safe_filename(rss_url)}.json"
+            # 从文件加载（按设计文档的目录结构）
+            url_hash = self._safe_filename(rss_url)
+            url_dir = self.data_storage_dir / url_hash
+            known_items_file = url_dir / "known_item_ids.json"
+            
             if known_items_file.exists():
                 with open(known_items_file, 'r', encoding='utf-8') as f:
                     known_items = json.load(f)
@@ -369,8 +359,18 @@ class RSSHubManager:
             # 更新缓存
             self._known_items_cache[rss_url] = item_ids.copy()
 
-            # 保存到文件
-            known_items_file = self.known_items_dir / f"{self._safe_filename(rss_url)}.json"
+            # 保存到文件（按设计文档的目录结构）
+            url_hash = self._safe_filename(rss_url)
+            url_dir = self.data_storage_dir / url_hash
+            url_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 保存URL记录文件
+            url_file = url_dir / "url.txt"
+            with open(url_file, 'w', encoding='utf-8') as f:
+                f.write(rss_url)
+            
+            # 保存已知条目ID文件
+            known_items_file = url_dir / "known_item_ids.json"
             with open(known_items_file, 'w', encoding='utf-8') as f:
                 json.dump(item_ids, f, ensure_ascii=False, indent=2)
 
@@ -447,8 +447,7 @@ class RSSHubManager:
             total_channels = set()
             total_subscriptions = 0
 
-            for rss_data in self._subscriptions_cache.values():
-                channels = rss_data["channels"]
+            for channels in self._subscriptions_cache.values():
                 total_subscriptions += len(channels)
                 total_channels.update(channels)
 
@@ -494,21 +493,24 @@ class RSSHubManager:
                 self._save_message_mappings()
                 self.logger.info(f"清理孤立消息映射: {len(orphaned_mappings)} 个")
 
-            # 清理已知条目文件
-            for known_file in self.known_items_dir.glob("*.json"):
-                # 从文件名反推RSS URL（简化处理）
-                file_stem = known_file.stem
-                found_match = False
+            # 清理已知条目目录
+            for url_dir in self.data_storage_dir.iterdir():
+                if url_dir.is_dir():
+                    # 从目录名反推RSS URL（简化处理）
+                    dir_name = url_dir.name
+                    found_match = False
 
-                for rss_url in active_rss_urls:
-                    if self._safe_filename(rss_url) == file_stem:
-                        found_match = True
-                        break
+                    for rss_url in active_rss_urls:
+                        if self._safe_filename(rss_url) == dir_name:
+                            found_match = True
+                            break
 
-                if not found_match:
-                    known_file.unlink()
-                    cleaned_count += 1
-                    self.logger.debug(f"删除孤立已知条目文件: {known_file}")
+                    if not found_match:
+                        # 删除整个目录
+                        import shutil
+                        shutil.rmtree(url_dir)
+                        cleaned_count += 1
+                        self.logger.debug(f"删除孤立已知条目目录: {url_dir}")
 
             self.logger.info(f"数据清理完成，清理了 {cleaned_count} 个孤立数据项")
             return cleaned_count
