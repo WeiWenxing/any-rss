@@ -6,6 +6,25 @@
 - **最后更新**: 2024年
 - **文档状态**: 草稿
 
+## ⚠️ 重要技术说明
+
+### 消息转发方式
+本设计文档中的所有转发操作均使用 **`copy_messages`** 方法，而非 `forward_messages` 方法。
+
+**关键区别**：
+- **`copy_messages`**：复制消息内容，**不显示"Forward From"转发源标识**，消息看起来像原创内容
+- **`forward_messages`**：转发消息，会显示"Forward From"转发源标识
+
+**选择原因**：
+- 保持频道内容的一致性和美观性
+- 避免用户看到转发标识造成的困扰
+- 提供更好的用户体验
+
+**应用范围**：
+- 多频道转发：从发送频道复制到其他频道
+- 历史内容对齐：从已有频道复制到新订阅频道
+- 错误恢复：从成功频道复制到失败频道
+
 ---
 
 ## 📖 目录
@@ -139,14 +158,14 @@
 - 智能去重，避免重复推送
 
 **多频道推送**：
-- 发送频道直接发送MediaGroup，转发频道使用forward_messages转发完整消息组
+- 发送频道直接发送MediaGroup，转发频道使用copy_messages复制完整消息组（不显示转发源标识）
 - 新频道订阅时的智能历史内容对齐
 - 转发失败时的多源重试和自动降级机制
 
 ### 4.3 关键特性
 **高效转发机制**：
-- 每个新内容仅需1次MediaGroup发送 + N-1次forward_messages转发操作
-- MediaGroup转发保持原有消息组的完整性和界面效果
+- 每个新内容仅需1次MediaGroup发送 + N-1次copy_messages复制操作
+- copy_messages复制保持原有消息组的完整性和界面效果，且不显示"Forward From"转发源标识
 - 显著减少带宽使用和API调用次数
 - 支持大规模多频道部署
 
@@ -475,7 +494,7 @@ storage/douyin/
     ↓
 记录消息ID列表 → message_mappings.json
     ↓
-其他频道转发 → bot.forward_messages()（转发完整MediaGroup）
+其他频道转发 → bot.copy_messages()（复制完整MediaGroup，不显示转发源）
     ↓
 记录转发ID列表 → message_mappings.json
     ↓
@@ -863,7 +882,7 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
                 for source_channel, source_ids in successful_channels.items():
                     if source_channel != channel:  # 不从自己转发给自己
                         try:
-                            forwarded_messages = await bot.forward_messages(
+                            forwarded_messages = await bot.copy_messages(
                                 chat_id=channel,
                                 from_chat_id=source_channel,
                                 message_ids=source_ids
@@ -967,7 +986,7 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
                 for source_channel, source_msg_ids in successful_channels.items():
                     if source_channel != channel:  # 不从自己转发给自己
                         try:
-                            forwarded_messages = await bot.forward_messages(
+                            forwarded_messages = await bot.copy_messages(
                                 chat_id=channel,
                                 from_chat_id=source_channel,
                                 message_ids=source_msg_ids
@@ -1026,9 +1045,9 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
 算法步骤：
 1. 获取已知内容的所有可用转发源
 2. 按内容时间顺序排序（从旧到新）
-3. 批量转发历史MediaGroup：
+3. 批量复制历史MediaGroup：
    a. 遍历所有可用转发源，依次尝试
-   b. 使用forward_messages转发整个消息组
+   b. 使用copy_messages复制整个消息组（不显示转发源标识）
    c. 记录新频道的所有消息ID
    d. 成功后处理下一个内容，所有源都失败才跳过
 4. 返回对齐结果统计
@@ -1055,8 +1074,8 @@ async def historical_alignment_algorithm(known_item_ids, new_channel):
         # 遍历所有可用源，直到成功
         for source_channel, source_message_ids in all_available_sources:
             try:
-                # 转发整个MediaGroup到新频道
-                forwarded_messages = await bot.forward_messages(
+                # 复制整个MediaGroup到新频道（不显示转发源）
+                forwarded_messages = await bot.copy_messages(
                     chat_id=new_channel,
                     from_chat_id=source_channel,
                     message_ids=source_message_ids
@@ -1454,8 +1473,8 @@ async def forward_to_other_channels(self, bot, primary_channel: str,
                 recent_error_rate=interval_manager.get_recent_error_rate()
             )
 
-            # 执行转发操作
-            forwarded_messages = await bot.forward_messages(
+            # 执行复制操作（不显示转发源）
+            forwarded_messages = await bot.copy_messages(
                 chat_id=channel,
                 from_chat_id=primary_channel,
                 message_ids=message_ids
@@ -1495,7 +1514,7 @@ async def perform_historical_alignment(bot, douyin_url: str, known_item_ids: Lis
 
             for source_channel, source_message_ids in all_available_sources:
                 try:
-                    forwarded_messages = await bot.forward_messages(
+                    forwarded_messages = await bot.copy_messages(
                         chat_id=new_channel,
                         from_chat_id=source_channel,
                         message_ids=source_message_ids
