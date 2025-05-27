@@ -25,8 +25,10 @@ import feedparser
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import hashlib
 
 from .rss_entry import RSSEntry, RSSEnclosure, create_rss_entry
+from services.common.cache import get_cache
 
 
 class RSSParser:
@@ -36,17 +38,21 @@ class RSSParser:
     负责从RSS/Atom XML解析出标准化的RSSEntry对象列表
     """
 
-    def __init__(self, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, timeout: int = 30, max_retries: int = 3, cache_ttl: int = 21600):
         """
         初始化RSS解析器
 
         Args:
             timeout: 请求超时时间（秒）
             max_retries: 最大重试次数
+            cache_ttl: 缓存过期时间（秒），默认6小时
         """
         self.logger = logging.getLogger(__name__)
         self.timeout = timeout
         self.max_retries = max_retries
+
+        # 初始化缓存
+        self.cache = get_cache("rsshub_parser", ttl=cache_ttl)
 
         # 配置HTTP会话
         self.session = requests.Session()
@@ -61,16 +67,33 @@ class RSSParser:
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
 
-        # 设置User-Agent
+        # 设置完善的请求头（与普通RSS模块保持一致）
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Cache-Control': 'no-cache'
         })
 
-        self.logger.info(f"RSS解析器初始化完成，超时: {timeout}s, 重试: {max_retries}次")
+        self.logger.info(f"RSS解析器初始化完成，超时: {timeout}s, 重试: {max_retries}次, 缓存TTL: {cache_ttl}s")
+
+    def _generate_cache_key(self, rss_url: str) -> str:
+        """
+        生成缓存键
+
+        Args:
+            rss_url: RSS源URL
+
+        Returns:
+            str: 缓存键
+        """
+        # 使用URL生成唯一的缓存键
+        cache_key = hashlib.md5(rss_url.encode('utf-8')).hexdigest()
+        return f"rss_feed:{cache_key}"
 
     def parse_feed(self, rss_url: str) -> List[RSSEntry]:
         """
-        解析RSS源，返回RSS条目列表
+        解析RSS源，返回RSS条目列表（带缓存）
 
         Args:
             rss_url: RSS源URL
@@ -82,13 +105,46 @@ class RSSParser:
             Exception: 解析失败时抛出异常
         """
         try:
-            self.logger.info(f"开始解析RSS源: {rss_url}")
+            # 生成缓存键
+            cache_key = self._generate_cache_key(rss_url)
+
+            # 尝试从缓存获取数据
+            cached_data = self.cache.get(cache_key)
+            if cached_data is not None:
+                self.logger.info(f"📦 从缓存获取RSS内容: {rss_url}, 条目数: {len(cached_data)}")
+                # 将缓存的字典数据转换回RSSEntry对象
+                entries = []
+                for entry_dict in cached_data:
+                    try:
+                        entry = self._dict_to_rss_entry(entry_dict)
+                        if entry:
+                            entries.append(entry)
+                    except Exception as e:
+                        self.logger.warning(f"缓存条目转换失败: {str(e)}")
+                        continue
+                return entries
+
+            self.logger.info(f"🌐 开始解析RSS源: {rss_url}")
 
             # 获取RSS内容
             rss_content = self._fetch_rss_content(rss_url)
 
             # 解析RSS内容
             entries = self._parse_rss_content(rss_content, rss_url)
+
+            # 缓存解析结果（转换为字典格式）
+            if entries:
+                cache_data = []
+                for entry in entries:
+                    try:
+                        entry_dict = self._rss_entry_to_dict(entry)
+                        cache_data.append(entry_dict)
+                    except Exception as e:
+                        self.logger.warning(f"条目序列化失败: {str(e)}")
+                        continue
+
+                self.cache.set(cache_key, cache_data)
+                self.logger.info(f"💾 RSS内容已缓存: {rss_url}, 条目数: {len(cache_data)}")
 
             self.logger.info(f"RSS解析完成: {rss_url}, 获取到 {len(entries)} 个条目")
             return entries
@@ -374,7 +430,7 @@ class RSSParser:
 
     def validate_rss_url(self, rss_url: str) -> bool:
         """
-        验证RSS URL是否有效
+        验证RSS URL是否有效（宽松验证，与普通RSS模块保持一致）
 
         Args:
             rss_url: RSS源URL
@@ -386,25 +442,33 @@ class RSSParser:
             # 基础URL格式验证
             parsed = urlparse(rss_url)
             if not parsed.scheme or not parsed.netloc:
+                self.logger.debug(f"RSS URL格式验证失败: 缺少协议或域名 - {rss_url}")
                 return False
 
-            # 尝试获取RSS内容
-            response = self.session.head(rss_url, timeout=10)
-            response.raise_for_status()
+            # 检查协议
+            if parsed.scheme not in ['http', 'https']:
+                self.logger.debug(f"RSS URL协议验证失败: 不支持的协议 {parsed.scheme} - {rss_url}")
+                return False
 
-            # 检查Content-Type
-            content_type = response.headers.get('content-type', '').lower()
-            valid_types = ['application/rss+xml', 'application/atom+xml', 'text/xml', 'application/xml']
-
-            if any(valid_type in content_type for valid_type in valid_types):
-                return True
-
-            # 如果Content-Type不明确，尝试解析内容
+            # 宽松验证：尝试直接解析RSS内容（不依赖Content-Type）
             try:
+                self.logger.debug(f"开始宽松验证RSS源: {rss_url}")
                 entries = self.parse_feed(rss_url)
-                return len(entries) >= 0  # 能解析就认为有效
-            except:
-                return False
+                self.logger.debug(f"RSS源验证成功: 解析到 {len(entries)} 个条目 - {rss_url}")
+                return True  # 能解析就认为有效
+            except Exception as parse_error:
+                self.logger.debug(f"RSS内容解析失败: {rss_url}, 错误: {str(parse_error)}")
+
+                # 如果解析失败，尝试简单的连通性检查
+                try:
+                    self.logger.debug(f"尝试连通性检查: {rss_url}")
+                    response = self.session.head(rss_url, timeout=10)
+                    response.raise_for_status()
+                    self.logger.debug(f"连通性检查通过，假设RSS源有效: {rss_url}")
+                    return True  # 连通性正常，假设RSS源有效
+                except Exception as conn_error:
+                    self.logger.debug(f"连通性检查也失败: {rss_url}, 错误: {str(conn_error)}")
+                    return False
 
         except Exception as e:
             self.logger.debug(f"RSS URL验证失败: {rss_url}, 错误: {str(e)}")
@@ -438,20 +502,179 @@ class RSSParser:
             self.logger.error(f"获取RSS源信息失败: {rss_url}, 错误: {str(e)}", exc_info=True)
             return {}
 
+    def _rss_entry_to_dict(self, entry: RSSEntry) -> Dict[str, Any]:
+        """
+        将RSSEntry对象转换为字典格式（用于缓存）
+
+        Args:
+            entry: RSSEntry对象
+
+        Returns:
+            Dict[str, Any]: 字典格式的条目数据
+        """
+        try:
+            entry_dict = {
+                'title': entry.title,
+                'link': entry.link,
+                'description': entry.description,
+                'guid': entry.guid,
+                'published': entry.published.isoformat() if entry.published else None,
+                'updated': entry.updated.isoformat() if entry.updated else None,
+                'author': entry.author,
+                'category': entry.category,
+                'content': entry.content,
+                'summary': entry.summary,
+                'source_url': entry.source_url,
+                'source_title': entry.source_title,
+                'enclosures': []
+            }
+
+            # 序列化附件
+            for enclosure in entry.enclosures:
+                enclosure_dict = {
+                    'url': enclosure.url,
+                    'mime_type': enclosure.mime_type,
+                    'length': enclosure.length
+                }
+                entry_dict['enclosures'].append(enclosure_dict)
+
+            return entry_dict
+
+        except Exception as e:
+            self.logger.error(f"RSSEntry序列化失败: {str(e)}", exc_info=True)
+            raise
+
+    def _dict_to_rss_entry(self, entry_dict: Dict[str, Any]) -> Optional[RSSEntry]:
+        """
+        将字典格式转换为RSSEntry对象（从缓存恢复）
+
+        Args:
+            entry_dict: 字典格式的条目数据
+
+        Returns:
+            Optional[RSSEntry]: RSSEntry对象
+        """
+        try:
+            # 解析时间
+            published = None
+            if entry_dict.get('published'):
+                try:
+                    published = datetime.fromisoformat(entry_dict['published'])
+                except ValueError:
+                    pass
+
+            updated = None
+            if entry_dict.get('updated'):
+                try:
+                    updated = datetime.fromisoformat(entry_dict['updated'])
+                except ValueError:
+                    pass
+
+            # 创建RSSEntry对象
+            entry = create_rss_entry(
+                title=entry_dict.get('title', ''),
+                link=entry_dict.get('link', ''),
+                description=entry_dict.get('description', ''),
+                guid=entry_dict.get('guid'),
+                published=published,
+                updated=updated,
+                author=entry_dict.get('author'),
+                category=entry_dict.get('category'),
+                content=entry_dict.get('content'),
+                summary=entry_dict.get('summary'),
+                source_url=entry_dict.get('source_url'),
+                source_title=entry_dict.get('source_title')
+            )
+
+            # 恢复附件
+            for enclosure_dict in entry_dict.get('enclosures', []):
+                try:
+                    entry.add_enclosure(
+                        url=enclosure_dict.get('url', ''),
+                        mime_type=enclosure_dict.get('mime_type', ''),
+                        length=enclosure_dict.get('length')
+                    )
+                except Exception as e:
+                    self.logger.warning(f"恢复附件失败: {str(e)}")
+                    continue
+
+            return entry
+
+        except Exception as e:
+            self.logger.error(f"字典转RSSEntry失败: {str(e)}", exc_info=True)
+            return None
+
+    def clear_cache(self, rss_url: str = None) -> bool:
+        """
+        清除缓存
+
+        Args:
+            rss_url: 指定URL的缓存，如果为None则清除所有缓存
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if rss_url:
+                # 清除指定URL的缓存
+                cache_key = self._generate_cache_key(rss_url)
+                success = self.cache.delete(cache_key)
+                self.logger.info(f"清除指定URL缓存: {rss_url}, 成功: {success}")
+                return success
+            else:
+                # 清除所有缓存
+                success = self.cache.clear()
+                self.logger.info(f"清除所有RSS解析器缓存, 成功: {success}")
+                return success
+        except Exception as e:
+            self.logger.error(f"清除缓存失败: {str(e)}", exc_info=True)
+            return False
+
+    def get_cache_info(self) -> Dict:
+        """
+        获取缓存信息
+
+        Returns:
+            Dict: 缓存统计信息
+        """
+        try:
+            return self.cache.get_info()
+        except Exception as e:
+            self.logger.error(f"获取缓存信息失败: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+
+    def is_cache_hit(self, rss_url: str) -> bool:
+        """
+        检查指定URL是否有缓存
+
+        Args:
+            rss_url: RSS源URL
+
+        Returns:
+            bool: 是否有缓存
+        """
+        try:
+            cache_key = self._generate_cache_key(rss_url)
+            return self.cache.exists(cache_key)
+        except Exception as e:
+            self.logger.error(f"检查缓存失败: {str(e)}", exc_info=True)
+            return False
+
 
 # 便捷函数：创建RSS解析器实例
-def create_rss_parser(timeout: int = 30, max_retries: int = 3) -> RSSParser:
+def create_rss_parser(timeout: int = 30, max_retries: int = 3, cache_ttl: int = 21600) -> RSSParser:
     """
     创建RSS解析器实例
 
     Args:
         timeout: 请求超时时间
         max_retries: 最大重试次数
+        cache_ttl: 缓存过期时间（秒），默认6小时
 
     Returns:
         RSSParser: RSS解析器实例
     """
-    return RSSParser(timeout, max_retries)
+    return RSSParser(timeout, max_retries, cache_ttl)
 
 
 # 便捷函数：快速解析RSS
