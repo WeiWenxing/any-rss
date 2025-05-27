@@ -20,7 +20,7 @@ import re
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from services.common.message_converter import MessageConverter, ConversionError
+from services.common.message_converter import MessageConverter, ConversionError, ConverterType
 from services.common.telegram_message import TelegramMessage, MediaItem, MediaType, ParseMode
 from .rss_entry import RSSEntry, RSSEnclosure
 
@@ -40,12 +40,48 @@ class RSSMessageConverter(MessageConverter):
             max_text_length: 最大文本长度
             max_media_items: 最大媒体项数量
         """
-        super().__init__()
-        self.logger = logging.getLogger(__name__)
+        super().__init__(ConverterType.RSSHUB)
         self.max_text_length = max_text_length
         self.max_media_items = max_media_items
 
         self.logger.info(f"RSS消息转换器初始化完成，最大文本长度: {max_text_length}, 最大媒体数: {max_media_items}")
+
+    def convert(self, source_data: RSSEntry, **kwargs) -> TelegramMessage:
+        """
+        实现MessageConverter接口的convert方法
+
+        Args:
+            source_data: RSS条目对象
+            **kwargs: 额外参数
+
+        Returns:
+            TelegramMessage: 转换后的消息
+        """
+        return self.to_telegram_message(source_data)
+
+    def convert_batch(self, source_data_list: List[RSSEntry], **kwargs) -> List[TelegramMessage]:
+        """
+        实现MessageConverter接口的convert_batch方法
+
+        Args:
+            source_data_list: RSS条目列表
+            **kwargs: 额外参数
+
+        Returns:
+            List[TelegramMessage]: 转换后的消息列表
+        """
+        messages = []
+        for entry in source_data_list:
+            try:
+                message = self.to_telegram_message(entry)
+                messages.append(message)
+            except Exception as e:
+                self.logger.error(f"批量转换RSS条目失败: {entry.item_id}, 错误: {str(e)}", exc_info=True)
+                # 尝试降级处理
+                fallback_message = self.handle_conversion_error(e, entry)
+                if fallback_message:
+                    messages.append(fallback_message)
+        return messages
 
     def to_telegram_message(self, rss_entry: RSSEntry) -> TelegramMessage:
         """

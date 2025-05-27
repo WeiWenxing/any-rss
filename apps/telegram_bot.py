@@ -66,6 +66,12 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "   • /douyin_list - 查看抖音订阅列表\n"
         "   • 支持抖音用户主页和短链接\n"
         "   • 自动推送新发布的视频和图片内容\n\n"
+        "📡 **RSSHub订阅**\n"
+        "   • /rsshub_add <RSS链接> <频道ID> - 添加RSS订阅\n"
+        "   • /rsshub_del <RSS链接> <频道ID> - 删除RSS订阅\n"
+        "   • /rsshub_list - 查看RSS订阅列表\n"
+        "   • 支持RSS 2.0和Atom 1.0格式\n"
+        "   • 自动推送新发布的RSS内容\n\n"
     )
 
     # 根据debug模式决定是否显示抖音调试命令
@@ -123,8 +129,10 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "💡 使用示例：\n"
         "• /add https://feeds.bbci.co.uk/news/rss.xml @news_channel\n"
         "• /douyin_add https://v.douyin.com/iM5g7LsM/ @douyin_channel\n"
+        "• /rsshub_add https://example.com/rss.xml @rss_channel\n"
         "• /list\n"
         "• /douyin_list\n"
+        "• /rsshub_list\n"
         "• /news\n\n"
         "🔧 技术支持：\n"
         "项目地址：https://github.com/WeiWenxing/any-rss\n"
@@ -211,9 +219,11 @@ async def run(token):
     # 从services加载其他命令
     from services.rss.commands import register_commands
     from services.douyin.commands import register_douyin_commands
+    from services.rsshub.commands import register_rsshub_commands
 
     register_commands(application)
     register_douyin_commands(application)
+    register_rsshub_commands(application)
 
     await application.initialize()
     await application.start()
@@ -245,6 +255,10 @@ async def scheduled_task(token):
     # 导入服务模块
     from services.rss.scheduler import run_scheduled_check as rss_run_scheduled_check
     from services.douyin.scheduler import run_scheduled_check as douyin_run_scheduled_check
+    from services.rsshub.scheduler import create_rsshub_scheduler
+
+    # 创建RSSHub调度器实例
+    rsshub_scheduler = create_rsshub_scheduler()
 
     while True:
         try:
@@ -253,6 +267,9 @@ async def scheduled_task(token):
 
             # 抖音订阅检查 - 使用抖音调度器
             await douyin_run_scheduled_check(bot)
+
+            # RSSHub订阅检查 - 使用RSSHub调度器
+            await rsshub_scheduler.check_all_rss_updates(bot)
 
             logging.info("所有订阅源检查完成，等待下一次检查")
             await asyncio.sleep(3600)  # 保持1小时检查间隔
