@@ -24,13 +24,15 @@ from typing import List, Dict, Optional, Any, Tuple
 from pathlib import Path
 
 from .rss_entry import RSSEntry
+from .rss_parser import RSSParser, create_rss_parser
+from services.common.unified_manager import UnifiedContentManager
 
 
-class RSSHubManager:
+class RSSHubManager(UnifiedContentManager):
     """
     RSSHub管理器
 
-    完全复用douyin模块的管理逻辑，为RSS订阅提供统一的数据管理功能
+    继承统一管理器基类，完全复用douyin模块的管理逻辑，为RSS订阅提供统一的数据管理功能
     """
 
     def __init__(self, data_dir: str = "data/rsshub"):
@@ -40,7 +42,9 @@ class RSSHubManager:
         Args:
             data_dir: 数据存储目录
         """
-        self.logger = logging.getLogger(__name__)
+        # 调用父类构造函数
+        super().__init__(module_name="rsshub", data_dir=data_dir)
+
         self.data_dir = Path(data_dir)
 
         # 确保数据目录存在
@@ -50,7 +54,7 @@ class RSSHubManager:
         self.config_dir = self.data_dir / "config"
         self.data_storage_dir = self.data_dir / "data"
         self.media_dir = self.data_dir / "media"
-        
+
         self.subscriptions_file = self.config_dir / "subscriptions.json"
         self.message_mappings_file = self.config_dir / "message_mappings.json"
 
@@ -63,6 +67,9 @@ class RSSHubManager:
         self._subscriptions_cache = {}
         self._message_mappings_cache = {}
         self._known_items_cache = {}
+
+        # 初始化RSS解析器
+        self.rss_parser = create_rss_parser()
 
         # 加载数据
         self._load_all_data()
@@ -123,6 +130,210 @@ class RSSHubManager:
             self.logger.debug("消息映射数据保存成功")
         except Exception as e:
             self.logger.error(f"保存消息映射数据失败: {str(e)}", exc_info=True)
+
+    # ==================== 实现UnifiedContentManager抽象接口 ====================
+
+    def get_subscriptions(self) -> Dict[str, List[str]]:
+        """
+        获取所有订阅信息
+
+        Returns:
+            Dict[str, List[str]]: {源URL: [频道ID列表]}
+        """
+        return self._subscriptions_cache.copy()
+
+    def get_subscription_channels(self, source_url: str) -> List[str]:
+        """
+        获取指定源的订阅频道列表
+
+        Args:
+            source_url: 数据源URL
+
+        Returns:
+            List[str]: 频道ID列表
+        """
+        return self._subscriptions_cache.get(source_url, []).copy()
+
+    def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
+        """
+        获取指定源的最新内容
+
+        Args:
+            source_url: 数据源URL
+
+        Returns:
+            Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 内容数据列表)
+        """
+        try:
+            # 使用RSS解析器获取最新内容
+            entries = self.rss_parser.parse_feed(source_url)
+
+            if not entries:
+                return False, "RSS源无内容或解析失败", None
+
+            # 转换为统一的内容数据格式
+            content_data_list = []
+            for entry in entries:
+                content_data = {
+                    "title": entry.title,
+                    "description": entry.description,
+                    "link": entry.link,
+                    "published": entry.published,
+                    "updated": entry.updated,
+                    "author": entry.author,
+                    "item_id": entry.item_id,
+                    "time": entry.effective_published_time.isoformat() if entry.effective_published_time else "",
+                    "enclosures": [
+                        {
+                            "url": enc.url,
+                            "type": enc.type,
+                            "length": enc.length
+                        } for enc in entry.enclosures
+                    ] if entry.enclosures else []
+                }
+                content_data_list.append(content_data)
+
+            return True, "", content_data_list
+
+        except Exception as e:
+            self.logger.error(f"获取RSS内容失败: {source_url}, 错误: {str(e)}", exc_info=True)
+            return False, f"获取RSS内容失败: {str(e)}", None
+
+    def get_known_item_ids(self, source_url: str) -> List[str]:
+        """
+        获取已知的内容ID列表
+
+        Args:
+            source_url: 数据源URL
+
+        Returns:
+            List[str]: 已知内容ID列表
+        """
+        try:
+            # 检查缓存
+            if source_url in self._known_items_cache:
+                return self._known_items_cache[source_url].copy()
+
+            # 从文件加载（按设计文档的目录结构）
+            url_hash = self._safe_filename(source_url)
+            url_dir = self.data_storage_dir / url_hash
+            known_items_file = url_dir / "known_item_ids.json"
+
+            if known_items_file.exists():
+                with open(known_items_file, 'r', encoding='utf-8') as f:
+                    known_items = json.load(f)
+                    self._known_items_cache[source_url] = known_items
+                    return known_items.copy()
+
+            # 文件不存在，返回空列表
+            self._known_items_cache[source_url] = []
+            return []
+
+        except Exception as e:
+            self.logger.error(f"获取已知条目ID失败: {source_url}, 错误: {str(e)}", exc_info=True)
+            return []
+
+    def save_known_item_ids(self, source_url: str, item_ids: List[str]):
+        """
+        保存已知的内容ID列表
+
+        Args:
+            source_url: 数据源URL
+            item_ids: 内容ID列表
+        """
+        try:
+            # 更新缓存
+            self._known_items_cache[source_url] = item_ids.copy()
+
+            # 保存到文件
+            url_hash = self._safe_filename(source_url)
+            url_dir = self.data_storage_dir / url_hash
+            url_dir.mkdir(parents=True, exist_ok=True)
+
+            known_items_file = url_dir / "known_item_ids.json"
+            with open(known_items_file, 'w', encoding='utf-8') as f:
+                json.dump(item_ids, f, ensure_ascii=False, indent=2)
+
+            self.logger.debug(f"保存已知条目ID成功: {source_url}, {len(item_ids)} 个")
+
+        except Exception as e:
+            self.logger.error(f"保存已知条目ID失败: {source_url}, 错误: {str(e)}", exc_info=True)
+
+    def generate_content_id(self, content_data: Dict) -> str:
+        """
+        生成内容的唯一标识
+
+        Args:
+            content_data: 内容数据
+
+        Returns:
+            str: 唯一标识
+        """
+        # 如果内容数据中已有item_id，直接使用
+        if "item_id" in content_data and content_data["item_id"]:
+            return content_data["item_id"]
+
+        # 否则根据内容生成ID（与RSS解析器的逻辑保持一致）
+        if content_data.get("link"):
+            return content_data["link"]
+        elif content_data.get("title") and content_data.get("published"):
+            return f"{content_data['title']}_{content_data['published']}"
+        else:
+            return f"rss_item_{hash(str(content_data))}"
+
+    def save_message_mapping(self, source_url: str, item_id: str, chat_id: str, message_ids: List[int]):
+        """
+        保存消息ID映射
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+            chat_id: 频道ID
+            message_ids: 消息ID列表
+        """
+        try:
+            # 初始化数据结构
+            if source_url not in self._message_mappings_cache:
+                self._message_mappings_cache[source_url] = {}
+
+            if item_id not in self._message_mappings_cache[source_url]:
+                self._message_mappings_cache[source_url][item_id] = {}
+
+            # 保存映射
+            self._message_mappings_cache[source_url][item_id][chat_id] = message_ids
+
+            # 保存到文件
+            self._save_message_mappings()
+
+            self.logger.debug(f"保存消息映射成功: {source_url}/{item_id} -> {chat_id}: {message_ids}")
+
+        except Exception as e:
+            self.logger.error(f"保存消息映射失败: {source_url}/{item_id} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+
+    def get_all_available_message_sources(self, source_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
+        """
+        获取所有可用的消息转发源
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+
+        Returns:
+            List[Tuple[str, List[int]]]: 所有可用的转发源列表 [(频道ID, 消息ID列表), ...]
+        """
+        try:
+            if source_url not in self._message_mappings_cache:
+                return []
+
+            if item_id not in self._message_mappings_cache[source_url]:
+                return []
+
+            mappings = self._message_mappings_cache[source_url][item_id]
+            return [(chat_id, msg_ids) for chat_id, msg_ids in mappings.items()]
+
+        except Exception as e:
+            self.logger.error(f"获取消息转发源失败: {source_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+            return []
 
     # ==================== 订阅管理接口 ====================
 
@@ -194,20 +405,6 @@ class RSSHubManager:
             self.logger.error(f"删除RSS订阅失败: {rss_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
             return False
 
-    def get_subscription_channels(self, rss_url: str) -> List[str]:
-        """
-        获取RSS源的订阅频道列表
-
-        Args:
-            rss_url: RSS源URL
-
-        Returns:
-            List[str]: 订阅频道ID列表
-        """
-        if rss_url in self._subscriptions_cache:
-            return self._subscriptions_cache[rss_url].copy()
-        return []
-
     def get_all_rss_urls(self) -> List[str]:
         """
         获取所有RSS源URL列表
@@ -233,46 +430,18 @@ class RSSHubManager:
                 subscriptions.append(rss_url)
         return subscriptions
 
-    # ==================== 消息映射接口（完全复用douyin逻辑）====================
-
-    def save_message_mapping(self, rss_url: str, item_id: str, chat_id: str, message_ids: List[int]):
-        """
-        保存消息ID映射（完全复用douyin模块的MessageMapping结构）
-
-        Args:
-            rss_url: RSS源URL
-            item_id: RSS条目ID
-            chat_id: 频道ID
-            message_ids: 消息ID列表
-        """
-        try:
-            # 初始化RSS源的消息映射
-            if rss_url not in self._message_mappings_cache:
-                self._message_mappings_cache[rss_url] = {}
-
-            # 初始化条目的消息映射
-            if item_id not in self._message_mappings_cache[rss_url]:
-                self._message_mappings_cache[rss_url][item_id] = {}
-
-            # 保存频道的消息ID列表
-            self._message_mappings_cache[rss_url][item_id][chat_id] = message_ids
-
-            self._save_message_mappings()
-            self.logger.debug(f"保存消息映射: {rss_url}/{item_id} -> {chat_id}: {message_ids}")
-
-        except Exception as e:
-            self.logger.error(f"保存消息映射失败: {str(e)}", exc_info=True)
+    # ==================== 消息映射管理接口 ====================
 
     def get_message_mapping(self, rss_url: str, item_id: str) -> Dict[str, List[int]]:
         """
-        获取消息ID映射
+        获取指定RSS条目的消息映射
 
         Args:
             rss_url: RSS源URL
             item_id: RSS条目ID
 
         Returns:
-            Dict[str, List[int]]: 频道ID到消息ID列表的映射
+            Dict[str, List[int]]: 消息映射 {频道ID: [消息ID列表]}
         """
         try:
             if rss_url in self._message_mappings_cache:
@@ -280,112 +449,18 @@ class RSSHubManager:
                     return self._message_mappings_cache[rss_url][item_id].copy()
             return {}
         except Exception as e:
-            self.logger.error(f"获取消息映射失败: {str(e)}", exc_info=True)
+            self.logger.error(f"获取消息映射失败: {rss_url}/{item_id}, 错误: {str(e)}", exc_info=True)
             return {}
 
-    def get_all_available_message_sources(self, rss_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
-        """
-        获取所有可用的消息转发源（完全复用douyin模块逻辑）
+    # ==================== 已知内容管理接口（复用douyin逻辑）====================
 
-        这个方法是统一对齐器要求的接口，必须实现
+    def add_known_item_id(self, rss_url: str, item_id: str):
+        """
+        添加已知的RSS条目ID
 
         Args:
             rss_url: RSS源URL
             item_id: RSS条目ID
-
-        Returns:
-            List[Tuple[str, List[int]]]: 所有可用的转发源列表 [(频道ID, 消息ID列表), ...]
-        """
-        try:
-            message_mapping = self.get_message_mapping(rss_url, item_id)
-            available_sources = []
-
-            for chat_id, message_ids in message_mapping.items():
-                if message_ids:  # 只返回有消息ID的频道
-                    available_sources.append((chat_id, message_ids))
-
-            self.logger.debug(f"获取到 {len(available_sources)} 个可用转发源: {item_id}")
-            return available_sources
-
-        except Exception as e:
-            self.logger.error(f"获取可用转发源失败: {str(e)}", exc_info=True)
-            return []
-
-    # ==================== 已知内容管理接口（复用douyin逻辑）====================
-
-    def get_known_item_ids(self, rss_url: str) -> List[str]:
-        """
-        获取已知的RSS条目ID列表
-
-        Args:
-            rss_url: RSS源URL
-
-        Returns:
-            List[str]: 已知条目ID列表
-        """
-        try:
-            # 检查缓存
-            if rss_url in self._known_items_cache:
-                return self._known_items_cache[rss_url].copy()
-
-            # 从文件加载（按设计文档的目录结构）
-            url_hash = self._safe_filename(rss_url)
-            url_dir = self.data_storage_dir / url_hash
-            known_items_file = url_dir / "known_item_ids.json"
-            
-            if known_items_file.exists():
-                with open(known_items_file, 'r', encoding='utf-8') as f:
-                    known_items = json.load(f)
-                    self._known_items_cache[rss_url] = known_items
-                    return known_items.copy()
-
-            # 文件不存在，返回空列表
-            self._known_items_cache[rss_url] = []
-            return []
-
-        except Exception as e:
-            self.logger.error(f"获取已知条目ID失败: {rss_url}, 错误: {str(e)}", exc_info=True)
-            return []
-
-    def save_known_item_ids(self, rss_url: str, item_ids: List[str]):
-        """
-        保存已知的RSS条目ID列表
-
-        Args:
-            rss_url: RSS源URL
-            item_ids: 条目ID列表
-        """
-        try:
-            # 更新缓存
-            self._known_items_cache[rss_url] = item_ids.copy()
-
-            # 保存到文件（按设计文档的目录结构）
-            url_hash = self._safe_filename(rss_url)
-            url_dir = self.data_storage_dir / url_hash
-            url_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 保存URL记录文件
-            url_file = url_dir / "url.txt"
-            with open(url_file, 'w', encoding='utf-8') as f:
-                f.write(rss_url)
-            
-            # 保存已知条目ID文件
-            known_items_file = url_dir / "known_item_ids.json"
-            with open(known_items_file, 'w', encoding='utf-8') as f:
-                json.dump(item_ids, f, ensure_ascii=False, indent=2)
-
-            self.logger.debug(f"保存已知条目ID: {rss_url}, {len(item_ids)} 个")
-
-        except Exception as e:
-            self.logger.error(f"保存已知条目ID失败: {rss_url}, 错误: {str(e)}", exc_info=True)
-
-    def add_known_item_id(self, rss_url: str, item_id: str):
-        """
-        添加单个已知条目ID
-
-        Args:
-            rss_url: RSS源URL
-            item_id: 条目ID
         """
         try:
             known_items = self.get_known_item_ids(rss_url)
@@ -394,27 +469,29 @@ class RSSHubManager:
                 self.save_known_item_ids(rss_url, known_items)
                 self.logger.debug(f"添加已知条目ID: {rss_url}/{item_id}")
         except Exception as e:
-            self.logger.error(f"添加已知条目ID失败: {str(e)}", exc_info=True)
+            self.logger.error(f"添加已知条目ID失败: {rss_url}/{item_id}, 错误: {str(e)}", exc_info=True)
 
     def is_known_item(self, rss_url: str, item_id: str) -> bool:
         """
-        检查条目是否已知
+        检查RSS条目是否已知
 
         Args:
             rss_url: RSS源URL
-            item_id: 条目ID
+            item_id: RSS条目ID
 
         Returns:
             bool: 是否已知
         """
-        known_items = self.get_known_item_ids(rss_url)
-        return item_id in known_items
-
-    # ==================== 工具方法 ====================
+        try:
+            known_items = self.get_known_item_ids(rss_url)
+            return item_id in known_items
+        except Exception as e:
+            self.logger.error(f"检查已知条目失败: {rss_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+            return False
 
     def _safe_filename(self, url: str) -> str:
         """
-        将URL转换为安全的文件名
+        生成安全的文件名（复用douyin模块逻辑）
 
         Args:
             url: URL字符串
@@ -425,98 +502,67 @@ class RSSHubManager:
         import hashlib
         import re
 
-        # 移除协议和特殊字符
-        safe_name = re.sub(r'[^\w\-_.]', '_', url.replace('https://', '').replace('http://', ''))
+        # 移除协议前缀
+        clean_url = re.sub(r'^https?://', '', url)
+        # 替换特殊字符
+        clean_url = re.sub(r'[^\w\-_.]', '_', clean_url)
+        # 限制长度并添加哈希
+        if len(clean_url) > 50:
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            clean_url = clean_url[:42] + '_' + url_hash
 
-        # 如果文件名太长，使用hash
-        if len(safe_name) > 100:
-            hash_obj = hashlib.md5(url.encode('utf-8'))
-            safe_name = f"rss_{hash_obj.hexdigest()}"
+        return clean_url
 
-        return safe_name
-
-    def get_statistics(self) -> Dict[str, Any]:
-        """
-        获取管理器统计信息
-
-        Returns:
-            Dict[str, Any]: 统计信息
-        """
-        try:
-            total_rss_sources = len(self._subscriptions_cache)
-            total_channels = set()
-            total_subscriptions = 0
-
-            for channels in self._subscriptions_cache.values():
-                total_subscriptions += len(channels)
-                total_channels.update(channels)
-
-            total_known_items = 0
-            for rss_url in self._subscriptions_cache.keys():
-                known_items = self.get_known_item_ids(rss_url)
-                total_known_items += len(known_items)
-
-            return {
-                "total_rss_sources": total_rss_sources,
-                "total_channels": len(total_channels),
-                "total_subscriptions": total_subscriptions,
-                "total_known_items": total_known_items,
-                "data_dir": str(self.data_dir)
-            }
-
-        except Exception as e:
-            self.logger.error(f"获取统计信息失败: {str(e)}", exc_info=True)
-            return {}
+    # ==================== 统计和维护接口 ====================
 
     def cleanup_orphaned_data(self) -> int:
         """
-        清理孤立的数据（没有订阅的RSS源数据）
+        清理孤立的数据（没有对应订阅的数据）
 
         Returns:
             int: 清理的数据项数量
         """
         try:
             cleaned_count = 0
-            active_rss_urls = set(self._subscriptions_cache.keys())
+            current_urls = set(self._subscriptions_cache.keys())
 
             # 清理消息映射中的孤立数据
-            orphaned_mappings = []
-            for rss_url in self._message_mappings_cache.keys():
-                if rss_url not in active_rss_urls:
-                    orphaned_mappings.append(rss_url)
-
-            for rss_url in orphaned_mappings:
-                del self._message_mappings_cache[rss_url]
+            orphaned_urls = set(self._message_mappings_cache.keys()) - current_urls
+            for url in orphaned_urls:
+                del self._message_mappings_cache[url]
                 cleaned_count += 1
 
-            if orphaned_mappings:
+            # 清理已知条目缓存中的孤立数据
+            orphaned_cache_urls = set(self._known_items_cache.keys()) - current_urls
+            for url in orphaned_cache_urls:
+                del self._known_items_cache[url]
+                cleaned_count += 1
+
+            # 清理文件系统中的孤立目录
+            if self.data_storage_dir.exists():
+                for url_dir in self.data_storage_dir.iterdir():
+                    if url_dir.is_dir():
+                        # 尝试找到对应的URL
+                        found = False
+                        for url in current_urls:
+                            if self._safe_filename(url) == url_dir.name:
+                                found = True
+                                break
+
+                        if not found:
+                            # 删除孤立目录
+                            import shutil
+                            shutil.rmtree(url_dir)
+                            cleaned_count += 1
+
+            if cleaned_count > 0:
                 self._save_message_mappings()
-                self.logger.info(f"清理孤立消息映射: {len(orphaned_mappings)} 个")
+                self.logger.info(f"清理孤立数据完成，清理了 {cleaned_count} 个数据项")
 
-            # 清理已知条目目录
-            for url_dir in self.data_storage_dir.iterdir():
-                if url_dir.is_dir():
-                    # 从目录名反推RSS URL（简化处理）
-                    dir_name = url_dir.name
-                    found_match = False
-
-                    for rss_url in active_rss_urls:
-                        if self._safe_filename(rss_url) == dir_name:
-                            found_match = True
-                            break
-
-                    if not found_match:
-                        # 删除整个目录
-                        import shutil
-                        shutil.rmtree(url_dir)
-                        cleaned_count += 1
-                        self.logger.debug(f"删除孤立已知条目目录: {url_dir}")
-
-            self.logger.info(f"数据清理完成，清理了 {cleaned_count} 个孤立数据项")
             return cleaned_count
 
         except Exception as e:
-            self.logger.error(f"数据清理失败: {str(e)}", exc_info=True)
+            self.logger.error(f"清理孤立数据失败: {str(e)}", exc_info=True)
             return 0
 
 
@@ -544,31 +590,23 @@ if __name__ == "__main__":
         manager = create_rsshub_manager("test_data/rsshub")
         print(f"✅ 创建RSSHub管理器: {type(manager).__name__}")
 
-        # 测试添加订阅
-        test_rss_url = "https://example.com/rss.xml"
+        # 测试订阅管理
+        test_url = "https://example.com/rss.xml"
         test_chat_id = "@test_channel"
 
-        success = manager.add_subscription(test_rss_url, test_chat_id, "测试RSS源")
+        success = manager.add_subscription(test_url, test_chat_id)
         print(f"✅ 添加订阅: {success}")
 
-        # 测试获取订阅
-        channels = manager.get_subscription_channels(test_rss_url)
-        print(f"✅ 获取订阅频道: {len(channels)} 个")
-
-        # 测试已知条目管理
-        test_item_id = "test_item_123"
-        manager.add_known_item_id(test_rss_url, test_item_id)
-        is_known = manager.is_known_item(test_rss_url, test_item_id)
-        print(f"✅ 已知条目管理: {is_known}")
-
-        # 测试消息映射
-        manager.save_message_mapping(test_rss_url, test_item_id, test_chat_id, [123, 124])
-        mapping = manager.get_message_mapping(test_rss_url, test_item_id)
-        print(f"✅ 消息映射: {len(mapping)} 个频道")
+        channels = manager.get_subscription_channels(test_url)
+        print(f"✅ 获取订阅频道: {channels}")
 
         # 测试统计信息
         stats = manager.get_statistics()
-        print(f"✅ 统计信息: {stats['total_rss_sources']} 个RSS源")
+        print(f"✅ 获取统计信息: {stats}")
+
+        # 测试数据清理
+        cleaned = manager.cleanup_orphaned_data()
+        print(f"✅ 清理孤立数据: {cleaned} 个")
 
         print("🎉 RSSHub管理器模块测试完成")
 
