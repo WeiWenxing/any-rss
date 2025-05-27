@@ -139,13 +139,14 @@
 - 智能去重，避免重复推送
 
 **多频道推送**：
-- 主频道直接发送，其他频道智能转发
+- 主频道直接发送MediaGroup，其他频道使用forward_messages转发完整消息组
 - 新频道订阅时的历史内容对齐
 - 转发失败时的自动降级机制
 
 ### 4.3 关键特性
 **高效转发机制**：
-- 每个新内容仅需1次API发送 + N-1次转发操作
+- 每个新内容仅需1次MediaGroup发送 + N-1次forward_messages转发操作
+- MediaGroup转发保持原有消息组的完整性和界面效果
 - 显著减少带宽使用和API调用次数
 - 支持大规模多频道部署
 
@@ -279,7 +280,7 @@
 ├── douyin_url: str         # 抖音URL
 ├── item_id: str            # 内容ID
 ├── chat_id: str            # 频道ID
-└── message_id: int         # Telegram消息ID
+└── message_ids: List[int]  # Telegram消息ID列表（支持MediaGroup）
 
 已知内容实体 (KnownContent)
 ├── douyin_url: str         # 抖音URL（作为分组）
@@ -305,7 +306,7 @@
 │ - item_ids[]    │           │ - douyin_url    │
 └─────────────────┘           │ - item_id       │
                                │ - chat_id       │
-                               │ - message_id    │
+                               │ - message_ids[] │
                                └─────────────────┘
 
 数据存储关系：
@@ -356,14 +357,15 @@ storage/douyin/
 ```json
 {
   "https://v.douyin.com/iM5g7LsM/": {
-    "7435678901234567890": {
-      "@channel1": 12345,
-      "@channel2": 12346,
-      "-1001234567890": 12347
+    "aweme_7123456789": {
+      "@channel1": [789, 790, 791],  // MediaGroup的多个消息ID
+      "@channel2": [892, 893, 894],  // 转发后的多个消息ID
+      "-1001234567890": [995, 996, 997]
     },
-    "7435678901234567891": {
-      "@channel1": 12348,
-      "@channel2": 12349
+    "content_abc123def": {
+      "@channel1": [800],  // 单个消息ID（视频）
+      "@channel2": [901],  // 转发后的单个消息ID
+      "-1001234567890": [1002]
     }
   }
 }
@@ -471,13 +473,13 @@ storage/douyin/
     ↓
 内容排序 → 按时间从旧到新
     ↓
-主频道发送 → Sender.send_douyin_content()
+主频道发送 → Sender.send_douyin_content()（返回MediaGroup消息列表）
     ↓
-记录消息ID → message_mappings.json
+记录消息ID列表 → message_mappings.json
     ↓
-其他频道转发 → bot.forward_message()
+其他频道转发 → bot.forward_messages()（转发完整MediaGroup）
     ↓
-记录转发ID → message_mappings.json
+记录转发ID列表 → message_mappings.json
     ↓
 标记已发送 → known_item_ids.json
 ```
@@ -490,11 +492,11 @@ storage/douyin/
     ↓
 获取历史ID列表 → known_item_ids.json
     ↓
-查找主频道消息 → message_mappings.json
+查找主频道MediaGroup消息 → message_mappings.json
     ↓
-批量转发历史 → Alignment.perform_historical_alignment()
+批量转发历史MediaGroup → Alignment.perform_historical_alignment()
     ↓
-记录新频道消息 → message_mappings.json
+记录新频道消息ID列表 → message_mappings.json
 ```
 
 #### 6.3.5 数据一致性保障
@@ -604,10 +606,10 @@ class DouyinManager:
     async def send_content_batch(self, bot, content_items: List[Dict],
                                douyin_url: str, target_channels: List[str]) -> int
 
-    # 消息ID管理接口
-    def save_message_id(self, douyin_url: str, item_id: str, chat_id: str, message_id: int)
-    def get_message_id(self, douyin_url: str, item_id: str, chat_id: str) -> Optional[int]
-    def get_primary_channel_message_id(self, douyin_url: str, item_id: str) -> Tuple[Optional[str], Optional[int]]
+    # MediaGroup消息ID管理接口
+    def save_message_ids(self, douyin_url: str, item_id: str, chat_id: str, message_ids: List[int])
+    def get_message_ids(self, douyin_url: str, item_id: str, chat_id: str) -> List[int]
+    def get_primary_channel_message_ids(self, douyin_url: str, item_id: str) -> Tuple[Optional[str], List[int]]
 ```
 
 **Fetcher内容获取接口**：
@@ -622,7 +624,7 @@ class DouyinFetcher:
 
 **Sender发送接口**：
 ```python
-async def send_douyin_content(bot: Bot, content_info: Dict, target_chat_id: str) -> Optional[Message]
+async def send_douyin_content(bot: Bot, content_info: Dict, target_chat_id: str) -> Optional[List[Message]]
 
 # 内部发送方法
 async def _send_video_content(bot: Bot, content_info: Dict, target_chat_id: str) -> Optional[List[Message]]
@@ -837,20 +839,30 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
 
     for content in sorted_items:
         try:
-            # 步骤1：主频道发送
-            message = await send_to_primary(content, primary_channel)
-            message_id = extract_message_id(message)
-            save_message_id(content.id, primary_channel, message_id)
+            # 步骤1：主频道发送MediaGroup
+            messages = await send_media_group_to_primary(content, primary_channel)
+            message_ids = [msg.message_id for msg in messages]
+            save_message_ids(content.id, primary_channel, message_ids)
 
-            # 步骤2：其他频道转发
+            # 步骤2：其他频道转发完整MediaGroup
             for channel in other_channels:
                 try:
-                    forwarded = await forward_message(primary_channel, message_id, channel)
-                    save_message_id(content.id, channel, forwarded.message_id)
+                    # 使用forward_messages转发整个消息组
+                    forwarded_messages = await bot.forward_messages(
+                        chat_id=channel,
+                        from_chat_id=primary_channel,
+                        message_ids=message_ids
+                    )
+                    forwarded_ids = [msg.message_id for msg in forwarded_messages]
+                    save_message_ids(content.id, channel, forwarded_ids)
                 except ForwardError:
-                    # 降级策略：直接发送
-                    fallback = await send_to_channel(content, channel)
-                    save_message_id(content.id, channel, fallback.message_id)
+                    # 降级策略：重新发送完整MediaGroup
+                    fallback_messages = await send_douyin_content(bot, content, douyin_url, channel)
+                    if isinstance(fallback_messages, list):
+                        fallback_ids = [msg.message_id for msg in fallback_messages]
+                    else:
+                        fallback_ids = [fallback_messages.message_id]
+                    save_message_ids(content.id, channel, fallback_ids)
 
             mark_as_sent(content)
             sent_count += 1
@@ -858,7 +870,7 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
         except Exception as e:
             # 主频道失败，全部降级
             for channel in target_channels:
-                await send_to_channel(content, channel)
+                await send_media_group_to_channel(content, channel)
             sent_count += 1
 
     return sent_count
@@ -891,60 +903,76 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
 
     for content in sorted_items:
         # 为当前内容项维护成功记录（内存中）
-        successful_channels = {}  # {channel_id: message_id}
+        successful_channels = {}  # {channel_id: [message_id1, message_id2, ...]}
 
         try:
-            # 步骤1：主频道发送
-            message = await send_douyin_content(bot, content, douyin_url, primary_channel)
-            if not message:
+            # 步骤1：主频道发送MediaGroup
+            messages = await send_douyin_content(bot, content, douyin_url, primary_channel)
+            if not messages:
                 continue
 
-            # 记录到文件和内存
-            self.save_message_id(douyin_url, content['item_id'], primary_channel, message.message_id)
-            successful_channels[primary_channel] = message.message_id  # 内存记录
+            # 提取所有消息ID（MediaGroup返回消息列表）
+            if isinstance(messages, list):
+                message_ids = [msg.message_id for msg in messages]
+            else:
+                message_ids = [messages.message_id]
 
-            # 步骤2：其他频道转发
+            # 记录到文件和内存
+            self.save_message_ids(douyin_url, content['item_id'], primary_channel, message_ids)
+            successful_channels[primary_channel] = message_ids  # 内存记录
+
+            # 步骤2：其他频道转发完整MediaGroup
             for channel in other_channels:
                 success = False
 
-                # 尝试从主频道转发
+                # 尝试从主频道转发整个消息组
                 try:
-                    forwarded = await bot.forward_message(
+                    forwarded_messages = await bot.forward_messages(
                         chat_id=channel,
                         from_chat_id=primary_channel,
-                        message_id=message.message_id
+                        message_ids=message_ids
                     )
-                    self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
-                    successful_channels[channel] = forwarded.message_id  # 内存记录
+                    forwarded_ids = [msg.message_id for msg in forwarded_messages]
+                    self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
+                    successful_channels[channel] = forwarded_ids  # 内存记录
                     success = True
-                except Exception:
-                    pass
+                    logging.info(f"MediaGroup转发成功: {primary_channel} -> {channel}, {len(forwarded_ids)}个消息")
+                except Exception as forward_error:
+                    logging.warning(f"MediaGroup转发失败: {channel}, 错误: {forward_error}")
 
                 # 转发失败，从内存中的成功频道转发
                 if not success:
-                    for existing_channel, existing_msg_id in successful_channels.items():
+                    for existing_channel, existing_msg_ids in successful_channels.items():
                         if existing_channel != channel:  # 不从自己转发
                             try:
-                                forwarded = await bot.forward_message(
+                                forwarded_messages = await bot.forward_messages(
                                     chat_id=channel,
                                     from_chat_id=existing_channel,
-                                    message_id=existing_msg_id
+                                    message_ids=existing_msg_ids
                                 )
-                                self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
-                                successful_channels[channel] = forwarded.message_id  # 内存记录
+                                forwarded_ids = [msg.message_id for msg in forwarded_messages]
+                                self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
+                                successful_channels[channel] = forwarded_ids  # 内存记录
                                 success = True
+                                logging.info(f"MediaGroup降级转发成功: {existing_channel} -> {channel}")
                                 break
                             except Exception:
                                 continue
 
-                # 所有转发都失败，降级为直接发送
+                # 所有转发都失败，降级为重新发送完整MediaGroup
                 if not success:
                     try:
-                        fallback_message = await send_douyin_content(bot, content, douyin_url, channel)
-                        if fallback_message:
-                            self.save_message_id(douyin_url, content['item_id'], channel, fallback_message.message_id)
-                            successful_channels[channel] = fallback_message.message_id  # 内存记录
-                    except Exception:
+                        fallback_messages = await send_douyin_content(bot, content, douyin_url, channel)
+                        if fallback_messages:
+                            if isinstance(fallback_messages, list):
+                                fallback_ids = [msg.message_id for msg in fallback_messages]
+                            else:
+                                fallback_ids = [fallback_messages.message_id]
+                            self.save_message_ids(douyin_url, content['item_id'], channel, fallback_ids)
+                            successful_channels[channel] = fallback_ids  # 内存记录
+                            logging.info(f"MediaGroup降级发送成功: {channel}")
+                    except Exception as send_error:
+                        logging.error(f"MediaGroup降级发送失败: {channel}, 错误: {send_error}")
                         continue
 
             # 步骤3：标记内容已发送
@@ -953,6 +981,7 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
             await asyncio.sleep(1)
 
         except Exception as e:
+            logging.error(f"发送MediaGroup失败: {content.get('title', '无标题')}, 错误: {e}")
             continue
 
     return sent_count
@@ -960,7 +989,7 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
 
 #### 8.1.2 历史内容对齐算法
 
-**算法目标**：新频道订阅时快速同步历史内容
+**算法目标**：新频道订阅时快速同步历史内容，保持MediaGroup完整性
 
 **核心思路**：
 ```
@@ -970,10 +999,10 @@ async def send_content_batch(self, bot, content_items, douyin_url, target_channe
 算法步骤：
 1. 获取已知内容的主频道消息ID列表
 2. 按内容时间顺序排序（从旧到新）
-3. 批量转发历史消息：
-   a. 查找主频道消息ID
-   b. 转发到新频道
-   c. 记录新频道消息ID
+3. 批量转发历史MediaGroup：
+   a. 查找主频道消息ID列表
+   b. 使用forward_messages转发整个消息组
+   c. 记录新频道的所有消息ID
    d. 转发失败时跳过该内容
 4. 返回对齐结果统计
 ```
@@ -988,21 +1017,28 @@ async def historical_alignment_algorithm(known_item_ids, primary_channel, new_ch
     sorted_ids = sort_item_ids_by_time(known_item_ids)
 
     for item_id in sorted_ids:
-        try:
-            # 获取主频道消息ID
-            primary_message_id = get_message_id(item_id, primary_channel)
-            if not primary_message_id:
+                try:
+            # 获取主频道MediaGroup消息ID列表
+            primary_message_ids = douyin_manager.get_message_ids(douyin_url, item_id, primary_channel)
+            if not primary_message_ids:
                 continue
 
-            # 转发到新频道
-            forwarded = await forward_message(primary_channel, primary_message_id, new_channel)
-            save_message_id(item_id, new_channel, forwarded.message_id)
+            # 转发整个MediaGroup到新频道
+            forwarded_messages = await bot.forward_messages(
+                chat_id=new_channel,
+                from_chat_id=primary_channel,
+                message_ids=primary_message_ids
+            )
+            
+            # 保存转发后的所有消息ID
+            forwarded_ids = [msg.message_id for msg in forwarded_messages]
+            douyin_manager.save_message_ids(douyin_url, item_id, new_channel, forwarded_ids)
 
             success_count += 1
-            await sleep(0.5)  # 转发间隔
+            await asyncio.sleep(1)  # 转发间隔
 
         except Exception as e:
-            log_error(f"历史对齐失败: {item_id}")
+            logging.error(f"历史对齐MediaGroup转发失败: {item_id}, 错误: {str(e)}", exc_info=True)
             continue
 
     return success_count >= total_count * 0.8  # 80%成功率视为成功

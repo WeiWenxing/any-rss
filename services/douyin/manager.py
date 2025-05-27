@@ -613,6 +613,32 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"保存消息ID映射失败: {str(e)}", exc_info=True)
 
+    def save_message_ids(self, douyin_url: str, item_id: str, chat_id: str, message_ids: List[int]):
+        """
+        保存MediaGroup消息ID列表映射
+
+        Args:
+            douyin_url: 抖音用户主页链接
+            item_id: 内容项ID
+            chat_id: 频道ID
+            message_ids: Telegram消息ID列表
+        """
+        try:
+            mappings = self.get_message_mappings()
+
+            if douyin_url not in mappings:
+                mappings[douyin_url] = {}
+
+            if item_id not in mappings[douyin_url]:
+                mappings[douyin_url][item_id] = {}
+
+            mappings[douyin_url][item_id][chat_id] = message_ids
+            self._save_message_mappings(mappings)
+
+            logging.debug(f"保存MediaGroup消息ID映射: {douyin_url} -> {item_id} -> {chat_id} -> {message_ids}")
+        except Exception as e:
+            logging.error(f"保存MediaGroup消息ID映射失败: {str(e)}", exc_info=True)
+
     def get_message_id(self, douyin_url: str, item_id: str, chat_id: str) -> Optional[int]:
         """
         获取消息ID
@@ -631,6 +657,32 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"获取消息ID失败: {str(e)}", exc_info=True)
             return None
+
+    def get_message_ids(self, douyin_url: str, item_id: str, chat_id: str) -> List[int]:
+        """
+        获取MediaGroup消息ID列表
+
+        Args:
+            douyin_url: 抖音用户主页链接
+            item_id: 内容项ID
+            chat_id: 频道ID
+
+        Returns:
+            List[int]: 消息ID列表，如果不存在则返回空列表
+        """
+        try:
+            mappings = self.get_message_mappings()
+            result = mappings.get(douyin_url, {}).get(item_id, {}).get(chat_id, [])
+            # 确保返回列表格式
+            if isinstance(result, int):
+                return [result]  # 兼容单个消息ID的情况
+            elif isinstance(result, list):
+                return result
+            else:
+                return []
+        except Exception as e:
+            logging.error(f"获取MediaGroup消息ID失败: {str(e)}", exc_info=True)
+            return []
 
     def get_primary_channel_message_id(self, douyin_url: str, item_id: str) -> Tuple[Optional[str], Optional[int]]:
         """
@@ -658,6 +710,38 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"获取主频道消息ID失败: {str(e)}", exc_info=True)
             return None, None
+
+    def get_primary_channel_message_ids(self, douyin_url: str, item_id: str) -> Tuple[Optional[str], List[int]]:
+        """
+        获取主频道的MediaGroup消息ID列表（用于转发）
+
+        Args:
+            douyin_url: 抖音用户主页链接
+            item_id: 内容项ID
+
+        Returns:
+            Tuple[Optional[str], List[int]]: (主频道ID, 消息ID列表)
+        """
+        try:
+            mappings = self.get_message_mappings()
+            item_mappings = mappings.get(douyin_url, {}).get(item_id, {})
+
+            if not item_mappings:
+                return None, []
+
+            # 返回第一个可用的频道和消息ID列表作为主频道
+            for chat_id, message_data in item_mappings.items():
+                if isinstance(message_data, list):
+                    return chat_id, message_data
+                elif isinstance(message_data, int):
+                    return chat_id, [message_data]  # 兼容单个消息ID
+                else:
+                    continue
+
+            return None, []
+        except Exception as e:
+            logging.error(f"获取主频道MediaGroup消息ID失败: {str(e)}", exc_info=True)
+            return None, []
 
     async def send_content_batch(self, bot, content_items: List[Dict], douyin_url: str, target_channels: List[str]) -> int:
         """
@@ -687,7 +771,7 @@ class DouyinManager:
 
         for content in sorted_items:
             # 为当前内容项维护成功记录（内存中）
-            successful_channels = {}  # {channel_id: message_id}
+            successful_channels = {}  # {channel_id: [message_id1, message_id2, ...]}
 
             try:
                 # 确保content有item_id字段
@@ -697,15 +781,24 @@ class DouyinManager:
 
                 # 步骤1：主频道发送
                 logging.info(f"发送到主频道 {primary_channel}: {content.get('title', '无标题')}")
-                message = await send_douyin_content(bot, content, douyin_url, primary_channel)
-                if not message:
+                messages = await send_douyin_content(bot, content, douyin_url, primary_channel)
+                if not messages:
                     logging.warning(f"主频道发送失败，跳过内容: {content.get('title', '无标题')}")
                     continue
 
-                # 记录到文件和内存
-                self.save_message_id(douyin_url, content['item_id'], primary_channel, message.message_id)
-                successful_channels[primary_channel] = message.message_id  # 内存记录
-                logging.info(f"主频道发送成功，消息ID: {message.message_id}")
+                # 处理返回的消息（可能是单个消息或消息列表）
+                if isinstance(messages, list):
+                    # MediaGroup情况：多个消息
+                    primary_message_ids = [msg.message_id for msg in messages]
+                    self.save_message_ids(douyin_url, content['item_id'], primary_channel, primary_message_ids)
+                    successful_channels[primary_channel] = primary_message_ids  # 内存记录
+                    logging.info(f"主频道MediaGroup发送成功，消息ID列表: {primary_message_ids}")
+                else:
+                    # 单个消息情况
+                    primary_message_ids = [messages.message_id]
+                    self.save_message_ids(douyin_url, content['item_id'], primary_channel, primary_message_ids)
+                    successful_channels[primary_channel] = primary_message_ids  # 内存记录
+                    logging.info(f"主频道发送成功，消息ID: {messages.message_id}")
 
                 # 步骤2：其他频道转发（单频道时自动跳过）
                 for channel in other_channels:
@@ -714,32 +807,34 @@ class DouyinManager:
                     # 尝试从主频道转发
                     try:
                         logging.info(f"转发到频道 {channel}")
-                        forwarded = await bot.forward_message(
+                        forwarded_messages = await bot.forward_messages(
                             chat_id=channel,
                             from_chat_id=primary_channel,
-                            message_id=message.message_id
+                            message_ids=primary_message_ids
                         )
-                        self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
-                        successful_channels[channel] = forwarded.message_id  # 内存记录
-                        logging.info(f"转发成功: {primary_channel} -> {channel}, 消息ID: {forwarded.message_id}")
+                        forwarded_ids = [msg.message_id for msg in forwarded_messages]
+                        self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
+                        successful_channels[channel] = forwarded_ids  # 内存记录
+                        logging.info(f"转发成功: {primary_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
                         success = True
                     except Exception as forward_error:
                         logging.warning(f"从主频道转发失败: {channel}, 错误: {forward_error}", exc_info=True)
 
                     # 转发失败，从内存中的成功频道转发
                     if not success:
-                        for existing_channel, existing_msg_id in successful_channels.items():
+                        for existing_channel, existing_msg_ids in successful_channels.items():
                             if existing_channel != channel:  # 不从自己转发
                                 try:
                                     logging.info(f"尝试从 {existing_channel} 转发到 {channel}")
-                                    forwarded = await bot.forward_message(
+                                    forwarded_messages = await bot.forward_messages(
                                         chat_id=channel,
                                         from_chat_id=existing_channel,
-                                        message_id=existing_msg_id
+                                        message_ids=existing_msg_ids
                                     )
-                                    self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
-                                    successful_channels[channel] = forwarded.message_id  # 内存记录
-                                    logging.info(f"转发成功: {existing_channel} -> {channel}, 消息ID: {forwarded.message_id}")
+                                    forwarded_ids = [msg.message_id for msg in forwarded_messages]
+                                    self.save_message_ids(douyin_url, content['item_id'], channel, forwarded_ids)
+                                    successful_channels[channel] = forwarded_ids  # 内存记录
+                                    logging.info(f"转发成功: {existing_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
                                     success = True
                                     break
                                 except Exception as retry_error:
@@ -750,10 +845,14 @@ class DouyinManager:
                     if not success:
                         logging.warning(f"所有转发都失败，降级发送: {channel}")
                         try:
-                            fallback_message = await send_douyin_content(bot, content, douyin_url, channel)
-                            if fallback_message:
-                                self.save_message_id(douyin_url, content['item_id'], channel, fallback_message.message_id)
-                                successful_channels[channel] = fallback_message.message_id  # 内存记录
+                            fallback_messages = await send_douyin_content(bot, content, douyin_url, channel)
+                            if fallback_messages:
+                                if isinstance(fallback_messages, list):
+                                    fallback_ids = [msg.message_id for msg in fallback_messages]
+                                else:
+                                    fallback_ids = [fallback_messages.message_id]
+                                self.save_message_ids(douyin_url, content['item_id'], channel, fallback_ids)
+                                successful_channels[channel] = fallback_ids  # 内存记录
                                 logging.info(f"降级发送成功: {channel}")
                         except Exception as send_error:
                             logging.error(f"降级发送也失败: {channel}, 错误: {send_error}", exc_info=True)
@@ -772,8 +871,6 @@ class DouyinManager:
 
         logging.info(f"批量发送完成: 成功 {sent_count}/{len(content_items)} 个内容到 {len(target_channels)} 个频道")
         return sent_count
-
-
 
     def _sort_content_by_time(self, content_items: List[Dict]) -> List[Dict]:
         """

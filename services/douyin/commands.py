@@ -88,7 +88,7 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             alignment_success = await perform_historical_alignment(
                 context.bot, douyin_url, known_item_ids, primary_channel, new_channel
             )
-            
+
             if alignment_success:
                 await update.message.reply_text(
                     f"🎉 历史对齐完成！\n"
