@@ -75,18 +75,17 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if isinstance(content_info, dict) and content_info.get("need_alignment"):
             # 需要历史对齐的情况
             known_item_ids = content_info.get("known_item_ids", [])
-            primary_channel = content_info.get("primary_channel")
             new_channel = content_info.get("new_channel")
 
             await update.message.reply_text(
                 f"✅ 成功添加抖音订阅：{douyin_url}\n"
                 f"📺 目标频道：{target_chat_id}\n"
-                f"🔄 正在进行历史对齐，从主频道 {primary_channel} 转发 {len(known_item_ids)} 个历史内容..."
+                f"🔄 正在进行历史对齐，转发 {len(known_item_ids)} 个历史内容..."
             )
 
             # 实施历史对齐转发
             alignment_success = await perform_historical_alignment(
-                context.bot, douyin_url, known_item_ids, primary_channel, new_channel
+                context.bot, douyin_url, known_item_ids, new_channel
             )
 
             if alignment_success:
