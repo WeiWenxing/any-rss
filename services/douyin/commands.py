@@ -41,7 +41,7 @@ douyin_formatter = DouyinFormatter()
 
 
 async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /douyin_add 命令 - 按照设计文档的三分支结构实现"""
+    """处理 /douyin_add 命令 - 统一反馈流程"""
     user = update.message.from_user
     chat_id = update.message.chat_id
     logging.info(f"收到DOUYIN_ADD命令 - 用户: {user.username}(ID:{user.id}) 聊天ID: {chat_id}")
@@ -90,70 +90,70 @@ async def douyin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     subscriptions = douyin_manager.get_subscriptions()
     subscription_status = _check_subscription_status(douyin_url, target_chat_id, subscriptions)
 
-    # 3. 三分支处理
     if subscription_status == "duplicate":
-        # 重复订阅分支
+        # 重复订阅分支 - 直接返回
         await update.message.reply_text(_format_duplicate_subscription_message(douyin_url, target_chat_id))
         return
 
-    elif subscription_status == "first_channel":
-        # 首个频道分支
-        try:
-            # 添加订阅
-            success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
+    # 3. 立即反馈（非重复订阅才需要处理反馈）
+    processing_message = await update.message.reply_text(_format_processing_message(douyin_url, target_chat_id))
 
+    # 4. 统一处理流程（首个频道和后续频道使用相同的用户反馈）
+    try:
+        if subscription_status == "first_channel":
+            # 首个频道：获取历史内容
+            success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
             if not success:
-                await update.message.reply_text(_format_error_message(douyin_url, error_msg))
+                await processing_message.edit_text(_format_error_message(douyin_url, error_msg))
                 return
 
-            # 获取历史内容并发送
-            check_success, check_error_msg, new_items = douyin_manager.check_updates(douyin_url)
+            check_success, check_error_msg, content_list = douyin_manager.check_updates(douyin_url)
+            if not check_success or not content_list:
+                await processing_message.edit_text(_format_final_success_message(douyin_url, target_chat_id, 0))
+                return
 
-            if check_success and new_items:
+            content_count = len(content_list)
+        else:
+            # 后续频道：获取已知内容ID列表
+            success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
+            if not success:
+                await processing_message.edit_text(_format_error_message(douyin_url, error_msg))
+                return
+
+            if isinstance(content_info, dict) and content_info.get("need_alignment"):
+                content_list = content_info.get("known_item_ids", [])
+                content_count = len(content_list)
+            else:
+                content_count = 0
+
+        # 5. 进度反馈（统一格式）
+        if content_count > 0:
+            await processing_message.edit_text(_format_progress_message(douyin_url, target_chat_id, content_count))
+
+            # 6. 执行具体操作（用户无感知差异）
+            if subscription_status == "first_channel":
                 # 发送到频道
                 sent_count = await douyin_manager.send_content_batch(
-                    context.bot, new_items, douyin_url, [target_chat_id]
+                    context.bot, content_list, douyin_url, [target_chat_id]
                 )
-
-                # 成功反馈
-                await update.message.reply_text(_format_success_message(douyin_url, target_chat_id, sent_count))
             else:
-                # 无内容或获取失败
-                await update.message.reply_text(_format_success_no_content_message(douyin_url, target_chat_id))
-
-        except Exception as e:
-            logging.error(f"首个频道订阅失败: {douyin_url}", exc_info=True)
-            await update.message.reply_text(_format_error_message(douyin_url, str(e)))
-
-    elif subscription_status == "additional_channel":
-        # 后续频道分支
-        try:
-            # 添加订阅
-            success, error_msg, content_info = douyin_manager.add_subscription(douyin_url, target_chat_id)
-
-            if not success:
-                await update.message.reply_text(_format_error_message(douyin_url, error_msg))
-                return
-
-            # 检查是否需要历史对齐
-            if isinstance(content_info, dict) and content_info.get("need_alignment"):
-                known_item_ids = content_info.get("known_item_ids", [])
-                new_channel = content_info.get("new_channel")
-
-                # 历史对齐
+                # 历史对齐（用户看不到技术细节）
+                from .alignment import perform_historical_alignment
                 alignment_success = await perform_historical_alignment(
-                    context.bot, douyin_url, known_item_ids, new_channel
+                    context.bot, douyin_url, content_list, target_chat_id
                 )
+                sent_count = len(content_list) if alignment_success else 0
 
-                # 无论历史对齐成功还是部分失败，对用户都显示成功消息
-                await update.message.reply_text(_format_success_message(douyin_url, target_chat_id, len(known_item_ids)))
-            else:
-                # 无需历史对齐的情况
-                await update.message.reply_text(_format_success_message(douyin_url, target_chat_id, 0))
+            # 7. 最终反馈（统一格式）
+            await processing_message.edit_text(_format_final_success_message(douyin_url, target_chat_id, sent_count))
+        else:
+            # 无内容的情况
+            await processing_message.edit_text(_format_final_success_message(douyin_url, target_chat_id, 0))
 
-        except Exception as e:
-            logging.error(f"后续频道订阅失败: {douyin_url}", exc_info=True)
-            await update.message.reply_text(_format_error_message(douyin_url, str(e)))
+    except Exception as e:
+        # 错误反馈
+        logging.error(f"订阅处理失败: {douyin_url} -> {target_chat_id}", exc_info=True)
+        await processing_message.edit_text(_format_error_message(douyin_url, str(e)))
 
 
 def _check_subscription_status(douyin_url: str, chat_id: str, subscriptions: Dict) -> str:
@@ -176,31 +176,6 @@ def _format_duplicate_subscription_message(douyin_url: str, chat_id: str) -> str
         f"📋 当前订阅状态：正常\n"
         f"🔄 系统正在自动监控新内容，无需重复添加"
     )
-
-
-def _format_success_message(douyin_url: str, chat_id: str, content_count: int) -> str:
-    """格式化成功添加订阅消息"""
-    return (
-        f"✅ 成功添加抖音订阅\n"
-        f"🔗 抖音链接：{douyin_url}\n"
-        f"📺 目标频道：{chat_id}\n"
-        f"📊 已同步 {content_count} 个历史内容\n"
-        f"🔄 系统将继续自动监控新内容"
-    )
-
-
-def _format_success_no_content_message(douyin_url: str, chat_id: str) -> str:
-    """格式化成功添加订阅但无内容消息"""
-    return (
-        f"✅ 成功添加抖音订阅\n"
-        f"🔗 抖音链接：{douyin_url}\n"
-        f"📺 目标频道：{chat_id}\n"
-        f"📊 当前没有可用内容\n"
-        f"🔄 系统将继续自动监控新内容"
-    )
-
-
-
 
 
 def _format_error_message(douyin_url: str, error_reason: str) -> str:
@@ -236,6 +211,37 @@ def _format_chat_id_validation_error_message() -> str:
         "- @channel_name (频道用户名)\n"
         "- -1001234567890 (频道数字ID)\n"
         "- 1234567890 (用户数字ID)"
+    )
+
+
+def _format_processing_message(douyin_url: str, chat_id: str) -> str:
+    """格式化正在处理消息（统一格式）"""
+    return (
+        f"✅ 正在添加抖音订阅...\n"
+        f"🔗 抖音链接：{douyin_url}\n"
+        f"📺 目标频道：{chat_id}\n"
+        f"⏳ 正在获取历史内容，请稍候..."
+    )
+
+
+def _format_progress_message(douyin_url: str, chat_id: str, content_count: int) -> str:
+    """格式化进度更新消息（统一格式）"""
+    return (
+        f"✅ 订阅添加成功！\n"
+        f"🔗 抖音链接：{douyin_url}\n"
+        f"📺 目标频道：{chat_id}\n"
+        f"📤 正在发送 {content_count} 个历史内容..."
+    )
+
+
+def _format_final_success_message(douyin_url: str, chat_id: str, content_count: int) -> str:
+    """格式化最终成功消息（统一格式）"""
+    return (
+        f"✅ 抖音订阅添加完成\n"
+        f"🔗 抖音链接：{douyin_url}\n"
+        f"📺 目标频道：{chat_id}\n"
+        f"📊 已同步 {content_count} 个历史内容\n"
+        f"🔄 系统将继续自动监控新内容"
     )
 
 
@@ -334,9 +340,6 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"📋 当前抖音订阅列表：\n\n{subscription_text}\n\n"
         f"📊 总计：{len(subscriptions)}个抖音用户，{total_channels}个频道订阅"
     )
-
-
-
 
 
 def register_douyin_commands(application: Application) -> None:

@@ -552,29 +552,58 @@ storage/douyin/
 
 **交互流程**：
 ```
-用户输入命令 → 参数验证 → 检查订阅状态
+用户输入命令 → 参数验证 → 立即反馈"正在处理" → 检查订阅状态
     ↓
 ┌─────────────┬─────────────┬─────────────┐
 │  首个频道   │  后续频道   │  重复订阅   │
 │             │             │             │
-│ 获取历史内容 │ 历史对齐    │ 检查订阅状态 │
-│     ↓       │     ↓       │     ↓       │
-│ 发送到频道  │ 转发历史内容 │ 返回提示信息 │
-│     ↓       │     ↓       │     ↓       │
-│ 记录消息ID  │ 记录消息ID  │ 无需处理    │
-│     ↓       │     ↓       │     ↓       │
-│ 完成反馈    │ 完成反馈    │ 完成反馈    │
+│        统一反馈流程        │ 立即反馈    │
+│    "正在获取历史内容"      │ "已存在"    │
+│             │             │     ↓       │
+│        执行具体操作        │ 完成反馈    │
+│    (获取/发送 或 对齐)     │             │
+│             │             │             │
+│        进度反馈           │             │
+│    "正在发送 X 个内容"     │             │
+│             │             │             │
+│        记录消息ID         │             │
+│             │             │             │
+│        最终反馈           │             │
+│    "完成同步 X 个内容"     │             │
 └─────────────┴─────────────┴─────────────┘
 ```
 
 **流程说明**：
-- **首个频道**：该抖音URL的第一个订阅频道，需要获取完整历史内容
-- **后续频道**：该抖音URL的后续订阅频道，通过历史对齐获取已有内容
+- **统一反馈流程**：无论是首个频道还是后续频道，用户看到的反馈流程完全一致，隐藏技术实现细节
+- **立即反馈**：用户发送命令后立即收到"正在处理"的反馈，避免长时间等待
+- **进度更新**：在关键步骤提供进度反馈，让用户了解处理状态
 - **重复订阅**：该频道已经订阅了该抖音URL，直接返回提示信息
 
-**成功反馈**：
+**用户体验原则**：
+- **统一性**：无论内部实现如何，用户看到的流程保持一致
+- **及时性**：立即反馈 + 进度更新 + 最终结果
+- **透明性**：隐藏技术细节（如"历史对齐"、"转发"等术语）
+- **简洁性**：使用用户友好的语言，避免技术术语
+
+**立即反馈**（用户发送命令后立即显示）：
 ```
-✅ 成功添加抖音订阅
+✅ 正在添加抖音订阅...
+🔗 抖音链接：{完整的douyin_url}
+📺 目标频道：{channel}
+⏳ 正在获取历史内容，请稍候...
+```
+
+**进度反馈**（开始发送内容时更新）：
+```
+✅ 订阅添加成功！
+🔗 抖音链接：{完整的douyin_url}
+📺 目标频道：{channel}
+📤 正在发送 {count} 个历史内容...
+```
+
+**最终反馈**（所有内容发送完成后更新）：
+```
+✅ 抖音订阅添加完成
 🔗 抖音链接：{完整的douyin_url}
 📺 目标频道：{channel}
 📊 已同步 {count} 个历史内容
@@ -605,7 +634,7 @@ storage/douyin/
 **伪代码实现**：
 ```python
 async def douyin_add_command(douyin_url: str, chat_id: str):
-    """添加抖音订阅的伪代码实现"""
+    """添加抖音订阅的伪代码实现 - 统一反馈流程"""
 
     # 1. 参数验证
     if not validate_douyin_url(douyin_url):
@@ -618,54 +647,54 @@ async def douyin_add_command(douyin_url: str, chat_id: str):
     subscription_status = check_subscription_status(douyin_url, chat_id)
 
     if subscription_status == "duplicate":
-        # 重复订阅分支
-        return duplicate_response(douyin_url, chat_id)
+        # 重复订阅分支 - 直接返回
+        await send_message(duplicate_response(douyin_url, chat_id))
+        return
 
-    elif subscription_status == "first_channel":
-        # 首个频道分支
-        try:
-            # 获取历史内容
+    # 3. 立即反馈（非重复订阅才需要处理反馈）
+    processing_message = await send_processing_feedback(douyin_url, chat_id)
+
+    # 4. 统一处理流程（首个频道和后续频道使用相同的用户反馈）
+    try:
+        if subscription_status == "first_channel":
+            # 首个频道：获取历史内容
             content_list = await fetch_user_content(douyin_url)
+            content_count = len(content_list)
+        else:
+            # 后续频道：获取已知内容ID列表
+            content_list = get_known_item_ids(douyin_url)
+            content_count = len(content_list)
 
+        # 5. 进度反馈（统一格式）
+        await edit_message(processing_message,
+                          progress_feedback(douyin_url, chat_id, content_count))
+
+        # 6. 执行具体操作（用户无感知差异）
+        if subscription_status == "first_channel":
             # 发送到频道
             sent_count = 0
             for content in content_list:
                 messages = await send_douyin_content(bot, content, chat_id)
                 if messages:
-                    # 记录消息ID
                     save_message_ids(douyin_url, content['item_id'], chat_id, messages)
                     sent_count += 1
-
-            # 更新订阅配置
-            add_subscription_config(douyin_url, chat_id)
-
-            # 统一返回格式，用户无感知（完整URL显示）
-            return success_response(douyin_url, chat_id, sent_count)
-
-        except Exception as e:
-            return error_response(f"获取或发送内容失败: {str(e)}")
-
-    elif subscription_status == "additional_channel":
-        # 后续频道分支
-        try:
-            # 获取已知内容ID列表
-            known_item_ids = get_known_item_ids(douyin_url)
-
-            # 历史对齐
-            success = await perform_historical_alignment(
-                bot, douyin_url, known_item_ids, chat_id
+        else:
+            # 历史对齐（用户看不到技术细节）
+            sent_count = await perform_historical_alignment(
+                bot, douyin_url, content_list, chat_id
             )
 
-            if success:
-                # 更新订阅配置
-                add_subscription_config(douyin_url, chat_id)
-                # 统一返回格式，用户无感知（完整URL显示）
-                return success_response(douyin_url, chat_id, len(known_item_ids))
-            else:
-                return error_response("历史内容对齐失败")
+        # 7. 更新订阅配置
+        add_subscription_config(douyin_url, chat_id)
 
-        except Exception as e:
-            return error_response(f"历史对齐失败: {str(e)}")
+        # 8. 最终反馈（统一格式）
+        await edit_message(processing_message,
+                          final_success_response(douyin_url, chat_id, sent_count))
+
+    except Exception as e:
+        # 错误反馈
+        await edit_message(processing_message,
+                          error_response(douyin_url, str(e)))
 
 def check_subscription_status(douyin_url: str, chat_id: str) -> str:
     """检查订阅状态"""
