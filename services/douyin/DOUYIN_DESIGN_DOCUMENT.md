@@ -539,67 +539,63 @@ storage/douyin/
 
 ### 7.1 用户接口
 
-#### 7.1.1 Telegram命令接口
+#### 7.1.1 /douyin_add - 添加抖音订阅
 
-**订阅管理命令**：
-
+**命令格式**：
 ```bash
-# 添加抖音订阅
 /douyin_add <抖音链接> <频道ID>
 
 # 示例
 /douyin_add https://v.douyin.com/iM5g7LsM/ @my_channel
 /douyin_add https://www.douyin.com/user/MS4wLjABAAAA... -1001234567890
-
-# 删除抖音订阅
-/douyin_del <抖音链接> <频道ID>
-
-# 示例
-/douyin_del https://v.douyin.com/iM5g7LsM/ @my_channel
-
-# 查看订阅列表
-/douyin_list
-
-# 手动检查更新
-/douyin_check
 ```
 
-**命令参数说明**：
-- `<抖音链接>`：支持完整URL和短链接格式
-- `<频道ID>`：支持 `@channel_name`、`-1001234567890`、`1234567890` 格式
-
-#### 7.1.2 用户交互流程
-
-**添加订阅流程**：
+**交互流程**：
 ```
 用户输入命令 → 参数验证 → URL解析
     ↓
-检查订阅状态 → 首个频道 / 后续频道
+检查订阅状态
     ↓
-首个频道：获取历史内容 → 发送到频道 → 完成反馈
-后续频道：历史对齐 → 转发历史内容 → 完成反馈
+┌─────────────┬─────────────┬─────────────┐
+│  首个频道   │  后续频道   │  重复订阅   │
+│             │             │             │
+│ 获取历史内容 │ 历史对齐    │ 检查订阅状态 │
+│     ↓       │     ↓       │     ↓       │
+│ 发送到频道  │ 转发历史内容 │ 返回提示信息 │
+│     ↓       │     ↓       │     ↓       │
+│ 记录消息ID  │ 记录消息ID  │ 无需处理    │
+│     ↓       │     ↓       │     ↓       │
+│ 完成反馈    │ 完成反馈    │ 完成反馈    │
+└─────────────┴─────────────┴─────────────┘
 ```
 
-**删除订阅流程**：
-```
-用户输入命令 → 参数验证 → 查找订阅
-    ↓
-删除指定频道 → 更新配置 → 完成反馈
-```
+**流程说明**：
+- **首个频道**：该抖音URL的第一个订阅频道，需要获取完整历史内容
+- **后续频道**：该抖音URL的后续订阅频道，通过历史对齐获取已有内容
+- **重复订阅**：该频道已经订阅了该抖音URL，直接返回提示信息
 
-#### 7.1.3 反馈消息设计
-
-**成功消息模板**：
+**成功反馈**：
 ```
-✅ 成功添加抖音订阅：{url}
+✅ 成功添加抖音订阅
+🔗 抖音链接：{完整的douyin_url}
 📺 目标频道：{channel}
-📊 成功推送 {count} 个历史内容
+📊 已同步 {count} 个历史内容
 🔄 系统将继续自动监控新内容
 ```
 
-**错误消息模板**：
+**重复订阅反馈**：
 ```
-❌ 添加抖音订阅失败：{url}
+⚠️ 该抖音用户已订阅到此频道
+🔗 抖音链接：{完整的douyin_url}
+📺 目标频道：{channel}
+📋 当前订阅状态：正常
+🔄 系统正在自动监控新内容，无需重复添加
+```
+
+**错误反馈**：
+```
+❌ 添加抖音订阅失败
+🔗 抖音链接：{完整的douyin_url}
 原因：{error_message}
 
 💡 请检查：
@@ -607,6 +603,287 @@ storage/douyin/
 - 频道ID是否有效
 - Bot是否有频道发送权限
 ```
+
+**伪代码实现**：
+```python
+async def douyin_add_command(douyin_url: str, chat_id: str):
+    """添加抖音订阅的伪代码实现"""
+
+    # 1. 参数验证
+    if not validate_douyin_url(douyin_url):
+        return error_response("抖音链接格式不正确")
+
+    if not validate_chat_id(chat_id):
+        return error_response("频道ID格式不正确")
+
+    # 2. URL解析
+    try:
+        parsed_url = parse_douyin_url(douyin_url)
+    except Exception:
+        return error_response("抖音链接解析失败")
+
+    # 3. 检查订阅状态
+    subscription_status = check_subscription_status(douyin_url, chat_id)
+
+    if subscription_status == "duplicate":
+        # 重复订阅分支
+        return duplicate_response(douyin_url, chat_id)
+
+    elif subscription_status == "first_channel":
+        # 首个频道分支
+        try:
+            # 获取历史内容
+            content_list = await fetch_user_content(douyin_url)
+
+            # 发送到频道
+            sent_count = 0
+            for content in content_list:
+                messages = await send_douyin_content(bot, content, chat_id)
+                if messages:
+                    # 记录消息ID
+                    save_message_ids(douyin_url, content['item_id'], chat_id, messages)
+                    sent_count += 1
+
+            # 更新订阅配置
+            add_subscription_config(douyin_url, chat_id)
+
+            # 统一返回格式，用户无感知（完整URL显示）
+            return success_response(douyin_url, chat_id, sent_count)
+
+        except Exception as e:
+            return error_response(f"获取或发送内容失败: {str(e)}")
+
+    elif subscription_status == "additional_channel":
+        # 后续频道分支
+        try:
+            # 获取已知内容ID列表
+            known_item_ids = get_known_item_ids(douyin_url)
+
+            # 历史对齐
+            success = await perform_historical_alignment(
+                bot, douyin_url, known_item_ids, chat_id
+            )
+
+            if success:
+                # 更新订阅配置
+                add_subscription_config(douyin_url, chat_id)
+                # 统一返回格式，用户无感知（完整URL显示）
+                return success_response(douyin_url, chat_id, len(known_item_ids))
+            else:
+                return error_response("历史内容对齐失败")
+
+        except Exception as e:
+            return error_response(f"历史对齐失败: {str(e)}")
+
+def check_subscription_status(douyin_url: str, chat_id: str) -> str:
+    """检查订阅状态"""
+    subscriptions = get_subscriptions()
+
+    if douyin_url in subscriptions:
+        if chat_id in subscriptions[douyin_url]:
+            return "duplicate"  # 重复订阅
+        else:
+            return "additional_channel"  # 后续频道
+    else:
+        return "first_channel"  # 首个频道
+```
+
+#### 7.1.2 /douyin_del - 删除抖音订阅
+
+**命令格式**：
+```bash
+/douyin_del <抖音链接> <频道ID>
+
+# 示例
+/douyin_del https://v.douyin.com/iM5g7LsM/ @my_channel
+```
+
+**交互流程**：
+```
+用户输入命令 → 参数验证 → 查找订阅
+    ↓
+┌─────────────┬─────────────┐
+│  删除成功   │  订阅不存在  │
+│             │             │
+│ 移除频道    │ 返回提示    │
+│     ↓       │     ↓       │
+│ 更新配置    │ 完成反馈    │
+│     ↓       │             │
+│ 完成反馈    │             │
+└─────────────┴─────────────┘
+```
+
+**成功反馈**：
+```
+✅ 成功删除抖音订阅
+🔗 抖音链接：{完整的douyin_url}
+📺 目标频道：{channel}
+```
+
+**订阅不存在反馈**：
+```
+⚠️ 该抖音用户未订阅到此频道
+🔗 抖音链接：{完整的douyin_url}
+📺 目标频道：{channel}
+💡 请检查链接和频道ID是否正确
+```
+
+**错误反馈**：
+```
+❌ 删除抖音订阅失败
+🔗 抖音链接：{完整的douyin_url}
+原因：{error_message}
+
+💡 请检查：
+- 抖音链接格式是否正确
+- 频道ID是否有效
+```
+
+**伪代码实现**：
+```python
+async def douyin_del_command(douyin_url: str, chat_id: str):
+    """删除抖音订阅的伪代码实现"""
+
+    # 1. 参数验证
+    if not validate_douyin_url(douyin_url):
+        return error_response("抖音链接格式不正确")
+
+    if not validate_chat_id(chat_id):
+        return error_response("频道ID格式不正确")
+
+    # 2. 查找订阅
+    subscriptions = get_subscriptions()
+
+    if douyin_url not in subscriptions:
+        return not_found_response(douyin_url, chat_id, "该抖音用户未被任何频道订阅")
+
+    if chat_id not in subscriptions[douyin_url]:
+        return not_found_response(douyin_url, chat_id, "该频道未订阅此抖音用户")
+
+    # 3. 删除频道
+    try:
+        subscriptions[douyin_url].remove(chat_id)
+
+        # 检查是否为最后一个频道
+        if len(subscriptions[douyin_url]) == 0:
+            # 最后频道：只删除订阅配置，保留历史数据
+            del subscriptions[douyin_url]
+            remaining_count = 0
+        else:
+            # 普通删除：只移除频道
+            remaining_count = len(subscriptions[douyin_url])
+
+        # 4. 更新配置
+        save_subscriptions(subscriptions)
+
+        return success_response(douyin_url, chat_id, remaining_count)
+
+    except Exception as e:
+        return error_response(f"删除订阅失败: {str(e)}")
+```
+
+#### 7.1.3 /douyin_list - 查看订阅列表
+
+**命令格式**：
+```bash
+/douyin_list
+```
+
+**交互流程**：
+```
+用户输入命令 → 获取订阅列表
+    ↓
+┌─────────────┬─────────────┐
+│  有订阅内容  │  无订阅内容  │
+│             │             │
+│ 格式化显示  │ 返回提示    │
+│     ↓       │     ↓       │
+│ 返回列表    │ 完成反馈    │
+└─────────────┴─────────────┘
+```
+
+**有订阅时的反馈**：
+```
+📋 当前抖音订阅列表：
+
+🎬 抖音用户1
+   🔗 https://v.douyin.com/iM5g7LsM/
+   📺 @channel1, @channel2
+
+🎬 抖音用户2
+   🔗 https://www.douyin.com/user/MS4wLjABAAAA...
+   📺 @channel3
+
+📊 总计：2个抖音用户，3个频道订阅
+```
+
+**无订阅时的反馈**：
+```
+📋 当前没有抖音订阅
+
+💡 使用 /douyin_add <抖音链接> <频道ID> 添加订阅
+```
+
+**错误反馈**：
+```
+❌ 获取订阅列表失败
+原因：{error_message}
+```
+
+**伪代码实现**：
+```python
+async def douyin_list_command():
+    """查看订阅列表的伪代码实现"""
+
+    try:
+        # 1. 获取订阅配置
+        subscriptions = get_subscriptions()
+
+        # 2. 检查是否有订阅
+        if not subscriptions:
+            return empty_list_response()
+
+        # 3. 格式化订阅列表
+        formatted_list = []
+        total_users = len(subscriptions)
+        total_channels = 0
+
+        for douyin_url, channels in subscriptions.items():
+            # 获取用户信息（可选，用于显示用户名）
+            user_info = get_user_info_from_url(douyin_url)
+            user_display = user_info.get('nickname', '抖音用户') if user_info else '抖音用户'
+
+            # 格式化频道列表
+            channel_list = ', '.join(channels)
+            total_channels += len(channels)
+
+            formatted_list.append(f"🎬 {user_display}\n   🔗 {douyin_url}\n   📺 {channel_list}")
+
+        # 4. 生成完整响应（确保URL完整显示）
+        response_text = "📋 当前抖音订阅列表：\n\n"
+        response_text += "\n\n".join(formatted_list)
+        response_text += f"\n\n📊 总计：{total_users}个抖音用户，{total_channels}个频道订阅"
+
+        return success_list_response(response_text)
+
+    except Exception as e:
+        return error_response(f"获取订阅列表失败: {str(e)}")
+
+def get_user_info_from_url(douyin_url: str) -> Optional[Dict]:
+    """从URL获取用户信息（可选功能）"""
+    try:
+        # 可以从缓存的用户数据中获取
+        # 或者从URL解析用户ID后查询
+        return get_cached_user_info(douyin_url)
+    except:
+        return None
+```
+
+#### 7.1.4 命令参数说明
+
+**参数格式**：
+- `<抖音链接>`：支持完整URL和短链接格式
+- `<频道ID>`：支持 `@channel_name`、`-1001234567890`、`1234567890` 格式
 
 ### 7.2 系统接口
 
@@ -670,152 +947,6 @@ async def perform_historical_alignment(bot: Bot, douyin_url: str, known_item_ids
 - INFO级别：正常业务流程和结果
 - WARNING级别：可恢复的异常情况
 - ERROR级别：需要关注的错误和异常
-
-### 7.3 API设计
-
-#### 7.3.1 内部API接口
-
-**订阅管理API**：
-```python
-# 添加订阅
-POST /api/douyin/subscription
-{
-    "douyin_url": "https://v.douyin.com/iM5g7LsM/",
-    "chat_id": "@my_channel"
-}
-
-Response:
-{
-    "success": true,
-    "message": "订阅添加成功",
-    "data": {
-        "need_alignment": false,
-        "content_count": 15
-    }
-}
-
-# 获取订阅列表
-GET /api/douyin/subscriptions
-
-Response:
-{
-    "success": true,
-    "data": {
-        "https://v.douyin.com/iM5g7LsM/": ["@channel1", "@channel2"],
-        "https://www.douyin.com/user/xxx": ["@channel3"]
-    }
-}
-
-# 删除订阅
-DELETE /api/douyin/subscription
-{
-    "douyin_url": "https://v.douyin.com/iM5g7LsM/",
-    "chat_id": "@my_channel"
-}
-```
-
-**内容检查API**：
-```python
-# 手动检查更新
-POST /api/douyin/check
-{
-    "douyin_url": "https://v.douyin.com/iM5g7LsM/"  # 可选，不提供则检查所有
-}
-
-Response:
-{
-    "success": true,
-    "data": {
-        "total_checked": 5,
-        "new_content_found": 2,
-        "sent_successfully": 2
-    }
-}
-
-# 获取内容历史
-GET /api/douyin/content/{douyin_url}
-
-Response:
-{
-    "success": true,
-    "data": {
-        "known_items": ["content_001", "content_002"],
-        "latest_content": {
-            "item_id": "content_002",
-            "title": "最新视频",
-            "time": "2024-12-01"
-        }
-    }
-}
-```
-
-#### 7.3.2 Webhook接口设计
-
-**内容更新通知**：
-```python
-# Webhook回调接口
-POST /webhook/douyin/content_update
-{
-    "douyin_url": "https://v.douyin.com/iM5g7LsM/",
-    "new_content": [
-        {
-            "item_id": "content_20241201_001",
-            "title": "新视频标题",
-            "media_type": "video",
-            "time": "2024-12-01"
-        }
-    ],
-    "target_channels": ["@channel1", "@channel2"]
-}
-```
-
-**系统状态监控**：
-```python
-# 健康检查接口
-GET /api/douyin/health
-
-Response:
-{
-    "status": "healthy",
-    "data": {
-        "subscription_count": 10,
-        "last_check_time": "2024-12-01T10:30:00Z",
-        "error_count_24h": 0
-    }
-}
-
-# 统计信息接口
-GET /api/douyin/stats
-
-Response:
-{
-    "success": true,
-    "data": {
-        "total_subscriptions": 10,
-        "total_channels": 25,
-        "content_sent_today": 45,
-        "average_response_time": "2.3s"
-    }
-}
-```
-
-#### 7.3.3 接口安全设计
-
-**认证机制**：
-- API密钥认证：`X-API-Key` 头部验证
-- 请求签名：基于时间戳和密钥的HMAC签名
-- IP白名单：限制API访问来源
-
-**限流策略**：
-- 订阅管理：每分钟最多10次操作
-- 内容检查：每分钟最多5次检查
-- 统计查询：每分钟最多30次请求
-
-**数据验证**：
-- 输入参数格式验证
-- URL有效性检查
-- 频道ID格式验证
-- 请求大小限制（最大1MB）
 
 ---
 
