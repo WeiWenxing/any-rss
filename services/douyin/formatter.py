@@ -109,7 +109,7 @@ class DouyinFormatter:
 
     def format_caption(self, content_info: Dict) -> str:
         """
-        格式化抖音内容为媒体caption（紧凑美观版本）
+        格式化抖音内容为媒体caption（优化版本）
 
         Args:
             content_info: 内容信息字典
@@ -135,43 +135,17 @@ class DouyinFormatter:
             # 构建caption
             caption_parts = []
 
-            # 第一行：标题 + 作者 + 日期（一行包含所有核心信息）
-            first_line_parts = []
-
-            # 标题（根据其他信息调整长度）
-            available_length = 50  # 为作者和日期预留空间
-            if nickname:
-                available_length -= len(nickname) + 3  # 3个字符用于" 👤 "
-            elif author:
-                available_length -= len(author) + 3
-            if time_str:
-                available_length -= len(time_str) + 1  # 1个空格
-
-            # 确保标题至少有20个字符
-            title_length = max(20, available_length)
-            if len(title) > title_length:
-                title = title[:title_length] + "..."
+            # 第一行：仅标题（移除作者和日期）
+            # 标题可以使用更多空间，因为不需要为作者和日期预留
+            max_title_length = 80  # 增加标题长度限制
+            if len(title) > max_title_length:
+                title = title[:max_title_length] + "..."
 
             # 转义标题
             safe_title = self._escape_markdown(title)
-            first_line_parts.append(safe_title)
+            caption_parts.append(safe_title)
 
-            # 添加作者
-            if nickname:
-                safe_nickname = self._escape_markdown(nickname)
-                first_line_parts.append(f"👤 {safe_nickname}")
-            elif author:
-                safe_author = self._escape_markdown(author)
-                first_line_parts.append(f"👤 {safe_author}")
-
-            # 添加日期
-            if time_str:
-                first_line_parts.append(time_str)
-
-            # 用空格连接第一行的所有部分
-            caption_parts.append(" ".join(first_line_parts))
-
-            # 第二行：统计信息（如果有）
+            # 第二行：统计信息 + 作者（将作者拼接到统计信息）
             stats_parts = []
             if like_count > 0:
                 stats_parts.append(f"❤️ {self._format_count(like_count)}")
@@ -179,6 +153,14 @@ class DouyinFormatter:
                 stats_parts.append(f"💬 {self._format_count(comment_count)}")
             if play_count > 0:
                 stats_parts.append(f"▶️ {self._format_count(play_count)}")
+
+            # 添加作者信息到统计行
+            if nickname:
+                safe_nickname = self._escape_markdown(nickname)
+                stats_parts.append(f"👤 {safe_nickname}")
+            elif author:
+                safe_author = self._escape_markdown(author)
+                stats_parts.append(f"👤 {safe_author}")
 
             if stats_parts:
                 caption_parts.append(" • ".join(stats_parts))
@@ -214,11 +196,17 @@ class DouyinFormatter:
                 clean_author = author.replace(' ', '_').replace('@', '').replace('#', '')
                 caption_parts.append(f"#{clean_author}")
 
-            # 最后一行：抖音原链接
+            # 最后一行：抖音原链接 + 日期（将日期拼接到查看原视频后面）
             aweme_id = content_info.get("aweme_id", "").strip()
             if aweme_id:
                 douyin_link = f"https://www.douyin.com/video/{aweme_id}"
-                caption_parts.append(f"[查看原视频]({douyin_link})")
+                last_line = f"[查看原视频]({douyin_link})"
+
+                # 将日期拼接到最后一行
+                if time_str:
+                    last_line += f" • {time_str}"
+
+                caption_parts.append(last_line)
 
             return "\n\n".join(caption_parts)
 
