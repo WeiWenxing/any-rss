@@ -25,7 +25,7 @@ from telegram import Bot, Message
 from .unified_interval_manager import UnifiedIntervalManager
 from .unified_sender import UnifiedTelegramSender
 from .telegram_message import TelegramMessage
-from .message_converter import MessageConverter, get_converter
+from .message_converter import MessageConverter, get_converter, ConverterType
 
 
 class UnifiedContentManager(ABC):
@@ -45,12 +45,52 @@ class UnifiedContentManager(ABC):
         """
         self.module_name = module_name
         self.logger = logging.getLogger(f"{module_name}_manager")
-        
+
         # 初始化统一组件
         self.sender = UnifiedTelegramSender()
         self.interval_manager = UnifiedIntervalManager("batch_send")
-        
+
         self.logger.info(f"{module_name}统一管理器初始化完成")
+
+    def _get_converter_type(self) -> ConverterType:
+        """
+        根据模块名获取对应的转换器类型
+
+        Returns:
+            ConverterType: 转换器类型枚举
+        """
+        module_to_converter_map = {
+            "douyin": ConverterType.DOUYIN,
+            "rsshub": ConverterType.RSSHUB,
+            "rss": ConverterType.RSS
+        }
+
+        converter_type = module_to_converter_map.get(self.module_name)
+        if not converter_type:
+            self.logger.warning(f"未找到模块 {self.module_name} 对应的转换器类型，使用通用转换器")
+            return ConverterType.GENERIC
+
+        return converter_type
+
+    def _get_module_converter(self) -> Optional[MessageConverter]:
+        """
+        获取当前模块的消息转换器
+
+        Returns:
+            Optional[MessageConverter]: 转换器实例，如果不存在则返回None
+        """
+        try:
+            converter_type = self._get_converter_type()
+            converter = get_converter(converter_type)
+
+            if not converter:
+                self.logger.error(f"未找到 {converter_type.value} 转换器，请确保转换器已正确注册")
+                return None
+
+            return converter
+        except Exception as e:
+            self.logger.error(f"获取模块转换器失败: {str(e)}", exc_info=True)
+            return None
 
     # ==================== 抽象接口（子类必须实现）====================
 
@@ -290,14 +330,18 @@ class UnifiedContentManager(ABC):
                 for potential_send_channel in target_channels:
                     try:
                         self.logger.info(f"尝试发送到频道 {potential_send_channel}: {content.get('title', '无标题')}")
-                        
+
                         # 转换为统一消息格式
-                        converter = get_converter(self.module_name)
-                        telegram_message = converter.convert_to_telegram_message(content)
-                        
+                        converter = self._get_module_converter()
+                        if not converter:
+                            self.logger.error(f"无法获取转换器，跳过内容: {content.get('title', '无标题')}")
+                            continue
+
+                        telegram_message = converter.convert(content)
+
                         # 使用统一发送器发送
                         messages = await self.sender.send_message(bot, potential_send_channel, telegram_message)
-                        
+
                         if messages:
                             # 提取消息ID列表
                             message_ids = [msg.message_id for msg in messages]
@@ -374,12 +418,16 @@ class UnifiedContentManager(ABC):
                             self.logger.warning(f"所有转发都失败，降级发送: {channel}")
                             try:
                                 # 转换为统一消息格式
-                                converter = get_converter(self.module_name)
-                                telegram_message = converter.convert_to_telegram_message(content)
-                                
+                                converter = self._get_module_converter()
+                                if not converter:
+                                    self.logger.error(f"无法获取转换器，跳过降级发送: {channel}")
+                                    continue
+
+                                telegram_message = converter.convert(content)
+
                                 # 使用统一发送器发送
                                 fallback_messages = await self.sender.send_message(bot, channel, telegram_message)
-                                
+
                                 if fallback_messages:
                                     fallback_ids = [msg.message_id for msg in fallback_messages]
                                     self.save_message_mapping(source_url, content['item_id'], channel, fallback_ids)
@@ -496,4 +544,4 @@ if __name__ == "__main__":
         print("🎉 统一管理器模块测试完成")
 
     # 运行测试
-    test_unified_manager() 
+    test_unified_manager()

@@ -71,6 +71,10 @@ class RSSHubManager(UnifiedContentManager):
         # 初始化RSS解析器
         self.rss_parser = create_rss_parser()
 
+        # 初始化并注册RSS转换器（确保转换器可用）
+        from .rss_converter import create_rss_converter
+        self.rss_converter = create_rss_converter()
+
         # 加载数据
         self._load_all_data()
 

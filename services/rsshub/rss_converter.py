@@ -20,7 +20,7 @@ import re
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from services.common.message_converter import MessageConverter, ConversionError, ConverterType
+from services.common.message_converter import MessageConverter, ConversionError, ConverterType, register_converter
 from services.common.telegram_message import TelegramMessage, MediaItem, MediaType, ParseMode
 from .rss_entry import RSSEntry, RSSEnclosure
 
@@ -46,18 +46,28 @@ class RSSMessageConverter(MessageConverter):
 
         self.logger.info(f"RSS消息转换器初始化完成，最大文本长度: {max_text_length}, 最大媒体数: {max_media_items}")
 
-    def convert(self, source_data: RSSEntry, **kwargs) -> TelegramMessage:
+    def convert(self, source_data, **kwargs) -> TelegramMessage:
         """
         实现MessageConverter接口的convert方法
 
         Args:
-            source_data: RSS条目对象
+            source_data: RSS条目对象或字典格式的内容数据
             **kwargs: 额外参数
 
         Returns:
             TelegramMessage: 转换后的消息
         """
-        return self.to_telegram_message(source_data)
+        # 如果是RSSEntry对象，直接转换
+        if isinstance(source_data, RSSEntry):
+            return self.to_telegram_message(source_data)
+
+        # 如果是字典格式，先转换为RSSEntry对象
+        elif isinstance(source_data, dict):
+            rss_entry = self._dict_to_rss_entry(source_data)
+            return self.to_telegram_message(rss_entry)
+
+        else:
+            raise ConversionError(f"不支持的数据类型: {type(source_data)}")
 
     def convert_batch(self, source_data_list: List[RSSEntry], **kwargs) -> List[TelegramMessage]:
         """
@@ -118,6 +128,65 @@ class RSSMessageConverter(MessageConverter):
 
         except Exception as e:
             error_msg = f"RSS条目转换失败: {rss_entry.item_id}, 错误: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConversionError(error_msg)
+
+    def _dict_to_rss_entry(self, content_data: dict) -> RSSEntry:
+        """
+        将字典格式的内容数据转换为RSSEntry对象
+
+        Args:
+            content_data: 字典格式的内容数据
+
+        Returns:
+            RSSEntry: RSS条目对象
+        """
+        try:
+            from .rss_entry import create_rss_entry
+            from datetime import datetime
+
+            # 提取基本信息
+            title = content_data.get('title', '无标题')
+            link = content_data.get('link', '')
+            description = content_data.get('description', '')
+            author = content_data.get('author', '')
+
+            # 处理时间字段
+            published_time = None
+            if content_data.get('published'):
+                try:
+                    if isinstance(content_data['published'], str):
+                        # 如果是ISO格式字符串，尝试解析
+                        published_time = datetime.fromisoformat(content_data['published'].replace('Z', '+00:00'))
+                    elif isinstance(content_data['published'], datetime):
+                        published_time = content_data['published']
+                except Exception as e:
+                    self.logger.warning(f"解析发布时间失败: {content_data.get('published')}, 错误: {str(e)}")
+
+            # 创建RSSEntry对象
+            rss_entry = create_rss_entry(
+                title=title,
+                link=link,
+                description=description,
+                author=author,
+                published=published_time,
+                guid=content_data.get('item_id')  # 使用item_id作为guid
+            )
+
+            # 添加媒体附件（如果有的话）
+            enclosures = content_data.get('enclosures', [])
+            for enc_data in enclosures:
+                if isinstance(enc_data, dict):
+                    rss_entry.add_enclosure(
+                        url=enc_data.get('url', ''),
+                        mime_type=enc_data.get('type', ''),
+                        length=enc_data.get('length', 0)
+                    )
+
+            return rss_entry
+
+        except Exception as e:
+            error_msg = f"字典转RSSEntry失败: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             raise ConversionError(error_msg)
 
@@ -431,7 +500,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=media_items,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.MARKDOWN.value,
                     disable_web_page_preview=True  # 媒体组模式禁用链接预览
                 )
             elif send_strategy == "text_with_preview":
@@ -439,7 +508,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=[],  # 不使用媒体组
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.MARKDOWN.value,
                     disable_web_page_preview=False  # 启用链接预览
                 )
             else:
@@ -447,7 +516,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=[],
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.MARKDOWN.value,
                     disable_web_page_preview=False  # 启用链接预览作为补偿
                 )
 
@@ -456,7 +525,7 @@ class RSSMessageConverter(MessageConverter):
             # 返回基础消息
             return TelegramMessage(
                 text=message_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.MARKDOWN.value,
                 disable_web_page_preview=False
             )
 
@@ -490,7 +559,15 @@ def create_rss_converter(max_text_length: int = 4000, max_media_items: int = 10)
     Returns:
         RSSMessageConverter: RSS消息转换器实例
     """
-    return RSSMessageConverter(max_text_length, max_media_items)
+    converter = RSSMessageConverter(max_text_length, max_media_items)
+
+    # 自动注册到全局转换器注册表
+    try:
+        register_converter(converter)
+    except Exception as e:
+        converter.logger.warning(f"注册RSS转换器失败: {str(e)}")
+
+    return converter
 
 
 # 便捷函数：快速转换RSS条目
