@@ -21,7 +21,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from services.common.message_converter import MessageConverter, ConversionError, ConverterType, register_converter
-from services.common.telegram_message import TelegramMessage, MediaItem, MediaType, ParseMode
+from services.common.telegram_message import TelegramMessage, MediaItem, MediaType
 from .rss_entry import RSSEntry, RSSEnclosure
 
 

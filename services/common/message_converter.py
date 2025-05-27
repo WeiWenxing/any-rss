@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Union
 from enum import Enum
 
-from .telegram_message import TelegramMessage, MediaItem, MediaType, ParseMode
+from .telegram_message import TelegramMessage, MediaItem, MediaType
 
 
 class ConverterType(Enum):
@@ -130,7 +130,7 @@ class MessageConverter(ABC):
         """
         return str(source_data)
 
-    def get_parse_mode(self, source_data: Any) -> ParseMode:
+    def get_parse_mode(self, source_data: Any) -> str:
         """
         获取解析模式（子类可重写）
 
@@ -138,9 +138,9 @@ class MessageConverter(ABC):
             source_data: 源数据
 
         Returns:
-            ParseMode: 解析模式
+            str: 解析模式字符串
         """
-        return ParseMode.MARKDOWN_V2
+        return "MarkdownV2"
 
     def handle_conversion_error(self, error: Exception, source_data: Any) -> Optional[TelegramMessage]:
         """
@@ -160,7 +160,7 @@ class MessageConverter(ABC):
             fallback_text = f"内容转换失败: {str(source_data)[:100]}..."
             return TelegramMessage.create_text_message(
                 text=fallback_text,
-                parse_mode=ParseMode.NONE
+                parse_mode=None
             )
         except Exception as fallback_error:
             self.logger.error(f"降级处理也失败: {str(fallback_error)}", exc_info=True)
@@ -362,7 +362,7 @@ class GenericConverter(MessageConverter):
                 text_content = self.format_text_content(source_data)
                 return TelegramMessage.create_text_message(
                     text=text_content,
-                    parse_mode=ParseMode.NONE
+                    parse_mode=None
                 )
 
         except Exception as e:

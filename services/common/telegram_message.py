@@ -19,11 +19,8 @@ class MediaType(Enum):
     DOCUMENT = "document"
 
 
-class ParseMode(Enum):
-    """消息解析模式枚举"""
-    MARKDOWN = "Markdown"
-    HTML = "HTML"
-    NONE = None
+# ParseMode枚举已移除，直接使用字符串格式：
+# "Markdown", "HTML", "MarkdownV2" 或 None
 
 
 @dataclass
@@ -120,7 +117,7 @@ class TelegramMessage:
     """
     text: str                                    # 消息文本内容
     media_group: List[MediaItem] = field(default_factory=list)  # 媒体组列表
-    parse_mode: Optional[str] = ParseMode.MARKDOWN.value        # 解析模式
+    parse_mode: Optional[str] = "Markdown"        # 解析模式
     disable_web_page_preview: bool = False       # 是否禁用链接预览
     reply_markup: Optional[Dict[str, Any]] = None # 可选的键盘标记
 
@@ -131,7 +128,7 @@ class TelegramMessage:
 
         # 验证解析模式
         if self.parse_mode is not None:
-            valid_modes = [mode.value for mode in ParseMode if mode.value is not None]
+            valid_modes = ["Markdown", "HTML", "MarkdownV2"]
             if self.parse_mode not in valid_modes:
                 raise ValueError(f"无效的解析模式: {self.parse_mode}，支持的模式: {valid_modes}")
 
@@ -247,7 +244,7 @@ class TelegramMessage:
         return cls(
             text=data['text'],
             media_group=media_group,
-            parse_mode=data.get('parse_mode', ParseMode.MARKDOWN.value),
+            parse_mode=data.get('parse_mode', "Markdown"),
             disable_web_page_preview=data.get('disable_web_page_preview', False),
             reply_markup=data.get('reply_markup')
         )
@@ -258,7 +255,7 @@ class TelegramMessage:
         """创建纯文本消息的便捷方法"""
         return cls(
             text=text,
-            parse_mode=parse_mode or ParseMode.MARKDOWN.value,
+            parse_mode=parse_mode or "Markdown",
             disable_web_page_preview=disable_web_page_preview
         )
 
@@ -269,7 +266,7 @@ class TelegramMessage:
         return cls(
             text=text,
             media_group=media_items,
-            parse_mode=parse_mode or ParseMode.MARKDOWN.value
+            parse_mode=parse_mode or "Markdown"
         )
 
 
@@ -298,7 +295,6 @@ __all__ = [
     'TelegramMessage',
     'MediaItem',
     'MediaType',
-    'ParseMode',
     'create_simple_text_message',
     'create_single_photo_message',
     'create_single_video_message'

@@ -278,7 +278,7 @@ class UnifiedTelegramSender:
             sent_message = await bot.send_message(
                 chat_id=chat_id,
                 text=message.text,
-                parse_mode=message.parse_mode.value if message.parse_mode else None,
+                parse_mode=message.parse_mode,  # 直接使用，统一为字符串格式
                 disable_web_page_preview=message.disable_web_page_preview,
                 reply_markup=message.reply_markup
             )
