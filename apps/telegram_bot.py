@@ -109,6 +109,12 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "   • type: simple(默认) | full\n"
             "   • 避免长消息限制，提供JSON文件下载\n"
             "   • 适合获取完整的调试数据\n\n"
+            "🔧 RSSHub调试命令：\n\n"
+            "🔹 `/rsshub_debug_show` <XML数据>\n"
+            "   调试RSSHub内容格式化和发送\n"
+            "   • 用于测试单个RSS item的消息格式\n"
+            "   • 接受XML格式的RSS item数据\n"
+            "   • 包含格式化和实际消息发送\n\n"
         )
 
     help_text += (

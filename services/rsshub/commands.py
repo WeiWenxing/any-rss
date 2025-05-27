@@ -333,10 +333,10 @@ def register_rsshub_commands(application: Application) -> None:
 
     # 根据debug模式决定是否注册调试命令
     if debug_config["enabled"]:
-        # 注册调试命令（如果需要的话）
-        # from .debug_commands import register_rsshub_debug_commands
-        # register_rsshub_debug_commands(application)
-        logging.info("ℹ️ RSSHub调试命令暂未实现")
+        # 注册调试命令
+        from .debug_commands import register_rsshub_debug_commands
+        register_rsshub_debug_commands(application)
+        logging.info("✅ RSSHub调试命令已注册（DEBUG模式开启）")
     else:
         logging.info("ℹ️ RSSHub调试命令已跳过（DEBUG模式关闭）")
 
