@@ -500,7 +500,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=media_items,
-                    parse_mode=ParseMode.MARKDOWN.value,
+                    parse_mode="Markdown",
                     disable_web_page_preview=True  # 媒体组模式禁用链接预览
                 )
             elif send_strategy == "text_with_preview":
@@ -508,7 +508,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=[],  # 不使用媒体组
-                    parse_mode=ParseMode.MARKDOWN.value,
+                    parse_mode="Markdown",
                     disable_web_page_preview=False  # 启用链接预览
                 )
             else:
@@ -516,7 +516,7 @@ class RSSMessageConverter(MessageConverter):
                 return TelegramMessage(
                     text=message_text,
                     media_group=[],
-                    parse_mode=ParseMode.MARKDOWN.value,
+                    parse_mode="Markdown",
                     disable_web_page_preview=False  # 启用链接预览作为补偿
                 )
 
@@ -525,7 +525,7 @@ class RSSMessageConverter(MessageConverter):
             # 返回基础消息
             return TelegramMessage(
                 text=message_text,
-                parse_mode=ParseMode.MARKDOWN.value,
+                parse_mode="Markdown",
                 disable_web_page_preview=False
             )
 

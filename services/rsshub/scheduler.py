@@ -35,7 +35,7 @@ class RSSHubScheduler(UnifiedScheduler):
     继承统一调度器基类，完全复用douyin模块的调度逻辑，为RSS订阅提供定时更新和发送功能
     """
 
-    def __init__(self, data_dir: str = "data/rsshub"):
+    def __init__(self, data_dir: str = "storage/rsshub"):
         """
         初始化RSSHub调度器
 
@@ -201,7 +201,7 @@ class RSSHubScheduler(UnifiedScheduler):
 
 
 # 便捷函数：创建RSSHub调度器实例
-def create_rsshub_scheduler(data_dir: str = "data/rsshub") -> RSSHubScheduler:
+def create_rsshub_scheduler(data_dir: str = "storage/rsshub") -> RSSHubScheduler:
     """
     创建RSSHub调度器实例
 

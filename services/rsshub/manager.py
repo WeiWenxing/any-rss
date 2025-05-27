@@ -35,7 +35,7 @@ class RSSHubManager(UnifiedContentManager):
     继承统一管理器基类，完全复用douyin模块的管理逻辑，为RSS订阅提供统一的数据管理功能
     """
 
-    def __init__(self, data_dir: str = "data/rsshub"):
+    def __init__(self, data_dir: str = "storage/rsshub"):
         """
         初始化RSSHub管理器
 
@@ -594,7 +594,7 @@ class RSSHubManager(UnifiedContentManager):
 
 
 # 便捷函数：创建RSSHub管理器实例
-def create_rsshub_manager(data_dir: str = "data/rsshub") -> RSSHubManager:
+def create_rsshub_manager(data_dir: str = "storage/rsshub") -> RSSHubManager:
     """
     创建RSSHub管理器实例
 

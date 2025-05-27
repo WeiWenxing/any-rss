@@ -34,7 +34,7 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
     继承统一命令处理器基类，完全复用douyin模块的命令处理逻辑
     """
 
-    def __init__(self, data_dir: str = "data/rsshub"):
+    def __init__(self, data_dir: str = "storage/rsshub"):
         """
         初始化RSSHub命令处理器
 
@@ -262,7 +262,7 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
 _rsshub_command_handler = None
 
 
-def get_rsshub_command_handler(data_dir: str = "data/rsshub") -> RSSHubCommandHandler:
+def get_rsshub_command_handler(data_dir: str = "storage/rsshub") -> RSSHubCommandHandler:
     """
     获取RSSHub命令处理器实例（单例模式）
 
