@@ -12,3 +12,8 @@ telegram_config = {
 discord_config = {
     "token": os.environ.get("DISCORD_TOKEN", ""),
 }
+
+# 调试配置
+debug_config = {
+    "enabled": os.environ.get("DEBUG_MODE", "false").lower() in ("true", "1", "yes", "on"),
+}

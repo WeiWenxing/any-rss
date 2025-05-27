@@ -145,15 +145,26 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def register_commands(application: Application) -> None:
     """注册RSS相关的命令处理器"""
+    # 导入debug配置
+    from core.config import debug_config
+
+    # 注册基础命令
     application.add_handler(CommandHandler("add", add_command))
     application.add_handler(CommandHandler("del", del_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("news", news_command))
-    application.add_handler(CommandHandler("show", show_command))  # 开发者调试命令
 
-    # 注册调试命令
-    from .debug_commands import register_debug_commands
-    register_debug_commands(application)
+    # 根据debug模式决定是否注册调试命令
+    if debug_config["enabled"]:
+        application.add_handler(CommandHandler("show", show_command))  # 开发者调试命令
+
+        # 注册调试命令
+        from .debug_commands import register_debug_commands
+        register_debug_commands(application)
+
+        logging.info("✅ RSS调试命令已注册（DEBUG模式开启）")
+    else:
+        logging.info("ℹ️ RSS调试命令已跳过（DEBUG模式关闭）")
 
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

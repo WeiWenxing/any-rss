@@ -344,12 +344,22 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def register_douyin_commands(application: Application) -> None:
     """注册抖音相关的命令处理器"""
+    # 导入debug配置
+    from core.config import debug_config
+
+    # 注册基础命令
     application.add_handler(CommandHandler("douyin_add", douyin_add_command))
     application.add_handler(CommandHandler("douyin_del", douyin_del_command))
     application.add_handler(CommandHandler("douyin_list", douyin_list_command))
 
-    # 注册调试命令
-    from .debug_commands import register_douyin_debug_commands
-    register_douyin_debug_commands(application)
+    # 根据debug模式决定是否注册调试命令
+    if debug_config["enabled"]:
+        # 注册调试命令
+        from .debug_commands import register_douyin_debug_commands
+        register_douyin_debug_commands(application)
+
+        logging.info("✅ 抖音调试命令已注册（DEBUG模式开启）")
+    else:
+        logging.info("ℹ️ 抖音调试命令已跳过（DEBUG模式关闭）")
 
     logging.info("抖音命令处理器注册完成")

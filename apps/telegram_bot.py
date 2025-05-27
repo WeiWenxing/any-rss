@@ -1,4 +1,4 @@
-from core.config import telegram_config
+from core.config import telegram_config, debug_config
 from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Application
 import logging
@@ -22,6 +22,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /help 命令"""
+    # 基础帮助内容
     help_text = (
         "🤖 Any RSS Bot - 通用RSS/Feed订阅机器人\n\n"
         "这是一个通用的RSS/Feed监控机器人，支持标准的RSS 2.0和Atom 1.0格式，以及抖音用户内容订阅。\n\n"
@@ -47,51 +48,64 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "   查看当前所有RSS/Feed订阅源及其绑定频道\n\n"
         "🔹 /news\n"
         "   强制检查RSS/Feed更新并发送差异内容\n\n"
-        "🔹 /show [type] <item_xml>\n"
-        "   开发者调试命令，测试单个RSS条目的消息格式\n"
-        "   • type: auto(默认)/text/media\n\n"
+    )
+
+    # 根据debug模式决定是否显示RSS调试命令
+    if debug_config["enabled"]:
+        help_text += (
+            "🔹 /show [type] <item_xml>\n"
+            "   开发者调试命令，测试单个RSS条目的消息格式\n"
+            "   • type: auto(默认)/text/media\n\n"
+        )
+
+    help_text += (
         "📱 抖音订阅命令：\n\n"
         "🎵 **抖音订阅**\n"
         "   • /douyin_add <链接> <频道ID> - 添加抖音用户订阅\n"
-        "   • /douyin_del <链接> - 删除抖音订阅\n"
+        "   • /douyin_del <链接> <频道ID> - 删除抖音订阅\n"
         "   • /douyin_list - 查看抖音订阅列表\n"
-        "   • /douyin_check - 手动检查抖音更新\n"
         "   • 支持抖音用户主页和短链接\n"
         "   • 自动推送新发布的视频和图片内容\n\n"
-        "🔹 /douyin_check\n"
-        "   强制检查所有抖音订阅的更新\n\n"
-        "🔧 抖音调试命令：\n\n"
-        "🔹 `/douyin_debug_show` [JSON数据]\n"
-        "   **推荐用法**: `/douyin_debug_show` (无参数) → 上传JSON文件\n"
-        "   • 二步交互：先发命令，再上传文件\n"
-        "   • 避免长JSON参数限制问题\n"
-        "   • 包含格式化预览和实际媒体发送\n"
-        "   • 也支持传统方式：`/douyin_debug_show <短JSON>`\n\n"
-        "🔹 `/douyin_debug_format` <JSON数据>\n"
-        "   调试抖音内容格式化，只显示格式化结果不发送媒体\n"
-        "   • 用于测试消息格式化效果\n"
-        "   • 显示详细的格式化统计信息\n"
-        "   ⚠️ 注意：JSON数据不能太长，建议使用文件上传方式\n\n"
-        "🔹 `/douyin_debug_url` <抖音链接>\n"
-        "   通过抖音链接自动获取内容并调试\n"
-        "   • 自动解析抖音链接获取JSON数据\n"
-        "   • 无需手动复制JSON，最简单的调试方式\n"
-        "   • 支持手机和电脑端链接\n\n"
-        "🔹 📁 **直接上传JSON文件**\n"
-        "   无需命令，直接上传.json文件进行通用调试\n"
-        "   • 支持任意大小的JSON文件\n"
-        "   • 自动解析并调试\n"
-        "   • 适合快速测试\n\n"
-        "🔹 `/douyin_debug_sample` [type]\n"
-        "   获取抖音调试数据样例（消息形式）\n"
-        "   • type: simple(默认) | full\n"
-        "   • simple: 基础字段样例\n"
-        "   • full: 包含视频、音乐等完整信息的样例\n\n"
-        "🔹 `/douyin_debug_file` [type]\n"
-        "   下载抖音调试数据样例文件\n"
-        "   • type: simple(默认) | full\n"
-        "   • 避免长消息限制，提供JSON文件下载\n"
-        "   • 适合获取完整的调试数据\n\n"
+    )
+
+    # 根据debug模式决定是否显示抖音调试命令
+    if debug_config["enabled"]:
+        help_text += (
+            "🔧 抖音调试命令：\n\n"
+            "🔹 `/douyin_debug_show` [JSON数据]\n"
+            "   **推荐用法**: `/douyin_debug_show` (无参数) → 上传JSON文件\n"
+            "   • 二步交互：先发命令，再上传文件\n"
+            "   • 避免长JSON参数限制问题\n"
+            "   • 包含格式化预览和实际媒体发送\n"
+            "   • 也支持传统方式：`/douyin_debug_show <短JSON>`\n\n"
+            "🔹 `/douyin_debug_format` <JSON数据>\n"
+            "   调试抖音内容格式化，只显示格式化结果不发送媒体\n"
+            "   • 用于测试消息格式化效果\n"
+            "   • 显示详细的格式化统计信息\n"
+            "   ⚠️ 注意：JSON数据不能太长，建议使用文件上传方式\n\n"
+            "🔹 `/douyin_debug_url` <抖音链接>\n"
+            "   通过抖音链接自动获取内容并调试\n"
+            "   • 自动解析抖音链接获取JSON数据\n"
+            "   • 无需手动复制JSON，最简单的调试方式\n"
+            "   • 支持手机和电脑端链接\n\n"
+            "🔹 📁 **直接上传JSON文件**\n"
+            "   无需命令，直接上传.json文件进行通用调试\n"
+            "   • 支持任意大小的JSON文件\n"
+            "   • 自动解析并调试\n"
+            "   • 适合快速测试\n\n"
+            "🔹 `/douyin_debug_sample` [type]\n"
+            "   获取抖音调试数据样例（消息形式）\n"
+            "   • type: simple(默认) | full\n"
+            "   • simple: 基础字段样例\n"
+            "   • full: 包含视频、音乐等完整信息的样例\n\n"
+            "🔹 `/douyin_debug_file` [type]\n"
+            "   下载抖音调试数据样例文件\n"
+            "   • type: simple(默认) | full\n"
+            "   • 避免长消息限制，提供JSON文件下载\n"
+            "   • 适合获取完整的调试数据\n\n"
+        )
+
+    help_text += (
         "🔹 /help\n"
         "   显示此帮助信息\n\n"
         "🔄 自动功能：\n"
@@ -111,12 +125,12 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /douyin_add https://v.douyin.com/iM5g7LsM/ @douyin_channel\n"
         "• /list\n"
         "• /douyin_list\n"
-        "• /news\n"
-        "• /douyin_check\n\n"
+        "• /news\n\n"
         "🔧 技术支持：\n"
         "项目地址：https://github.com/WeiWenxing/any-rss\n"
         "如有问题请提交Issue或联系管理员"
     )
+
     await update.message.reply_text(help_text, disable_web_page_preview=True)
 
 
