@@ -29,6 +29,11 @@
 3. [设计目标](#设计目标)
 4. [系统概述](#系统概述)
 5. [架构设计](#架构设计)
+   - 5.0 [媒体处理策略（复用RSS模块）](#50-媒体处理策略复用rss模块)
+   - 5.1 [统一消息架构（跨模块设计）](#51-统一消息架构跨模块设计)
+   - 5.2 [整体架构](#52-整体架构)
+   - 5.3 [模块间协作关系](#53-模块间协作关系)
+   - 5.4 [组件关系](#54-组件关系)
 6. [数据设计](#数据设计)
 7. [接口设计](#接口设计)
 8. [核心算法](#核心算法)
@@ -179,6 +184,184 @@ RSSHub模块是RSS订阅系统的专业化组件，专门负责RSSHub平台生�
 ---
 
 ## 5. 架构设计
+
+### 5.0 媒体处理策略（复用RSS模块）
+
+#### 5.0.1 RSS媒体策略概述
+
+RSSHub模块完全复用RSS模块的成熟媒体处理策略，该策略实现了明确的三层降级机制，确保媒体文件能够可靠发送到Telegram：
+
+**策略优先级**：
+1. **URL直接发送** (`url_direct`)
+   - 适用于：小于阈值的文件（本地API≤50MB，官方API≤20MB）
+   - 优点：速度快，不占用本地存储
+   - 实现：直接使用媒体URL发送到Telegram
+
+2. **下载后上传** (`download_upload`)
+   - 适用于：大文件或URL发送失败的文件
+   - 优点：可靠性高，支持大文件
+   - 实现：先下载到本地，再上传到Telegram
+
+3. **文本降级** (`text_fallback`)
+   - 适用于：无法访问的媒体文件
+   - 行为：抛出`MediaAccessError`异常，降级为纯文本发送
+
+#### 5.0.2 媒体提取和处理流程
+
+**从RSS条目提取媒体的算法**：
+```python
+def extract_media_items(rss_entry: RSSEntry) -> List[MediaItem]:
+    """
+    从RSS条目中提取媒体项
+
+    提取源：
+    1. RSS enclosures（优先级最高）
+    2. 内容中的图片链接（img标签）
+    3. 内容中的视频链接（video标签）
+
+    支持的媒体类型：
+    - 图片：image/jpeg, image/png, image/gif, image/webp
+    - 视频：video/mp4, video/avi, video/mov, video/webm
+    - 音频：audio/mp3, audio/wav, audio/ogg
+    """
+    media_items = []
+
+    # 1. 从enclosures提取媒体（RSS标准附件）
+    for enclosure in rss_entry.enclosures:
+        if enclosure.type.startswith('image/'):
+            media_items.append(MediaItem(
+                type="photo",
+                url=enclosure.url,
+                caption=rss_entry.title if len(media_items) == 0 else None
+            ))
+        elif enclosure.type.startswith('video/'):
+            media_items.append(MediaItem(
+                type="video",
+                url=enclosure.url,
+                caption=rss_entry.title if len(media_items) == 0 else None
+            ))
+        elif enclosure.type.startswith('audio/'):
+            media_items.append(MediaItem(
+                type="audio",
+                url=enclosure.url,
+                caption=rss_entry.title if len(media_items) == 0 else None
+            ))
+
+    # 2. 从内容中提取图片和视频链接
+    content_media = extract_media_from_content(rss_entry.content)
+    media_items.extend(content_media)
+
+    return media_items
+```
+
+#### 5.0.3 发送策略决策逻辑
+
+**根据媒体数量决定发送模式**：
+```python
+def determine_send_strategy(rss_entry: RSSEntry) -> str:
+    """
+    决定RSS条目的发送策略
+
+    策略规则：
+    - 媒体数量 ≥ 2：媒体组模式（MediaGroup）
+    - 媒体数量 = 1：文本+预览模式（单媒体+链接预览）
+    - 媒体数量 = 0：纯文本模式（仅文本+链接预览）
+
+    Returns:
+        "media_group" | "text_with_preview" | "text_only"
+    """
+    media_items = extract_media_items(rss_entry)
+
+    if len(media_items) >= 2:
+        return "media_group"      # 多媒体：使用MediaGroup
+    elif len(media_items) == 1:
+        return "text_with_preview" # 单媒体：文本+预览
+    else:
+        return "text_only"        # 无媒体：纯文本
+```
+
+#### 5.0.4 媒体发送容错机制
+
+**三层容错策略**：
+1. **预检查阶段**：
+   - 检查媒体URL可访问性（HEAD请求）
+   - 获取文件大小信息
+   - 根据大小和API类型确定初始策略
+
+2. **发送阶段**：
+   - 优先使用URL直接发送
+   - URL发送失败时自动降级到下载上传
+   - 下载失败时降级到文本模式
+
+3. **批次处理**：
+   - MediaGroup按10个媒体项分批发送
+   - 批次间3秒间隔，避免频率限制
+   - 单批次失败不影响其他批次
+
+**容错代码示例**：
+```python
+async def send_media_group_with_strategy(bot: Bot, chat_id: str, message: TelegramMessage) -> List[Message]:
+    """
+    使用RSS媒体策略发送媒体组
+
+    容错流程：
+    1. 分析媒体文件（可访问性、大小）
+    2. 按策略分组发送
+    3. 失败时自动降级
+    4. 清理临时文件
+    """
+    try:
+        # 1. 创建RSS媒体策略管理器
+        strategy_manager, media_sender = create_media_strategy_manager(bot)
+
+        # 2. 分析媒体文件
+        media_list = [{'url': item.url, 'type': item.type} for item in message.media_group]
+        analyzed_media = strategy_manager.analyze_media_files(media_list)
+
+        # 3. 使用策略发送
+        success = await media_sender.send_media_group_with_strategy(
+            chat_id=chat_id,
+            media_list=analyzed_media,
+            caption=message.media_group[0].caption if message.media_group else None
+        )
+
+        if success:
+            logging.info(f"RSS媒体策略发送成功: {len(message.media_group)}个媒体项")
+            return success
+        else:
+            raise Exception("媒体策略发送失败")
+
+    except Exception as e:
+        logging.error(f"RSS媒体策略发送失败，降级到文本模式: {str(e)}", exc_info=True)
+        # 降级到纯文本发送
+        text_message = TelegramMessage(
+            text=message.text,
+            parse_mode=message.parse_mode,
+            disable_web_page_preview=False  # 启用链接预览作为媒体补偿
+        )
+        return [await send_text_message(bot, chat_id, text_message)]
+```
+
+#### 5.0.5 与统一消息架构的集成
+
+**集成原理**：
+- RSS媒体策略作为统一发送器的底层实现
+- 通过TelegramMessage实体标准化媒体信息
+- 保持与douyin模块相同的发送接口
+
+**集成流程**：
+```
+RSSEntry → extract_media_items() → MediaItem[] → TelegramMessage → UnifiedTelegramSender → RSS媒体策略 → Telegram API
+```
+
+**优势**：
+1. **策略成熟**：RSS模块的媒体策略经过实际验证，稳定可靠
+2. **智能降级**：三层降级机制确保消息一定能发送成功
+3. **资源优化**：智能选择发送方式，平衡速度和可靠性
+4. **API适配**：自动适配本地API和官方API的不同限制
+5. **完整日志**：详细的策略决策和执行日志，便于调试
+
+---
 
 ### 5.1 统一消息架构（跨模块设计）
 
@@ -1258,56 +1441,20 @@ async def send_message(bot: Bot, chat_id: str, message: TelegramMessage) -> List
 
 async def send_media_group(bot: Bot, chat_id: str, message: TelegramMessage) -> List[Message]:
     """
-    发送媒体组消息（复用RSS模块的媒体策略）
+    发送媒体组消息（完全复用RSS模块的媒体策略）
 
     算法：
-    1. 构建InputMedia列表
-    2. 应用分批发送策略（每批最多10个）
-    3. 使用URL直接发送，失败时降级到下载发送
-    4. 返回所有批次的消息列表
+    1. 使用RSS媒体策略管理器分析媒体文件
+    2. 应用三层降级机制（URL直接发送 → 下载上传 → 文本降级）
+    3. 分批发送策略（每批最多10个）
+    4. 完整的容错和日志记录
     """
-    # 构建Telegram媒体组
-    telegram_media = []
-    for i, media_item in enumerate(message.media_group):
-        if media_item.type == "photo":
-            telegram_media.append(InputMediaPhoto(
-                media=media_item.url,
-                caption=media_item.caption if i == 0 else None,
-                parse_mode=message.parse_mode
-            ))
-        elif media_item.type == "video":
-            telegram_media.append(InputMediaVideo(
-                media=media_item.url,
-                caption=media_item.caption if i == 0 else None,
-                parse_mode=message.parse_mode
-            ))
-
-    # 分批发送（复用RSS模块的分批策略）
-    batch_sizes = calculate_balanced_batches(len(telegram_media), max_per_batch=10)
-    all_messages = []
-
-    media_index = 0
-    for batch_num, batch_size in enumerate(batch_sizes, 1):
-        batch_media = telegram_media[media_index:media_index + batch_size]
-
-        try:
-            # 发送当前批次
-            messages = await bot.send_media_group(chat_id=chat_id, media=batch_media)
-            all_messages.extend(messages)
-            logging.info(f"媒体组批次 {batch_num}/{len(batch_sizes)} 发送成功")
-
-            # 批次间隔
-            if batch_num < len(batch_sizes):
-                await asyncio.sleep(3)
-
-        except Exception as e:
-            logging.error(f"媒体组批次 {batch_num} 发送失败: {str(e)}", exc_info=True)
-            # 可以在这里实现降级策略
-            continue
-
-        media_index += batch_size
-
-    return all_messages
+    try:
+        # 直接调用RSS媒体策略（详见5.0.4节）
+        return await send_media_group_with_strategy(bot, chat_id, message)
+    except Exception as e:
+        logging.error(f"RSS媒体策略发送失败: {str(e)}", exc_info=True)
+        raise
 
 async def send_text_message(bot: Bot, chat_id: str, message: TelegramMessage) -> Message:
     """发送文本消息"""
@@ -1346,7 +1493,8 @@ RSSHub模块设计充分借鉴了douyin模块的成功经验，特别是其高�
 3. **存储最小化**: 只存储必要的去重信息（known_item_ids.json），大幅减少存储开销
 4. **架构一致性**: 与douyin模块保持完全一致的数据流向和处理逻辑
 5. **格式兼容**: 支持RSS 2.0和Atom 1.0格式，提供良好的兼容性
-6. **媒体支持**: 完整支持RSS媒体附件（enclosure）的处理和推送
+6. **媒体策略复用**: 完整复用RSS模块的三层降级媒体处理策略，确保媒体发送的可靠性和效率
+7. **智能容错**: 从URL直接发送到下载上传再到文本降级的完整容错机制
 7. **扩展性强**: 新增数据源只需实现转换器接口，无需重复开发发送逻辑
 
 该设计文档为RSSHub模块的开发提供了完整的技术指导，确保模块能够成功集成到现有系统中，为用户提供优质的RSSHub订阅服务。
