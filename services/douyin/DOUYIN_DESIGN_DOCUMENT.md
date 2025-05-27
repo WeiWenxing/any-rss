@@ -1029,7 +1029,7 @@ async def historical_alignment_algorithm(known_item_ids, primary_channel, new_ch
                 from_chat_id=primary_channel,
                 message_ids=primary_message_ids
             )
-            
+
             # 保存转发后的所有消息ID
             forwarded_ids = [msg.message_id for msg in forwarded_messages]
             douyin_manager.save_message_ids(douyin_url, item_id, new_channel, forwarded_ids)
@@ -1125,215 +1125,477 @@ def sort_items_by_time(items):
     return sorted(items, key=get_sort_key)
 ```
 
-#### 8.2.2 错误恢复算法
+#### 8.2.2 消息发送时间间隔机制
 
-**目标**：系统异常时的自动恢复机制
+**目标**：避免触发Telegram的Flood Control限制，确保消息发送的稳定性
 
-**恢复策略**：
-```python
-class ErrorRecoveryAlgorithm:
-    def __init__(self):
-        self.max_retries = 3
-        self.backoff_factor = 2
+**核心策略**：参考RSS模块的成熟机制，实现分层时间间隔控制
 
-    async def execute_with_recovery(self, operation, *args, **kwargs):
-        """
-        带重试的操作执行
-
-        重试策略：
-        - 指数退避：1s, 2s, 4s
-        - 最大重试3次
-        - 不同错误类型不同处理
-        """
-        for attempt in range(self.max_retries):
-            try:
-                return await operation(*args, **kwargs)
-
-            except NetworkError as e:
-                if attempt < self.max_retries - 1:
-                    wait_time = self.backoff_factor ** attempt
-                    await asyncio.sleep(wait_time)
-                    continue
-                raise
-
-            except RateLimitError as e:
-                # 限流错误，等待更长时间
-                await asyncio.sleep(60)
-                continue
-
-            except DataError as e:
-                # 数据错误，不重试
-                raise
-
-        raise MaxRetriesExceeded()
+**设计原则**：
+```
+基础原则：
+1. 遵循Telegram API限制：同一聊天每秒最多1条消息，每分钟最多20条消息
+2. 分层间隔策略：常规间隔 + 批量间隔 + 错误恢复间隔
+3. 自适应调整：根据错误率和系统负载动态调整间隔
+4. 可见性原则：重要的等待过程要有日志记录
 ```
 
-#### 8.2.3 负载均衡算法
+**时间间隔分层设计**：
 
-**目标**：合理分配发送任务，避免频率限制
-
-**实现策略**：
 ```python
-class LoadBalancingAlgorithm:
-    def __init__(self):
-        self.rate_limits = {
-            'send_message': 20,      # 每分钟20条消息
-            'forward_message': 30,   # 每分钟30次转发
-            'upload_media': 10       # 每分钟10个媒体文件
+class IntervalConfig:
+    """间隔配置类"""
+
+    def __init__(self, scenario: str = "default"):
+        """
+        初始化间隔配置
+
+        Args:
+            scenario: 应用场景 ("batch_send", "forward", "alignment", "default")
+        """
+        self.scenario = scenario
+        self.configs = {
+            # 批量内容发送场景
+            "batch_send": {
+                "base_interval": 8.0,           # 基础发送间隔：8秒
+                "batch_interval": 60.0,         # 批量间隔：每10条消息暂停60秒
+                "batch_threshold": 10,          # 批量阈值：每10条
+                "error_recovery_interval": 5.0, # 错误恢复间隔：5秒
+                "flood_control_interval": 60.0, # Flood Control惩罚间隔：60秒
+                "max_interval": 30.0,           # 最大间隔：30秒
+                "min_interval": 3.0,            # 最小间隔：3秒
+                "error_threshold": 0.1,         # 错误率阈值：10%
+                "enable_dynamic_adjustment": True, # 启用动态调整
+            },
+
+            # 多频道转发场景
+            "forward": {
+                "base_interval": 2.0,           # 转发间隔：2秒（比发送短）
+                "batch_interval": 60.0,         # 批量间隔：每10条暂停60秒
+                "batch_threshold": 10,          # 批量阈值：每10条
+                "error_recovery_interval": 5.0, # 错误恢复间隔：5秒
+                "flood_control_interval": 60.0, # Flood Control惩罚间隔：60秒
+                "max_interval": 15.0,           # 最大间隔：15秒
+                "min_interval": 1.0,            # 最小间隔：1秒
+                "error_threshold": 0.15,        # 错误率阈值：15%（转发容错性更高）
+                "enable_dynamic_adjustment": True,
+            },
+
+            # 历史内容对齐场景
+            "alignment": {
+                "base_interval": 1.0,           # 对齐间隔：1秒（转发操作轻量）
+                "batch_interval": 60.0,         # 批量间隔：每10条暂停60秒
+                "batch_threshold": 10,          # 批量阈值：每10条
+                "error_recovery_interval": 3.0, # 错误恢复间隔：3秒
+                "flood_control_interval": 60.0, # Flood Control惩罚间隔：60秒
+                "max_interval": 10.0,           # 最大间隔：10秒
+                "min_interval": 0.5,            # 最小间隔：0.5秒
+                "error_threshold": 0.2,         # 错误率阈值：20%（历史对齐容错性最高）
+                "enable_dynamic_adjustment": False, # 历史对齐不需要动态调整
+            },
+
+            # 默认场景
+            "default": {
+                "base_interval": 5.0,
+                "batch_interval": 60.0,
+                "batch_threshold": 10,
+                "error_recovery_interval": 5.0,
+                "flood_control_interval": 60.0,
+                "max_interval": 20.0,
+                "min_interval": 2.0,
+                "error_threshold": 0.1,
+                "enable_dynamic_adjustment": True,
+            }
         }
-        self.current_usage = defaultdict(int)
-        self.reset_time = time.time() + 60
 
-    async def execute_with_rate_limit(self, operation_type, operation, *args):
+    def get_config(self, key: str):
+        """获取配置值"""
+        return self.configs[self.scenario].get(key, self.configs["default"][key])
+
+    def get_all_config(self) -> dict:
+        """获取当前场景的完整配置"""
+        return self.configs[self.scenario].copy()
+
+
+class MessageSendingIntervalManager:
+    """消息发送时间间隔管理器"""
+
+    def __init__(self, scenario: str = "default"):
         """
-        带限流的操作执行
+        初始化间隔管理器
+
+        Args:
+            scenario: 应用场景 ("batch_send", "forward", "alignment", "default")
         """
-        # 检查是否需要重置计数器
-        if time.time() > self.reset_time:
-            self.current_usage.clear()
-            self.reset_time = time.time() + 60
+        self.config = IntervalConfig(scenario)
+        self.scenario = scenario
 
-        # 检查当前使用量
-        if self.current_usage[operation_type] >= self.rate_limits[operation_type]:
-            wait_time = self.reset_time - time.time()
-            await asyncio.sleep(max(0, wait_time))
-            self.current_usage.clear()
-            self.reset_time = time.time() + 60
+        # 从配置加载参数
+        self.base_interval = self.config.get_config("base_interval")
+        self.batch_interval = self.config.get_config("batch_interval")
+        self.batch_threshold = self.config.get_config("batch_threshold")
+        self.error_recovery_interval = self.config.get_config("error_recovery_interval")
+        self.flood_control_interval = self.config.get_config("flood_control_interval")
+        self.max_interval = self.config.get_config("max_interval")
+        self.min_interval = self.config.get_config("min_interval")
+        self.error_threshold = self.config.get_config("error_threshold")
+        self.enable_dynamic_adjustment = self.config.get_config("enable_dynamic_adjustment")
 
-        # 执行操作
-        result = await operation(*args)
-        self.current_usage[operation_type] += 1
+        # 统计信息
+        self.sent_count = 0
+        self.error_count = 0
+        self.last_reset_time = time.time()
 
-        return result
-```
+        logging.info(f"📊 消息间隔管理器初始化完成 - 场景:{self.scenario}, 基础间隔:{self.base_interval}s, 批量间隔:{self.batch_interval}s, 批量阈值:{self.batch_threshold}")
 
-### 8.3 决策机制
-
-#### 8.3.1 订阅类型决策
-
-**决策逻辑**：判断新订阅是首个频道还是后续频道
-
-```python
-def decide_subscription_type(douyin_url, existing_subscriptions):
-    """
-    订阅类型决策算法
-
-    返回：
-    - "first_channel": 该URL的首个频道订阅
-    - "additional_channel": 该URL的后续频道订阅
-    """
-    existing_channels = existing_subscriptions.get(douyin_url, [])
-
-    if len(existing_channels) == 0:
-        return "first_channel"
-    else:
-        return "additional_channel"
-```
-
-#### 8.3.2 发送策略决策
-
-**决策逻辑**：根据内容数量和频道数量选择发送策略
-
-```python
-def decide_sending_strategy(content_count, channel_count):
-    """
-    发送策略决策算法
-
-    策略类型：
-    - "single_send": 单个发送（内容少）
-    - "batch_forward": 批量转发（多频道）
-    - "parallel_send": 并行发送（内容多且频道少）
-    """
-    if channel_count == 1:
-        return "single_send"
-
-    if channel_count > 1 and content_count > 0:
-        # 多频道优先使用转发
-        return "batch_forward"
-
-    if content_count > 10 and channel_count <= 3:
-        # 大批量内容且频道不多，使用并行
-        return "parallel_send"
-
-    return "batch_forward"  # 默认策略
-```
-
-#### 8.3.3 降级策略决策
-
-**决策逻辑**：转发失败时的降级处理
-
-```python
-def decide_fallback_strategy(error_type, retry_count):
-    """
-    降级策略决策算法
-
-    策略：
-    - "retry_forward": 重试转发
-    - "direct_send": 直接发送
-    - "skip_content": 跳过内容
-    """
-    if error_type == "network_error" and retry_count < 2:
-        return "retry_forward"
-
-    if error_type == "permission_error":
-        return "direct_send"
-
-    if error_type == "content_deleted":
-        return "skip_content"
-
-    if retry_count >= 3:
-        return "direct_send"
-
-    return "retry_forward"
-```
-
-#### 8.3.4 性能优化决策
-
-**决策逻辑**：根据系统负载动态调整参数
-
-```python
-class PerformanceOptimizer:
-    def __init__(self):
-        self.base_interval = 1.0
-        self.max_interval = 10.0
-        self.error_threshold = 0.1
-
-    def decide_send_interval(self, recent_error_rate, system_load):
+    async def wait_before_send(self, content_index: int, total_content: int,
+                              recent_error_rate: float = 0.0) -> None:
         """
-        发送间隔决策算法
+        发送前等待策略
 
-        考虑因素：
-        - 最近错误率
-        - 系统负载
-        - 基础间隔
+        Args:
+            content_index: 当前内容索引（从0开始）
+            total_content: 总内容数量
+            recent_error_rate: 最近错误率
+        """
+        # 第一个内容不需要等待
+        if content_index == 0:
+            return
+
+        # 计算动态间隔
+        interval = self._calculate_dynamic_interval(recent_error_rate)
+
+        # 批量间隔检查（使用配置的批量阈值）
+        if content_index > 0 and content_index % self.batch_threshold == 0:
+            logging.info(f"📦 已发送{content_index}个内容，执行批量间隔暂停{self.batch_interval}秒...")
+            await self._sleep_with_progress(self.batch_interval, "批量间隔")
+            return
+
+        # 常规间隔
+        logging.debug(f"⏱️ 等待{interval:.1f}秒后发送第{content_index + 1}/{total_content}个内容...")
+        await asyncio.sleep(interval)
+
+    async def wait_after_error(self, error_type: str, retry_count: int = 0) -> None:
+        """
+        错误后等待策略
+
+        Args:
+            error_type: 错误类型
+            retry_count: 重试次数
+        """
+        if error_type == "flood_control":
+            # Flood Control错误，等待更长时间
+            wait_time = self.flood_control_interval + (retry_count * 30)
+            logging.warning(f"🚫 遇到Flood Control限制，等待{wait_time}秒后重试...")
+            await asyncio.sleep(wait_time)
+        elif error_type == "rate_limit":
+            # 一般限流错误
+            wait_time = self.error_recovery_interval * (2 ** retry_count)  # 指数退避
+            logging.warning(f"⚠️ 遇到限流错误，等待{wait_time}秒后重试...")
+            await asyncio.sleep(wait_time)
+        else:
+            # 其他错误
+            logging.warning(f"❌ 发送错误，等待{self.error_recovery_interval}秒后继续...")
+            await asyncio.sleep(self.error_recovery_interval)
+
+    def _calculate_dynamic_interval(self, recent_error_rate: float) -> float:
+        """
+        计算动态发送间隔
+
+        Args:
+            recent_error_rate: 最近错误率
+
+        Returns:
+            float: 计算后的间隔时间
         """
         interval = self.base_interval
 
-        # 根据错误率调整
-        if recent_error_rate > self.error_threshold:
-            interval *= (1 + recent_error_rate * 5)
+        # 根据配置决定是否启用动态调整
+        if self.enable_dynamic_adjustment and recent_error_rate > self.error_threshold:
+            # 错误率高时增加间隔
+            error_multiplier = 1 + (recent_error_rate * 3)
+            interval *= error_multiplier
+            logging.debug(f"🔧 [{self.scenario}] 根据错误率{recent_error_rate:.2%}调整间隔为{interval:.1f}秒")
 
-        # 根据系统负载调整
-        if system_load > 0.8:
-            interval *= 2
-        elif system_load > 0.6:
-            interval *= 1.5
+        # 限制在合理范围内
+        interval = max(self.min_interval, min(interval, self.max_interval))
 
-        return min(interval, self.max_interval)
+        return interval
 
-    def decide_batch_size(self, total_content, available_memory):
+    def update_statistics(self, success: bool) -> None:
         """
-        批处理大小决策算法
+        更新发送统计信息
+
+        Args:
+            success: 是否发送成功
         """
-        base_batch_size = 10
+        self.sent_count += 1
+        if not success:
+            self.error_count += 1
 
-        if available_memory < 100:  # MB
-            return max(1, base_batch_size // 2)
-        elif available_memory > 500:
-            return min(50, base_batch_size * 2)
+        # 每小时重置统计
+        if time.time() - self.last_reset_time > 3600:
+            self.sent_count = 0
+            self.error_count = 0
+            self.last_reset_time = time.time()
 
-        return base_batch_size
+    def get_recent_error_rate(self) -> float:
+        """
+        获取最近错误率
+
+        Returns:
+            float: 错误率（0.0-1.0）
+        """
+        if self.sent_count == 0:
+            return 0.0
+        return self.error_count / self.sent_count
 ```
+
+**实际应用示例**：
+
+```python
+# 在send_content_batch方法中的应用
+async def send_content_batch(self, bot, content_items: List[Dict],
+                           douyin_url: str, target_channels: List[str]) -> int:
+    """批量发送抖音内容到多个频道（带时间间隔控制）"""
+
+    # 初始化间隔管理器（批量发送场景）
+    interval_manager = MessageSendingIntervalManager("batch_send")
+
+    for i, content in enumerate(sorted_items):
+        try:
+            # 发送前等待
+            await interval_manager.wait_before_send(
+                content_index=i,
+                total_content=len(sorted_items),
+                recent_error_rate=interval_manager.get_recent_error_rate()
+            )
+
+            # 执行发送操作
+            messages = await send_douyin_content(bot, content, douyin_url, primary_channel)
+
+            # 更新统计
+            interval_manager.update_statistics(success=True)
+
+            # ... 其他发送逻辑 ...
+
+        except TelegramError as e:
+            # 更新统计
+            interval_manager.update_statistics(success=False)
+
+            # 错误后等待
+            if "flood control" in str(e).lower():
+                await interval_manager.wait_after_error("flood_control", retry_count=0)
+            elif "rate limit" in str(e).lower():
+                await interval_manager.wait_after_error("rate_limit", retry_count=0)
+            else:
+                await interval_manager.wait_after_error("other", retry_count=0)
+
+            continue
+
+# 在多频道转发中的应用
+async def forward_to_other_channels(self, bot, primary_channel: str,
+                                  message_ids: List[int], other_channels: List[str]) -> None:
+    """多频道转发（使用转发场景配置）"""
+
+    # 初始化间隔管理器（转发场景）
+    interval_manager = MessageSendingIntervalManager("forward")
+
+    for i, channel in enumerate(other_channels):
+        try:
+            # 转发前等待
+            await interval_manager.wait_before_send(
+                content_index=i,
+                total_content=len(other_channels),
+                recent_error_rate=interval_manager.get_recent_error_rate()
+            )
+
+            # 执行转发操作
+            forwarded_messages = await bot.forward_messages(
+                chat_id=channel,
+                from_chat_id=primary_channel,
+                message_ids=message_ids
+            )
+
+            # 更新统计
+            interval_manager.update_statistics(success=True)
+
+        except Exception as e:
+            # 更新统计
+            interval_manager.update_statistics(success=False)
+
+            # 错误后等待
+            await interval_manager.wait_after_error("forward_error")
+            continue
+
+# 在历史对齐中的应用
+async def perform_historical_alignment(bot, douyin_url: str, known_item_ids: List[str],
+                                     primary_channel: str, new_channel: str) -> bool:
+    """历史内容对齐（使用对齐场景配置）"""
+
+    # 初始化间隔管理器（对齐场景）
+    interval_manager = MessageSendingIntervalManager("alignment")
+
+    for i, item_id in enumerate(known_item_ids):
+        try:
+            # 对齐前等待
+            await interval_manager.wait_before_send(
+                content_index=i,
+                total_content=len(known_item_ids),
+                recent_error_rate=interval_manager.get_recent_error_rate()
+            )
+
+            # 获取主频道消息ID并转发
+            primary_message_ids = douyin_manager.get_message_ids(douyin_url, item_id, primary_channel)
+            if primary_message_ids:
+                forwarded_messages = await bot.forward_messages(
+                    chat_id=new_channel,
+                    from_chat_id=primary_channel,
+                    message_ids=primary_message_ids
+                )
+
+                # 更新统计
+                interval_manager.update_statistics(success=True)
+
+        except Exception as e:
+            # 更新统计
+            interval_manager.update_statistics(success=False)
+
+            # 错误后等待
+            await interval_manager.wait_after_error("alignment_error")
+            continue
+```
+
+**不同场景配置对比**：
+
+| 配置项 | batch_send | forward | alignment | default |
+|--------|------------|---------|-----------|---------|
+| 基础间隔 | 8.0秒 | 2.0秒 | 1.0秒 | 5.0秒 |
+| 批量间隔 | 60秒 | 60秒 | 60秒 | 60秒 |
+| 批量阈值 | 10条 | 10条 | 10条 | 10条 |
+| 错误恢复间隔 | 5.0秒 | 5.0秒 | 3.0秒 | 5.0秒 |
+| Flood Control间隔 | 60秒 | 60秒 | 60秒 | 60秒 |
+| 最大间隔 | 30秒 | 15秒 | 10秒 | 20秒 |
+| 最小间隔 | 3.0秒 | 1.0秒 | 0.5秒 | 2.0秒 |
+| 错误率阈值 | 10% | 15% | 20% | 10% |
+| 动态调整 | ✅ | ✅ | ❌ | ✅ |
+| 适用场景 | 批量发送新内容 | 多频道转发 | 历史内容对齐 | 通用场景 |
+
+**与RSS模块的对比**：
+
+| 特性 | RSS模块 | 抖音模块（batch_send） |
+|------|---------|----------------------|
+| 基础间隔 | 8秒 | 8秒（保持一致） |
+| 批量间隔 | 每10条暂停60秒 | 每10条暂停60秒（保持一致） |
+| 错误恢复 | 5秒固定间隔 | 5秒基础 + 指数退避 |
+| Flood Control | 60秒固定 | 60秒基础 + 重试递增 |
+| 动态调整 | 无 | 根据错误率自适应 |
+| 配置化支持 | 无 | 多场景配置支持 |
+| 日志可见性 | 基础日志 | 详细的等待过程日志 |
+
+**关键改进点**：
+1. **自适应间隔**：根据实际错误率动态调整发送间隔
+2. **分层等待策略**：不同场景使用不同的等待策略
+3. **可见性增强**：重要的等待过程都有明确的日志记录
+4. **统计驱动**：基于实际发送统计数据进行决策
+5. **错误分类处理**：不同类型的错误使用不同的恢复策略
+
+**应用场景**：
+
+1. **主要应用位置**：
+   - `DouyinManager.send_content_batch()` - 批量发送时的核心间隔控制（使用"batch_send"配置）
+   - `DouyinScheduler._process_batch()` - 定时任务批量处理（使用"batch_send"配置）
+   - `perform_historical_alignment()` - 历史内容对齐（使用"alignment"配置）
+   - 多频道转发逻辑 - 转发操作（使用"forward"配置）
+
+2. **具体应用场景分析**：
+
+   **2.1 批量内容发送场景**：
+   - 触发时机：定时检查发现多个新内容
+   - 间隔策略：
+     - 基础间隔：8秒
+     - 批量间隔：每10条暂停60秒
+     - 动态调整：根据错误率增减
+
+   **2.2 多频道转发场景**：
+   - 触发时机：主频道发送成功后转发到其他频道
+   - 间隔策略：
+     - 转发间隔：1-3秒（比发送间隔短）
+     - 错误恢复：5秒基础 + 指数退避
+
+   **2.3 历史内容对齐场景**：
+   - 触发时机：新频道订阅时同步历史内容
+   - 间隔策略：
+     - 对齐间隔：1秒（转发操作相对轻量）
+     - 批量暂停：每10条暂停60秒
+
+   **2.4 错误恢复场景**：
+   - 触发时机：遇到Flood Control或Rate Limit错误
+   - 间隔策略：
+     - Flood Control：60秒基础 + 重试递增
+     - Rate Limit：5秒基础 + 指数退避
+
+3. **不需要应用的地方**：
+   - 单次操作（如单个订阅添加）
+   - 内部数据处理（如文件读写、数据解析）
+   - 非连续的API调用
+
+4. **实施优先级**：
+   - 🔥 **高优先级**：`DouyinManager.send_content_batch()` - 核心发送逻辑
+   - 🔥 **高优先级**：`DouyinScheduler._process_batch()` - 定时任务批量处理
+   - 🟡 **中优先级**：`perform_historical_alignment()` - 历史对齐
+   - 🟢 **低优先级**：单个内容发送的细粒度控制
+
+5. **配置化使用示例**：
+   ```python
+   # 批量发送场景
+   interval_manager = MessageSendingIntervalManager("batch_send")
+
+   # 多频道转发场景
+   interval_manager = MessageSendingIntervalManager("forward")
+
+   # 历史对齐场景
+   interval_manager = MessageSendingIntervalManager("alignment")
+
+   # 默认场景
+   interval_manager = MessageSendingIntervalManager("default")
+   ```
+
+6. **配置自定义**：
+   ```python
+   # 自定义配置示例
+   class CustomIntervalConfig(IntervalConfig):
+       def __init__(self):
+           super().__init__("default")
+           # 自定义批量发送场景配置
+           self.configs["batch_send"]["base_interval"] = 10.0  # 调整为10秒
+           self.configs["batch_send"]["batch_threshold"] = 5   # 调整为每5条
+
+           # 添加新的场景配置
+           self.configs["slow_send"] = {
+               "base_interval": 15.0,
+               "batch_interval": 120.0,
+               "batch_threshold": 5,
+               "error_recovery_interval": 10.0,
+               "flood_control_interval": 120.0,
+               "max_interval": 60.0,
+               "min_interval": 5.0,
+               "error_threshold": 0.05,
+               "enable_dynamic_adjustment": True,
+           }
+
+   # 使用自定义配置
+   custom_config = CustomIntervalConfig()
+   interval_manager = MessageSendingIntervalManager("slow_send")
+   ```
+
+7. **核心原则**：
+   - 任何连续发送多条消息的地方都要应用
+   - 根据操作类型选择合适的配置场景
+   - 错误后必须有恢复等待
+   - 重要的等待过程要有日志记录
+   - 配置参数可根据实际需求调整
+   - 支持运行时配置修改和场景扩展
 
 ---
 
