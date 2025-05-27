@@ -384,26 +384,119 @@ class RSSParser:
                 continue
 
     def _extract_media_from_content(self, entry: RSSEntry) -> None:
-        """从内容中提取媒体链接"""
-        content = entry.effective_content
-        if not content:
+        """从内容中提取媒体链接（参考普通RSS模块的策略）"""
+        # 获取原始HTML内容（未清理的）
+        raw_content = None
+
+        # 尝试从原始数据中获取HTML内容
+        if hasattr(entry, 'raw_data') and entry.raw_data:
+            # 尝试content字段
+            content_list = getattr(entry.raw_data, 'content', [])
+            if content_list:
+                content_item = content_list[0]
+                if hasattr(content_item, 'value'):
+                    raw_content = content_item.value
+
+            # 如果没有content，尝试content_encoded
+            if not raw_content:
+                raw_content = getattr(entry.raw_data, 'content_encoded', None)
+
+            # 如果还没有，尝试description/summary
+            if not raw_content:
+                raw_content = getattr(entry.raw_data, 'description', None) or getattr(entry.raw_data, 'summary', None)
+
+        # 如果没有原始数据，使用已有的有效内容（虽然可能已被清理）
+        if not raw_content:
+            raw_content = entry.effective_content
+
+        if not raw_content:
             return
 
-        # 提取图片链接
-        img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-        img_matches = re.findall(img_pattern, content, re.IGNORECASE)
+        self.logger.debug(f"从内容中提取媒体，原始内容长度: {len(raw_content)} 字符")
 
-        for img_url in img_matches:
-            try:
-                # 转换为绝对URL
-                absolute_url = entry.get_absolute_url(img_url)
+        # 使用BeautifulSoup解析HTML（参考普通RSS模块的策略）
+        try:
+            from bs4 import BeautifulSoup
 
-                # 添加为图片附件
-                entry.add_enclosure(absolute_url, 'image/jpeg')
+            # 解析HTML内容
+            soup = BeautifulSoup(raw_content, 'html.parser')
 
-            except Exception as e:
-                self.logger.debug(f"处理内容图片失败: {img_url}, 错误: {str(e)}")
-                continue
+            # 提取图片
+            img_tags = soup.find_all('img', src=True)
+            self.logger.debug(f"使用BeautifulSoup找到 {len(img_tags)} 个img标签")
+
+            for img_tag in img_tags:
+                try:
+                    img_url = img_tag.get('src', '').strip()
+                    if not img_url or not img_url.startswith(('http://', 'https://')):
+                        continue
+
+                    # 过滤装饰图片（参考普通RSS模块的策略）
+                    if any(keyword in img_url.lower() for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button']):
+                        self.logger.debug(f"过滤装饰图片: {img_url}")
+                        continue
+
+                    # 转换为绝对URL
+                    absolute_url = entry.get_absolute_url(img_url)
+
+                    # 添加为图片附件
+                    entry.add_enclosure(absolute_url, 'image/jpeg')
+                    self.logger.debug(f"从内容中添加图片附件: {absolute_url}")
+
+                except Exception as e:
+                    self.logger.debug(f"处理内容图片失败: {img_url}, 错误: {str(e)}")
+                    continue
+
+            # 提取视频（参考普通RSS模块的策略）
+            video_tags = soup.find_all('video', src=True)
+            self.logger.debug(f"使用BeautifulSoup找到 {len(video_tags)} 个video标签")
+
+            for video_tag in video_tags:
+                try:
+                    video_url = video_tag.get('src', '').strip()
+                    if not video_url or not video_url.startswith(('http://', 'https://')):
+                        continue
+
+                    # 转换为绝对URL
+                    absolute_url = entry.get_absolute_url(video_url)
+
+                    # 添加为视频附件
+                    entry.add_enclosure(absolute_url, 'video/mp4')
+                    self.logger.debug(f"从内容中添加视频附件: {absolute_url}")
+
+                except Exception as e:
+                    self.logger.debug(f"处理内容视频失败: {video_url}, 错误: {str(e)}")
+                    continue
+
+        except ImportError:
+            self.logger.warning("BeautifulSoup不可用，回退到正则表达式解析")
+            # 回退到原来的正则表达式方法
+            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
+            img_matches = re.findall(img_pattern, raw_content, re.IGNORECASE)
+
+            self.logger.debug(f"正则表达式找到 {len(img_matches)} 个img标签")
+
+            for img_url in img_matches:
+                try:
+                    # 过滤装饰图片
+                    if any(keyword in img_url.lower() for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button']):
+                        self.logger.debug(f"过滤装饰图片: {img_url}")
+                        continue
+
+                    # 转换为绝对URL
+                    absolute_url = entry.get_absolute_url(img_url)
+
+                    # 添加为图片附件
+                    entry.add_enclosure(absolute_url, 'image/jpeg')
+                    self.logger.debug(f"从内容中添加图片附件: {absolute_url}")
+
+                except Exception as e:
+                    self.logger.debug(f"处理内容图片失败: {img_url}, 错误: {str(e)}")
+                    continue
+
+        except Exception as e:
+            self.logger.warning(f"媒体提取失败: {str(e)}")
+            return
 
     def _parse_datetime(self, time_struct) -> Optional[datetime]:
         """解析时间结构"""
@@ -533,7 +626,7 @@ class RSSParser:
             for enclosure in entry.enclosures:
                 enclosure_dict = {
                     'url': enclosure.url,
-                    'mime_type': enclosure.mime_type,
+                    'mime_type': enclosure.type,
                     'length': enclosure.length
                 }
                 entry_dict['enclosures'].append(enclosure_dict)

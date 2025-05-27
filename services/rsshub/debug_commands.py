@@ -79,7 +79,7 @@ async def rsshub_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             
             # 显示媒体附件详情
             for i, enc in enumerate(rss_entry.enclosures):
-                logging.info(f"  - 媒体{i+1}: {enc.mime_type} - {enc.url}")
+                logging.info(f"  - 媒体{i+1}: {enc.type} - {enc.url}")
             
             # 检查原始内容中的图片
             original_img_count = xml_str.count('<img')

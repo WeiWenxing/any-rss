@@ -160,7 +160,7 @@ class MediaSender:
         chat_id: str,
         media_list: List[MediaInfo],
         caption: str = ""
-    ) -> bool:
+    ) -> List[Message]:
         """
         使用策略发送媒体组
 
@@ -170,11 +170,11 @@ class MediaSender:
             caption: 标题
 
         Returns:
-            bool: 是否发送成功
+            List[Message]: 发送成功的消息列表，失败返回空列表
         """
         if not media_list:
             logging.warning("没有媒体可发送")
-            return False
+            return []
 
         logging.info(f"🚀 开始发送媒体组: {len(media_list)} 个文件")
 
@@ -182,14 +182,17 @@ class MediaSender:
         url_direct_media = [m for m in media_list if m.send_strategy == MediaSendStrategy.URL_DIRECT]
         download_upload_media = [m for m in media_list if m.send_strategy == MediaSendStrategy.DOWNLOAD_UPLOAD]
 
-        success = False
+        sent_messages = []
 
         # 1. 先尝试URL直接发送的媒体
         if url_direct_media:
-            success = await self._send_url_direct_group(chat_id, url_direct_media, caption)
+            url_messages = await self._send_url_direct_group(chat_id, url_direct_media, caption)
 
-            # 如果URL发送失败，将这些媒体改为下载上传策略
-            if not success:
+            # 如果URL发送成功，记录消息
+            if url_messages:
+                sent_messages.extend(url_messages)
+            else:
+                # 如果URL发送失败，将这些媒体改为下载上传策略
                 logging.info("URL直接发送失败，将这些媒体改为下载上传策略")
                 for media in url_direct_media:
                     media.send_strategy = MediaSendStrategy.DOWNLOAD_UPLOAD
@@ -197,12 +200,13 @@ class MediaSender:
 
         # 2. 处理需要下载上传的媒体
         if download_upload_media:
-            download_success = await self._send_download_upload_group(chat_id, download_upload_media, caption if not success else "")
-            success = success or download_success
+            download_messages = await self._send_download_upload_group(chat_id, download_upload_media, caption if not sent_messages else "")
+            if download_messages:
+                sent_messages.extend(download_messages)
 
-        return success
+        return sent_messages
 
-    async def _send_url_direct_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> bool:
+    async def _send_url_direct_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> List[Message]:
         """
         直接使用URL发送媒体组
 
@@ -212,7 +216,7 @@ class MediaSender:
             caption: 标题
 
         Returns:
-            bool: 是否发送成功
+            List[Message]: 发送成功的消息列表，失败返回空列表
         """
         try:
             logging.info(f"📡 尝试URL直接发送 {len(media_list)} 个媒体文件")
@@ -233,15 +237,15 @@ class MediaSender:
                 telegram_media.append(media_item)
 
             # 发送媒体组
-            await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
+            sent_messages = await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
             logging.info(f"✅ URL直接发送成功: {len(media_list)} 个文件")
-            return True
+            return sent_messages
 
         except Exception as e:
             logging.error(f"❌ URL直接发送失败: {str(e)}")
-            return False
+            return []
 
-    async def _send_download_upload_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> bool:
+    async def _send_download_upload_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> List[Message]:
         """
         下载后上传发送媒体组
 
@@ -251,7 +255,7 @@ class MediaSender:
             caption: 标题
 
         Returns:
-            bool: 是否发送成功
+            List[Message]: 发送成功的消息列表，失败返回空列表
         """
         downloaded_files = []
         try:
@@ -281,7 +285,7 @@ class MediaSender:
 
             if not downloaded_files:
                 logging.error("所有文件下载失败")
-                return False
+                return []
 
             # 构建媒体组
             logging.info(f"📤 开始上传 {len(downloaded_files)} 个文件...")
@@ -312,13 +316,13 @@ class MediaSender:
                 telegram_media.append(media_item)
 
             # 发送媒体组
-            await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
+            sent_messages = await self.bot.send_media_group(chat_id=chat_id, media=telegram_media)
             logging.info(f"✅ 下载上传发送成功: {len(downloaded_files)} 个文件")
-            return True
+            return sent_messages
 
         except Exception as e:
             logging.error(f"❌ 下载上传发送失败: {str(e)}", exc_info=True)
-            return False
+            return []
         finally:
             # 清理临时文件
             self._cleanup_temp_files(downloaded_files)
