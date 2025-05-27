@@ -207,33 +207,44 @@ class UnifiedContentManager(ABC):
             Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 新内容数据列表)
         """
         try:
-            self.logger.info(f"检查{self.module_name}更新: {source_url}")
+            self.logger.info(f"🔍 开始检查{self.module_name}更新: {source_url}")
 
             # 获取订阅信息
             subscriptions = self.get_subscriptions()
             if source_url not in subscriptions:
+                self.logger.error(f"❌ 订阅不存在: {source_url}")
                 return False, "订阅不存在", None
 
             # 获取订阅的频道列表
             subscribed_channels = subscriptions[source_url]
             if not subscribed_channels:
+                self.logger.error(f"❌ 该URL没有订阅频道: {source_url}")
                 return False, "该URL没有订阅频道", None
 
+            self.logger.info(f"📊 订阅统计: {len(subscribed_channels)} 个频道订阅了此源")
+
             # 获取当前全部内容
+            self.logger.info(f"📥 获取最新内容数据")
             success, error_msg, all_content_data = self.fetch_latest_content(source_url)
             if not success:
+                self.logger.error(f"❌ 获取内容失败: {error_msg}")
                 return False, error_msg, None
 
             if not all_content_data or len(all_content_data) == 0:
+                self.logger.warning(f"📭 获取到的内容数据为空")
                 return False, "获取到的内容数据为空", None
 
+            self.logger.info(f"📊 获取到内容: {len(all_content_data)} 个条目")
+
             # 获取已知的item IDs（全局已发送的）
+            self.logger.info(f"📋 获取已知内容ID列表")
             known_item_ids = self.get_known_item_ids(source_url)
+            self.logger.info(f"📊 已知内容统计: {len(known_item_ids)} 个已发送条目")
 
             # 找出新的items
             new_items = []
 
-            for content_data in all_content_data:
+            for i, content_data in enumerate(all_content_data):
                 item_id = self.generate_content_id(content_data)
 
                 # 如果这个item ID不在已知列表中，说明是新的
@@ -242,17 +253,21 @@ class UnifiedContentManager(ABC):
                     content_data["item_id"] = item_id
                     content_data["target_channels"] = subscribed_channels.copy()
                     new_items.append(content_data)
-                    self.logger.info(f"发现新内容: {content_data.get('title', '无标题')} (ID: {item_id}) -> 频道: {subscribed_channels}")
+
+                    if len(new_items) <= 3:  # 只记录前3个新内容的详细信息
+                        self.logger.info(f"🆕 发现新内容{len(new_items)}: {content_data.get('title', '无标题')[:50]}{'...' if len(content_data.get('title', '')) > 50 else ''} (ID: {item_id}) -> 频道: {subscribed_channels}")
+                    elif len(new_items) == 4:
+                        self.logger.info(f"🆕 还有更多新内容...")
 
             if new_items:
-                self.logger.info(f"发现 {len(new_items)} 个新内容，将发送到 {len(subscribed_channels)} 个频道")
+                self.logger.info(f"🎉 发现 {len(new_items)} 个新内容，将发送到 {len(subscribed_channels)} 个频道")
                 return True, f"发现 {len(new_items)} 个新内容", new_items
             else:
-                self.logger.info(f"无新内容: {source_url}")
+                self.logger.info(f"📭 无新内容: {source_url}")
                 return True, "无新内容", None
 
         except Exception as e:
-            self.logger.error(f"检查{self.module_name}更新失败: {source_url}", exc_info=True)
+            self.logger.error(f"💥 检查{self.module_name}更新失败: {source_url}", exc_info=True)
             return False, f"检查失败: {str(e)}", None
 
     def mark_item_as_sent(self, source_url: str, content_data: Dict) -> bool:
@@ -297,7 +312,8 @@ class UnifiedContentManager(ABC):
         Returns:
             int: 成功发送的内容数量
         """
-        self.logger.info(f"开始批量发送 {len(content_items)} 个内容到 {len(target_channels)} 个频道")
+        self.logger.info(f"📤 开始批量发送 {len(content_items)} 个内容到 {len(target_channels)} 个频道")
+        self.logger.info(f"📊 发送统计预估: 总操作数 = {len(content_items)} × {len(target_channels)} = {len(content_items) * len(target_channels)}")
 
         # 重新初始化间隔管理器为批量发送场景
         self.interval_manager = UnifiedIntervalManager("batch_send")
@@ -305,12 +321,15 @@ class UnifiedContentManager(ABC):
 
         # 按时间排序（从旧到新）
         sorted_items = self._sort_content_by_time(content_items)
+        self.logger.info(f"📅 内容按时间排序完成")
 
         for i, content in enumerate(sorted_items):
             # 为当前内容项维护成功记录（内存中）
             successful_channels = {}  # {channel_id: [message_id1, message_id2, ...]}
 
             try:
+                self.logger.info(f"📝 处理内容 {i+1}/{len(sorted_items)}: {content.get('title', '无标题')[:50]}{'...' if len(content.get('title', '')) > 50 else ''}")
+
                 # 发送前等待（使用配置化间隔管理器）
                 await self.interval_manager.wait_before_send(
                     content_index=i,
@@ -321,20 +340,20 @@ class UnifiedContentManager(ABC):
                 # 确保content有item_id字段
                 if 'item_id' not in content:
                     content['item_id'] = self.generate_content_id(content)
-                    self.logger.warning(f"内容缺少item_id，动态生成: {content['item_id']}")
+                    self.logger.warning(f"⚠️ 内容缺少item_id，动态生成: {content['item_id']}")
 
                 # 步骤1：依次尝试每个频道作为发送频道，直到成功（容错设计）
                 send_success = False
 
                 # 依次尝试每个频道作为发送频道，直到成功
-                for potential_send_channel in target_channels:
+                for j, potential_send_channel in enumerate(target_channels):
                     try:
-                        self.logger.info(f"尝试发送到频道 {potential_send_channel}: {content.get('title', '无标题')}")
+                        self.logger.info(f"📡 尝试发送到频道 {j+1}/{len(target_channels)} {potential_send_channel}: {content.get('title', '无标题')[:30]}{'...' if len(content.get('title', '')) > 30 else ''}")
 
                         # 转换为统一消息格式
                         converter = self._get_module_converter()
                         if not converter:
-                            self.logger.error(f"无法获取转换器，跳过内容: {content.get('title', '无标题')}")
+                            self.logger.error(f"❌ 无法获取转换器，跳过内容: {content.get('title', '无标题')}")
                             continue
 
                         telegram_message = converter.convert(content)
@@ -347,19 +366,19 @@ class UnifiedContentManager(ABC):
                             message_ids = [msg.message_id for msg in messages]
                             self.save_message_mapping(source_url, content['item_id'], potential_send_channel, message_ids)
                             successful_channels[potential_send_channel] = message_ids  # 内存记录
-                            self.logger.info(f"频道发送成功: {potential_send_channel}, 消息ID列表: {message_ids}")
+                            self.logger.info(f"✅ 频道发送成功: {potential_send_channel}, 消息ID列表: {message_ids}")
 
                             send_success = True
                             # 更新统计信息（发送成功）
                             self.interval_manager.update_statistics(success=True)
                             break  # 成功后跳出循环
                     except Exception as send_error:
-                        self.logger.warning(f"向 {potential_send_channel} 发送失败: {send_error}")
+                        self.logger.warning(f"⚠️ 向 {potential_send_channel} 发送失败: {send_error}")
                         continue  # 尝试下一个频道
 
                 # 如果所有频道发送都失败，跳过这个内容
                 if not send_success:
-                    self.logger.error(f"所有频道发送都失败，跳过内容: {content.get('title', '无标题')}")
+                    self.logger.error(f"❌ 所有频道发送都失败，跳过内容: {content.get('title', '无标题')}")
                     # 更新统计信息（发送失败）
                     self.interval_manager.update_statistics(success=False)
                     continue
@@ -367,6 +386,7 @@ class UnifiedContentManager(ABC):
                 # 步骤2：向剩余频道转发
                 remaining_channels = [ch for ch in target_channels if ch not in successful_channels]
                 if remaining_channels:
+                    self.logger.info(f"🔄 开始转发到剩余 {len(remaining_channels)} 个频道")
                     # 初始化转发专用间隔管理器
                     forward_interval_manager = UnifiedIntervalManager("forward")
 
@@ -384,7 +404,7 @@ class UnifiedContentManager(ABC):
                         for source_channel, source_msg_ids in successful_channels.items():
                             if source_channel != channel:  # 不从自己转发给自己
                                 try:
-                                    self.logger.info(f"尝试转发: {source_channel} -> {channel}")
+                                    self.logger.info(f"🔄 尝试转发: {source_channel} -> {channel}")
                                     forwarded_messages = await bot.copy_messages(
                                         chat_id=channel,
                                         from_chat_id=source_channel,
@@ -397,13 +417,13 @@ class UnifiedContentManager(ABC):
                                         forwarded_ids = [forwarded_messages.message_id]
                                     self.save_message_mapping(source_url, content['item_id'], channel, forwarded_ids)
                                     successful_channels[channel] = forwarded_ids  # 内存记录
-                                    self.logger.info(f"转发成功: {source_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
+                                    self.logger.info(f"✅ 转发成功: {source_channel} -> {channel}, 消息ID列表: {forwarded_ids}")
                                     # 更新转发统计信息（转发成功）
                                     forward_interval_manager.update_statistics(success=True)
                                     success = True
                                     break  # 转发成功，跳出循环
                                 except Exception as forward_error:
-                                    self.logger.debug(f"从 {source_channel} 转发到 {channel} 失败: {forward_error}")
+                                    self.logger.debug(f"⚠️ 从 {source_channel} 转发到 {channel} 失败: {forward_error}")
                                     # 检查是否是Flood Control错误（使用转发专用间隔管理器）
                                     if "flood control" in str(forward_error).lower():
                                         await forward_interval_manager.wait_after_error("flood_control")
@@ -415,12 +435,12 @@ class UnifiedContentManager(ABC):
 
                         # 所有转发都失败，最后降级为直接发送
                         if not success:
-                            self.logger.warning(f"所有转发都失败，降级发送: {channel}")
+                            self.logger.warning(f"⚠️ 所有转发都失败，降级发送: {channel}")
                             try:
                                 # 转换为统一消息格式
                                 converter = self._get_module_converter()
                                 if not converter:
-                                    self.logger.error(f"无法获取转换器，跳过降级发送: {channel}")
+                                    self.logger.error(f"❌ 无法获取转换器，跳过降级发送: {channel}")
                                     continue
 
                                 telegram_message = converter.convert(content)
@@ -432,11 +452,11 @@ class UnifiedContentManager(ABC):
                                     fallback_ids = [msg.message_id for msg in fallback_messages]
                                     self.save_message_mapping(source_url, content['item_id'], channel, fallback_ids)
                                     successful_channels[channel] = fallback_ids  # 内存记录
-                                    self.logger.info(f"降级发送成功: {channel}")
+                                    self.logger.info(f"✅ 降级发送成功: {channel}")
                                     # 更新转发统计信息（降级发送成功）
                                     forward_interval_manager.update_statistics(success=True)
                             except Exception as send_error:
-                                self.logger.error(f"降级发送也失败: {channel}, 错误: {send_error}", exc_info=True)
+                                self.logger.error(f"❌ 降级发送也失败: {channel}, 错误: {send_error}", exc_info=True)
                                 # 更新转发统计信息（降级发送失败）
                                 forward_interval_manager.update_statistics(success=False)
                                 continue
@@ -448,9 +468,10 @@ class UnifiedContentManager(ABC):
                 # 步骤3：标记内容已发送
                 self.mark_item_as_sent(source_url, content)
                 sent_count += 1
+                self.logger.info(f"✅ 内容处理完成 {i+1}/{len(sorted_items)}: 成功发送到 {len(successful_channels)} 个频道")
 
             except Exception as e:
-                self.logger.error(f"发送内容失败: {content.get('title', '无标题')}, 错误: {e}", exc_info=True)
+                self.logger.error(f"💥 发送内容失败: {content.get('title', '无标题')}, 错误: {e}", exc_info=True)
                 # 更新统计信息（发送失败）
                 self.interval_manager.update_statistics(success=False)
 
@@ -463,7 +484,7 @@ class UnifiedContentManager(ABC):
                     await self.interval_manager.wait_after_error("other")
                 continue
 
-        self.logger.info(f"批量发送完成: 成功 {sent_count}/{len(content_items)} 个内容到 {len(target_channels)} 个频道")
+        self.logger.info(f"🎉 批量发送完成: 成功 {sent_count}/{len(content_items)} 个内容到 {len(target_channels)} 个频道")
         self.logger.info(f"📊 {self.interval_manager.get_statistics_summary()}")
         return sent_count
 

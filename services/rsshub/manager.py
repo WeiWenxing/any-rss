@@ -169,38 +169,52 @@ class RSSHubManager(UnifiedContentManager):
             Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 内容数据列表)
         """
         try:
+            self.logger.info(f"📥 开始获取RSS内容: {source_url}")
+
             # 使用RSS解析器获取最新内容
             entries = self.rss_parser.parse_feed(source_url)
 
             if not entries:
+                self.logger.warning(f"📭 RSS源无内容或解析失败: {source_url}")
                 return False, "RSS源无内容或解析失败", None
+
+            self.logger.info(f"📊 RSS解析成功: 获取到 {len(entries)} 个条目")
 
             # 转换为统一的内容数据格式
             content_data_list = []
-            for entry in entries:
-                content_data = {
-                    "title": entry.title,
-                    "description": entry.description,
-                    "link": entry.link,
-                    "published": entry.published,
-                    "updated": entry.updated,
-                    "author": entry.author,
-                    "item_id": entry.item_id,
-                    "time": entry.effective_published_time.isoformat() if entry.effective_published_time else "",
-                    "enclosures": [
-                        {
-                            "url": enc.url,
-                            "type": enc.type,
-                            "length": enc.length
-                        } for enc in entry.enclosures
-                    ] if entry.enclosures else []
-                }
-                content_data_list.append(content_data)
+            for i, entry in enumerate(entries):
+                try:
+                    content_data = {
+                        "title": entry.title,
+                        "description": entry.description,
+                        "link": entry.link,
+                        "published": entry.published,
+                        "updated": entry.updated,
+                        "author": entry.author,
+                        "item_id": entry.item_id,
+                        "time": entry.effective_published_time.isoformat() if entry.effective_published_time else "",
+                        "enclosures": [
+                            {
+                                "url": enc.url,
+                                "type": enc.type,
+                                "length": enc.length
+                            } for enc in entry.enclosures
+                        ] if entry.enclosures else []
+                    }
+                    content_data_list.append(content_data)
 
+                    if i < 3:  # 只记录前3个条目的详细信息
+                        self.logger.debug(f"📄 条目{i+1}: {entry.title[:50]}{'...' if len(entry.title) > 50 else ''} (ID: {entry.item_id})")
+
+                except Exception as e:
+                    self.logger.warning(f"⚠️ 转换条目{i+1}失败: {str(e)}")
+                    continue
+
+            self.logger.info(f"✅ 内容转换完成: 成功转换 {len(content_data_list)}/{len(entries)} 个条目")
             return True, "", content_data_list
 
         except Exception as e:
-            self.logger.error(f"获取RSS内容失败: {source_url}, 错误: {str(e)}", exc_info=True)
+            self.logger.error(f"💥 获取RSS内容失败: {source_url}, 错误: {str(e)}", exc_info=True)
             return False, f"获取RSS内容失败: {str(e)}", None
 
     def get_known_item_ids(self, source_url: str) -> List[str]:
@@ -354,8 +368,13 @@ class RSSHubManager(UnifiedContentManager):
             bool: 是否添加成功
         """
         try:
+            self.logger.info(f"💾 开始添加RSS订阅: {rss_url} -> {chat_id}")
+            if rss_title:
+                self.logger.info(f"📰 RSS源标题: {rss_title}")
+
             # 初始化RSS源数据结构（完全复用douyin的简单映射格式）
             if rss_url not in self._subscriptions_cache:
+                self.logger.info(f"🆕 创建新的RSS源订阅: {rss_url}")
                 self._subscriptions_cache[rss_url] = []
 
             # 检查频道是否已存在
@@ -363,14 +382,14 @@ class RSSHubManager(UnifiedContentManager):
             if chat_id not in channels:
                 channels.append(chat_id)
                 self._save_subscriptions()
-                self.logger.info(f"添加RSS订阅成功: {rss_url} -> {chat_id}")
+                self.logger.info(f"✅ 添加RSS订阅成功: {rss_url} -> {chat_id} (当前频道数: {len(channels)})")
                 return True
             else:
-                self.logger.info(f"RSS订阅已存在: {rss_url} -> {chat_id}")
+                self.logger.info(f"ℹ️ RSS订阅已存在: {rss_url} -> {chat_id}")
                 return True
 
         except Exception as e:
-            self.logger.error(f"添加RSS订阅失败: {rss_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            self.logger.error(f"💥 添加RSS订阅失败: {rss_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
             return False
 
     def remove_subscription(self, rss_url: str, chat_id: str) -> bool:
@@ -385,8 +404,10 @@ class RSSHubManager(UnifiedContentManager):
             bool: 是否删除成功
         """
         try:
+            self.logger.info(f"🗑️ 开始删除RSS订阅: {rss_url} -> {chat_id}")
+
             if rss_url not in self._subscriptions_cache:
-                self.logger.warning(f"RSS源不存在: {rss_url}")
+                self.logger.warning(f"⚠️ RSS源不存在: {rss_url}")
                 return False
 
             channels = self._subscriptions_cache[rss_url]
@@ -396,17 +417,19 @@ class RSSHubManager(UnifiedContentManager):
                 # 如果没有频道订阅了，删除整个RSS源
                 if not channels:
                     del self._subscriptions_cache[rss_url]
-                    self.logger.info(f"删除RSS源（无订阅频道）: {rss_url}")
+                    self.logger.info(f"🗑️ 删除RSS源（无订阅频道）: {rss_url}")
+                else:
+                    self.logger.info(f"📊 RSS源剩余频道数: {len(channels)}")
 
                 self._save_subscriptions()
-                self.logger.info(f"删除RSS订阅成功: {rss_url} -> {chat_id}")
+                self.logger.info(f"✅ 删除RSS订阅成功: {rss_url} -> {chat_id}")
                 return True
             else:
-                self.logger.warning(f"RSS订阅不存在: {rss_url} -> {chat_id}")
+                self.logger.warning(f"⚠️ RSS订阅不存在: {rss_url} -> {chat_id}")
                 return False
 
         except Exception as e:
-            self.logger.error(f"删除RSS订阅失败: {rss_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            self.logger.error(f"💥 删除RSS订阅失败: {rss_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
             return False
 
     def get_all_rss_urls(self) -> List[str]:
