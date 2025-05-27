@@ -42,7 +42,7 @@
 
 ### 1.3 目标读者
 - **开发工程师**：了解模块架构和实现方案
-- **系统架构师**：评估技术选型和设计合理性  
+- **系统架构师**：评估技术选型和设计合理性
 - **产品负责人**：理解功能特性和业务价值
 
 前置知识：熟悉Python异步编程、Telegram Bot API、订阅推送概念。
@@ -373,7 +373,7 @@ storage/douyin/
 ```json
 [
   "7435678901234567890",
-  "7435678901234567891", 
+  "7435678901234567891",
   "7435678901234567892"
 ]
 ```
@@ -601,9 +601,9 @@ class DouyinManager:
     def get_subscriptions(self) -> Dict[str, List[str]]
     def check_updates(self, douyin_url: str) -> Tuple[bool, str, Optional[List[Dict]]]
     def mark_item_as_sent(self, douyin_url: str, content_info: Dict) -> bool
-    async def send_content_batch(self, bot, content_items: List[Dict], 
+    async def send_content_batch(self, bot, content_items: List[Dict],
                                douyin_url: str, target_channels: List[str]) -> int
-    
+
     # 消息ID管理接口
     def save_message_id(self, douyin_url: str, item_id: str, chat_id: str, message_id: int)
     def get_message_id(self, douyin_url: str, item_id: str, chat_id: str) -> Optional[int]
@@ -631,7 +631,7 @@ async def _send_images_content(bot: Bot, content_info: Dict, target_chat_id: str
 
 **Alignment历史对齐接口**：
 ```python
-async def perform_historical_alignment(bot: Bot, douyin_url: str, known_item_ids: List[str], 
+async def perform_historical_alignment(bot: Bot, douyin_url: str, known_item_ids: List[str],
                                      primary_channel: str, new_channel: str) -> bool
 ```
 
@@ -831,17 +831,17 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
     primary_channel = target_channels[0]
     other_channels = target_channels[1:]
     sent_count = 0
-    
+
     # 按时间排序
     sorted_items = sort_by_time(content_items)
-    
+
     for content in sorted_items:
         try:
             # 步骤1：主频道发送
             message = await send_to_primary(content, primary_channel)
             message_id = extract_message_id(message)
             save_message_id(content.id, primary_channel, message_id)
-            
+
             # 步骤2：其他频道转发
             for channel in other_channels:
                 try:
@@ -851,16 +851,110 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
                     # 降级策略：直接发送
                     fallback = await send_to_channel(content, channel)
                     save_message_id(content.id, channel, fallback.message_id)
-            
+
             mark_as_sent(content)
             sent_count += 1
-            
+
         except Exception as e:
             # 主频道失败，全部降级
             for channel in target_channels:
                 await send_to_channel(content, channel)
             sent_count += 1
-    
+
+    return sent_count
+```
+
+**DouyinManager.send_content_batch 具体实现**：
+```python
+async def send_content_batch(self, bot, content_items, douyin_url, target_channels):
+    """
+    多频道高效转发算法的具体实现
+
+    Args:
+        bot: Telegram Bot实例
+        content_items: 要发送的内容列表
+        douyin_url: 抖音用户链接
+        target_channels: 目标频道列表
+
+    Returns:
+        int: 成功发送的内容数量
+    """
+    logging.info(f"开始批量发送 {len(content_items)} 个内容到 {len(target_channels)} 个频道")
+
+    # 多频道转发机制（单频道时other_channels自动为空数组）
+    primary_channel = target_channels[0]
+    other_channels = target_channels[1:]
+    sent_count = 0
+
+    # 按时间排序（从旧到新）
+    sorted_items = self._sort_content_by_time(content_items)
+
+    for content in sorted_items:
+        # 为当前内容项维护成功记录（内存中）
+        successful_channels = {}  # {channel_id: message_id}
+
+        try:
+            # 步骤1：主频道发送
+            message = await send_douyin_content(bot, content, douyin_url, primary_channel)
+            if not message:
+                continue
+
+            # 记录到文件和内存
+            self.save_message_id(douyin_url, content['item_id'], primary_channel, message.message_id)
+            successful_channels[primary_channel] = message.message_id  # 内存记录
+
+            # 步骤2：其他频道转发
+            for channel in other_channels:
+                success = False
+
+                # 尝试从主频道转发
+                try:
+                    forwarded = await bot.forward_message(
+                        chat_id=channel,
+                        from_chat_id=primary_channel,
+                        message_id=message.message_id
+                    )
+                    self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
+                    successful_channels[channel] = forwarded.message_id  # 内存记录
+                    success = True
+                except Exception:
+                    pass
+
+                # 转发失败，从内存中的成功频道转发
+                if not success:
+                    for existing_channel, existing_msg_id in successful_channels.items():
+                        if existing_channel != channel:  # 不从自己转发
+                            try:
+                                forwarded = await bot.forward_message(
+                                    chat_id=channel,
+                                    from_chat_id=existing_channel,
+                                    message_id=existing_msg_id
+                                )
+                                self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
+                                successful_channels[channel] = forwarded.message_id  # 内存记录
+                                success = True
+                                break
+                            except Exception:
+                                continue
+
+                # 所有转发都失败，降级为直接发送
+                if not success:
+                    try:
+                        fallback_message = await send_douyin_content(bot, content, douyin_url, channel)
+                        if fallback_message:
+                            self.save_message_id(douyin_url, content['item_id'], channel, fallback_message.message_id)
+                            successful_channels[channel] = fallback_message.message_id  # 内存记录
+                    except Exception:
+                        continue
+
+            # 步骤3：标记内容已发送
+            self.mark_item_as_sent(douyin_url, content)
+            sent_count += 1
+            await asyncio.sleep(1)
+
+        except Exception as e:
+            continue
+
     return sent_count
 ```
 
@@ -889,28 +983,28 @@ async def efficient_forwarding_algorithm(content_items, target_channels):
 async def historical_alignment_algorithm(known_item_ids, primary_channel, new_channel):
     success_count = 0
     total_count = len(known_item_ids)
-    
+
     # 按时间排序内容ID
     sorted_ids = sort_item_ids_by_time(known_item_ids)
-    
+
     for item_id in sorted_ids:
         try:
             # 获取主频道消息ID
             primary_message_id = get_message_id(item_id, primary_channel)
             if not primary_message_id:
                 continue
-                
+
             # 转发到新频道
             forwarded = await forward_message(primary_channel, primary_message_id, new_channel)
             save_message_id(item_id, new_channel, forwarded.message_id)
-            
+
             success_count += 1
             await sleep(0.5)  # 转发间隔
-            
+
         except Exception as e:
             log_error(f"历史对齐失败: {item_id}")
             continue
-    
+
     return success_count >= total_count * 0.8  # 80%成功率视为成功
 ```
 
@@ -935,7 +1029,7 @@ async def historical_alignment_algorithm(known_item_ids, primary_channel, new_ch
 def generate_content_id(content_info):
     """
     基于内容特征生成唯一ID
-    
+
     优先级：
     1. aweme_id（抖音官方ID）
     2. 标题+时间的哈希值
@@ -943,15 +1037,15 @@ def generate_content_id(content_info):
     """
     if content_info.get("aweme_id"):
         return f"aweme_{content_info['aweme_id']}"
-    
+
     if content_info.get("title") and content_info.get("time"):
         text = f"{content_info['title']}_{content_info['time']}"
         return f"content_{hashlib.md5(text.encode()).hexdigest()[:12]}"
-    
+
     if content_info.get("media_url"):
         url_hash = hashlib.md5(content_info["media_url"].encode()).hexdigest()[:12]
         return f"media_{url_hash}"
-    
+
     # 兜底方案：时间戳
     return f"unknown_{int(time.time())}"
 ```
@@ -967,7 +1061,7 @@ def generate_content_id(content_info):
 def sort_items_by_time(items):
     """
     多格式时间排序算法
-    
+
     支持格式：
     - "2024-12-01"
     - "2024-12-01 10:30:00"
@@ -976,22 +1070,22 @@ def sort_items_by_time(items):
     """
     def get_sort_key(item):
         time_str = item.get("time", "")
-        
+
         # 标准日期格式
         if re.match(r'\d{4}-\d{2}-\d{2}', time_str):
             return time_str
-        
+
         # 中文日期格式转换
         if re.match(r'\d+月\d+日', time_str):
             return convert_chinese_date(time_str)
-        
+
         # 时间戳格式
         if time_str.isdigit():
             return datetime.fromtimestamp(int(time_str)).strftime('%Y-%m-%d')
-        
+
         # 无法解析的放到最后
         return "9999-12-31"
-    
+
     return sorted(items, key=get_sort_key)
 ```
 
@@ -1005,11 +1099,11 @@ class ErrorRecoveryAlgorithm:
     def __init__(self):
         self.max_retries = 3
         self.backoff_factor = 2
-        
+
     async def execute_with_recovery(self, operation, *args, **kwargs):
         """
         带重试的操作执行
-        
+
         重试策略：
         - 指数退避：1s, 2s, 4s
         - 最大重试3次
@@ -1018,23 +1112,23 @@ class ErrorRecoveryAlgorithm:
         for attempt in range(self.max_retries):
             try:
                 return await operation(*args, **kwargs)
-                
+
             except NetworkError as e:
                 if attempt < self.max_retries - 1:
                     wait_time = self.backoff_factor ** attempt
                     await asyncio.sleep(wait_time)
                     continue
                 raise
-                
+
             except RateLimitError as e:
                 # 限流错误，等待更长时间
                 await asyncio.sleep(60)
                 continue
-                
+
             except DataError as e:
                 # 数据错误，不重试
                 raise
-                
+
         raise MaxRetriesExceeded()
 ```
 
@@ -1053,7 +1147,7 @@ class LoadBalancingAlgorithm:
         }
         self.current_usage = defaultdict(int)
         self.reset_time = time.time() + 60
-    
+
     async def execute_with_rate_limit(self, operation_type, operation, *args):
         """
         带限流的操作执行
@@ -1062,18 +1156,18 @@ class LoadBalancingAlgorithm:
         if time.time() > self.reset_time:
             self.current_usage.clear()
             self.reset_time = time.time() + 60
-        
+
         # 检查当前使用量
         if self.current_usage[operation_type] >= self.rate_limits[operation_type]:
             wait_time = self.reset_time - time.time()
             await asyncio.sleep(max(0, wait_time))
             self.current_usage.clear()
             self.reset_time = time.time() + 60
-        
+
         # 执行操作
         result = await operation(*args)
         self.current_usage[operation_type] += 1
-        
+
         return result
 ```
 
@@ -1087,13 +1181,13 @@ class LoadBalancingAlgorithm:
 def decide_subscription_type(douyin_url, existing_subscriptions):
     """
     订阅类型决策算法
-    
+
     返回：
     - "first_channel": 该URL的首个频道订阅
     - "additional_channel": 该URL的后续频道订阅
     """
     existing_channels = existing_subscriptions.get(douyin_url, [])
-    
+
     if len(existing_channels) == 0:
         return "first_channel"
     else:
@@ -1108,7 +1202,7 @@ def decide_subscription_type(douyin_url, existing_subscriptions):
 def decide_sending_strategy(content_count, channel_count):
     """
     发送策略决策算法
-    
+
     策略类型：
     - "single_send": 单个发送（内容少）
     - "batch_forward": 批量转发（多频道）
@@ -1116,15 +1210,15 @@ def decide_sending_strategy(content_count, channel_count):
     """
     if channel_count == 1:
         return "single_send"
-    
+
     if channel_count > 1 and content_count > 0:
         # 多频道优先使用转发
         return "batch_forward"
-    
+
     if content_count > 10 and channel_count <= 3:
         # 大批量内容且频道不多，使用并行
         return "parallel_send"
-    
+
     return "batch_forward"  # 默认策略
 ```
 
@@ -1136,7 +1230,7 @@ def decide_sending_strategy(content_count, channel_count):
 def decide_fallback_strategy(error_type, retry_count):
     """
     降级策略决策算法
-    
+
     策略：
     - "retry_forward": 重试转发
     - "direct_send": 直接发送
@@ -1144,16 +1238,16 @@ def decide_fallback_strategy(error_type, retry_count):
     """
     if error_type == "network_error" and retry_count < 2:
         return "retry_forward"
-    
+
     if error_type == "permission_error":
         return "direct_send"
-    
+
     if error_type == "content_deleted":
         return "skip_content"
-    
+
     if retry_count >= 3:
         return "direct_send"
-    
+
     return "retry_forward"
 ```
 
@@ -1167,41 +1261,41 @@ class PerformanceOptimizer:
         self.base_interval = 1.0
         self.max_interval = 10.0
         self.error_threshold = 0.1
-    
+
     def decide_send_interval(self, recent_error_rate, system_load):
         """
         发送间隔决策算法
-        
+
         考虑因素：
         - 最近错误率
         - 系统负载
         - 基础间隔
         """
         interval = self.base_interval
-        
+
         # 根据错误率调整
         if recent_error_rate > self.error_threshold:
             interval *= (1 + recent_error_rate * 5)
-        
+
         # 根据系统负载调整
         if system_load > 0.8:
             interval *= 2
         elif system_load > 0.6:
             interval *= 1.5
-        
+
         return min(interval, self.max_interval)
-    
+
     def decide_batch_size(self, total_content, available_memory):
         """
         批处理大小决策算法
         """
         base_batch_size = 10
-        
+
         if available_memory < 100:  # MB
             return max(1, base_batch_size // 2)
         elif available_memory > 500:
             return min(50, base_batch_size * 2)
-        
+
         return base_batch_size
 ```
 
@@ -1268,4 +1362,4 @@ class PerformanceOptimizer:
 <!-- 待补充 -->
 
 ### C. 变更记录
-<!-- 待补充 --> 
+<!-- 待补充 -->

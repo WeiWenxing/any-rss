@@ -657,3 +657,130 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"获取主频道消息ID失败: {str(e)}", exc_info=True)
             return None, None
+
+    async def send_content_batch(self, bot, content_items: List[Dict], douyin_url: str, target_channels: List[str]) -> int:
+        """
+        批量发送抖音内容到多个频道（多频道高效转发算法）
+
+        Args:
+            bot: Telegram Bot实例
+            content_items: 要发送的内容列表
+            douyin_url: 抖音用户链接
+            target_channels: 目标频道列表
+
+        Returns:
+            int: 成功发送的内容数量
+        """
+        import asyncio
+        from .sender import send_douyin_content
+
+        logging.info(f"开始批量发送 {len(content_items)} 个内容到 {len(target_channels)} 个频道")
+
+        # 多频道转发机制（单频道时other_channels自动为空数组）
+        primary_channel = target_channels[0]
+        other_channels = target_channels[1:]
+        sent_count = 0
+
+        # 按时间排序（从旧到新）
+        sorted_items = self._sort_content_by_time(content_items)
+
+        for content in sorted_items:
+            # 为当前内容项维护成功记录（内存中）
+            successful_channels = {}  # {channel_id: message_id}
+
+            try:
+                # 步骤1：主频道发送
+                logging.info(f"发送到主频道 {primary_channel}: {content.get('title', '无标题')}")
+                message = await send_douyin_content(bot, content, douyin_url, primary_channel)
+                if not message:
+                    logging.warning(f"主频道发送失败，跳过内容: {content.get('title', '无标题')}")
+                    continue
+
+                # 记录到文件和内存
+                self.save_message_id(douyin_url, content['item_id'], primary_channel, message.message_id)
+                successful_channels[primary_channel] = message.message_id  # 内存记录
+                logging.info(f"主频道发送成功，消息ID: {message.message_id}")
+
+                # 步骤2：其他频道转发（单频道时自动跳过）
+                for channel in other_channels:
+                    success = False
+
+                    # 尝试从主频道转发
+                    try:
+                        logging.info(f"转发到频道 {channel}")
+                        forwarded = await bot.forward_message(
+                            chat_id=channel,
+                            from_chat_id=primary_channel,
+                            message_id=message.message_id
+                        )
+                        self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
+                        successful_channels[channel] = forwarded.message_id  # 内存记录
+                        logging.info(f"转发成功: {primary_channel} -> {channel}, 消息ID: {forwarded.message_id}")
+                        success = True
+                    except Exception as forward_error:
+                        logging.warning(f"从主频道转发失败: {channel}, 错误: {forward_error}", exc_info=True)
+
+                    # 转发失败，从内存中的成功频道转发
+                    if not success:
+                        for existing_channel, existing_msg_id in successful_channels.items():
+                            if existing_channel != channel:  # 不从自己转发
+                                try:
+                                    logging.info(f"尝试从 {existing_channel} 转发到 {channel}")
+                                    forwarded = await bot.forward_message(
+                                        chat_id=channel,
+                                        from_chat_id=existing_channel,
+                                        message_id=existing_msg_id
+                                    )
+                                    self.save_message_id(douyin_url, content['item_id'], channel, forwarded.message_id)
+                                    successful_channels[channel] = forwarded.message_id  # 内存记录
+                                    logging.info(f"转发成功: {existing_channel} -> {channel}, 消息ID: {forwarded.message_id}")
+                                    success = True
+                                    break
+                                except Exception as retry_error:
+                                    logging.warning(f"从 {existing_channel} 转发失败: {retry_error}", exc_info=True)
+                                    continue
+
+                    # 所有转发都失败，最后降级为直接发送
+                    if not success:
+                        logging.warning(f"所有转发都失败，降级发送: {channel}")
+                        try:
+                            fallback_message = await send_douyin_content(bot, content, douyin_url, channel)
+                            if fallback_message:
+                                self.save_message_id(douyin_url, content['item_id'], channel, fallback_message.message_id)
+                                successful_channels[channel] = fallback_message.message_id  # 内存记录
+                                logging.info(f"降级发送成功: {channel}")
+                        except Exception as send_error:
+                            logging.error(f"降级发送也失败: {channel}, 错误: {send_error}", exc_info=True)
+                            continue
+
+                # 步骤3：标记内容已发送
+                self.mark_item_as_sent(douyin_url, content)
+                sent_count += 1
+
+                # 发送间隔，避免频率限制
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                logging.error(f"发送内容失败: {content.get('title', '无标题')}, 错误: {e}", exc_info=True)
+                continue
+
+        logging.info(f"批量发送完成: 成功 {sent_count}/{len(content_items)} 个内容到 {len(target_channels)} 个频道")
+        return sent_count
+
+
+
+    def _sort_content_by_time(self, content_items: List[Dict]) -> List[Dict]:
+        """
+        按时间排序内容（从旧到新）
+
+        Args:
+            content_items: 内容列表
+
+        Returns:
+            List[Dict]: 排序后的内容列表
+        """
+        try:
+            return sorted(content_items, key=lambda x: x.get('time', ''))
+        except Exception as e:
+            logging.warning(f"内容排序失败，使用原顺序: {e}")
+            return content_items
