@@ -307,12 +307,12 @@ class RSSParser:
             return None
 
     def _extract_description(self, entry_data: Any) -> str:
-        """提取条目描述"""
+        """提取条目描述，转换为Markdown格式"""
         # 尝试多个字段
         for field in ['description', 'summary', 'subtitle']:
             value = getattr(entry_data, field, None)
             if value:
-                return self._clean_html(value).strip()
+                return self._html_to_markdown(value).strip()
         return ""
 
     def _extract_author(self, entry_data: Any) -> Optional[str]:
@@ -343,19 +343,19 @@ class RSSParser:
         return None
 
     def _extract_content(self, entry_data: Any) -> Optional[str]:
-        """提取完整内容"""
+        """提取完整内容，转换为Markdown格式"""
         # 尝试content字段
         content_list = getattr(entry_data, 'content', [])
         if content_list:
             # 取第一个content
             content_item = content_list[0]
             if hasattr(content_item, 'value'):
-                return self._clean_html(content_item.value).strip()
+                return self._html_to_markdown(content_item.value).strip()
 
         # 尝试content_encoded字段（RSS扩展）
         content_encoded = getattr(entry_data, 'content_encoded', None)
         if content_encoded:
-            return self._clean_html(content_encoded).strip()
+            return self._html_to_markdown(content_encoded).strip()
 
         return None
 
@@ -528,6 +528,209 @@ class RSSParser:
         clean_text = re.sub(r'\s+', ' ', clean_text)
 
         return clean_text.strip()
+
+    def _html_to_markdown(self, html_content: str) -> str:
+        """
+        将HTML内容转换为Telegram Markdown格式
+
+        Args:
+            html_content: HTML内容
+
+        Returns:
+            str: Telegram Markdown格式的内容
+        """
+        if not html_content:
+            return ""
+
+        self.logger.debug(f"HTML转Markdown - 原始内容长度: {len(html_content)}")
+
+        try:
+            from bs4 import BeautifulSoup
+
+            # 解析HTML
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # 统计原始HTML标签
+            original_tags = {
+                'h标签': len(soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])),
+                'p标签': len(soup.find_all('p')),
+                'div标签': len(soup.find_all('div')),
+                'strong/b标签': len(soup.find_all(['strong', 'b'])),
+                'em/i标签': len(soup.find_all(['em', 'i'])),
+                'a标签': len(soup.find_all('a')),
+                'li标签': len(soup.find_all('li')),
+                'br标签': len(soup.find_all('br'))
+            }
+            self.logger.debug(f"原始HTML标签统计: {original_tags}")
+
+            # 1. 处理标题 - Telegram不支持#语法，转为粗体
+            for h_tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                h_text = h_tag.get_text().strip()
+                if h_text:
+                    # 创建新的标签结构：换行 + 粗体 + 换行
+                    new_content = soup.new_string(f"\n\n**{h_text}**\n\n")
+                    h_tag.replace_with(new_content)
+                    self.logger.debug(f"转换标题: {h_tag.name} -> **{h_text}**")
+                else:
+                    h_tag.decompose()
+
+            # 2. 处理段落 - 添加段落分隔
+            for p_tag in soup.find_all('p'):
+                p_text = p_tag.get_text().strip()
+                if p_text:
+                    # 保留段落内的其他格式化标签，只替换p标签本身
+                    p_tag.name = 'div'  # 临时改名，避免重复处理
+                    new_content = soup.new_string(f"\n\n{p_text}\n\n")
+                    p_tag.replace_with(new_content)
+                    self.logger.debug(f"转换段落: {len(p_text)}字符")
+                else:
+                    p_tag.decompose()
+
+            # 3. 处理div - 添加段落分隔
+            for div_tag in soup.find_all('div'):
+                div_text = div_tag.get_text().strip()
+                if div_text:
+                    new_content = soup.new_string(f"\n\n{div_text}\n\n")
+                    div_tag.replace_with(new_content)
+                    self.logger.debug(f"转换div: {len(div_text)}字符")
+                else:
+                    div_tag.decompose()
+
+            # 4. 处理换行标签
+            for br_tag in soup.find_all('br'):
+                br_tag.replace_with(soup.new_string('\n'))
+                self.logger.debug("转换br标签为换行")
+
+            # 5. 处理粗体标签
+            strong_count = 0
+            for strong_tag in soup.find_all(['strong', 'b']):
+                strong_text = strong_tag.get_text().strip()
+                if strong_text:
+                    new_content = soup.new_string(f"**{strong_text}**")
+                    strong_tag.replace_with(new_content)
+                    strong_count += 1
+                    self.logger.debug(f"转换粗体: {strong_text}")
+                else:
+                    strong_tag.decompose()
+
+            # 6. 处理斜体标签
+            em_count = 0
+            for em_tag in soup.find_all(['em', 'i']):
+                em_text = em_tag.get_text().strip()
+                if em_text:
+                    new_content = soup.new_string(f"*{em_text}*")
+                    em_tag.replace_with(new_content)
+                    em_count += 1
+                    self.logger.debug(f"转换斜体: {em_text}")
+                else:
+                    em_tag.decompose()
+
+            # 7. 处理链接标签
+            link_count = 0
+            for a_tag in soup.find_all('a', href=True):
+                link_text = a_tag.get_text().strip()
+                link_href = a_tag.get('href', '').strip()
+
+                if link_text and link_href:
+                    # Telegram链接格式: [文本](URL)
+                    new_content = soup.new_string(f"[{link_text}]({link_href})")
+                    a_tag.replace_with(new_content)
+                    link_count += 1
+                    self.logger.debug(f"转换链接: {link_text} -> {link_href}")
+                else:
+                    # 如果没有文本或链接，保留文本部分
+                    if link_text:
+                        a_tag.replace_with(soup.new_string(link_text))
+                    else:
+                        a_tag.decompose()
+
+            # 8. 处理列表项
+            li_count = 0
+            for li_tag in soup.find_all('li'):
+                li_text = li_tag.get_text().strip()
+                if li_text:
+                    # Telegram不支持特殊列表语法，使用普通的项目符号
+                    new_content = soup.new_string(f"\n• {li_text}")
+                    li_tag.replace_with(new_content)
+                    li_count += 1
+                    self.logger.debug(f"转换列表项: {li_text}")
+                else:
+                    li_tag.decompose()
+
+            # 9. 清理剩余的HTML标签（保留文本内容）
+            remaining_tags = soup.find_all()
+            remaining_count = len(remaining_tags)
+            if remaining_count > 0:
+                self.logger.debug(f"清理剩余HTML标签: {remaining_count}个")
+                for tag in remaining_tags:
+                    tag_text = tag.get_text()
+                    if tag_text.strip():
+                        tag.replace_with(soup.new_string(tag_text))
+                    else:
+                        tag.decompose()
+
+            # 10. 获取最终文本
+            final_text = soup.get_text()
+
+            # 11. 清理空白字符，保留段落结构
+            import re
+
+            # 处理HTML实体
+            final_text = final_text.replace('&nbsp;', ' ')
+            final_text = final_text.replace('&amp;', '&')
+            final_text = final_text.replace('&lt;', '<')
+            final_text = final_text.replace('&gt;', '>')
+            final_text = final_text.replace('&quot;', '"')
+            final_text = final_text.replace('&#39;', "'")
+            final_text = final_text.replace('&hellip;', '...')
+            final_text = final_text.replace('&mdash;', '—')
+            final_text = final_text.replace('&ndash;', '–')
+
+            # 清理多余的空白字符
+            final_text = re.sub(r'[ \t]+', ' ', final_text)  # 行内多余空格
+            final_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', final_text)  # 多空行合并为双空行
+            final_text = final_text.strip()  # 去掉首尾空白
+
+            # 12. 最终清理段落空格
+            lines = final_text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                cleaned_line = line.strip()
+                # 保留空行用于段落分隔，但避免连续多个空行
+                if cleaned_line or (not cleaned_lines or cleaned_lines[-1]):
+                    cleaned_lines.append(cleaned_line)
+
+            final_text = '\n'.join(cleaned_lines)
+            final_text = re.sub(r'\n\n+', '\n\n', final_text)  # 最终确保不超过双空行
+
+            # 13. 统计转换结果
+            markdown_stats = {
+                '粗体': len(re.findall(r'\*\*[^*]+\*\*', final_text)),
+                '斜体': len(re.findall(r'\*[^*]+\*', final_text)),
+                '链接': len(re.findall(r'\[[^\]]+\]\([^)]+\)', final_text)),
+                '列表项': len(re.findall(r'\n• ', final_text))
+            }
+
+            self.logger.debug(f"HTML转Markdown完成 - 最终长度: {len(final_text)}")
+            self.logger.debug(f"Telegram Markdown元素统计: {markdown_stats}")
+
+            return final_text
+
+        except ImportError:
+            self.logger.warning("BeautifulSoup不可用，回退到简单HTML清理")
+            # 回退到简单的HTML标签清理
+            import re
+            clean_text = re.sub(r'<[^>]+>', '', html_content)
+            clean_text = re.sub(r'\s+', ' ', clean_text)
+            return clean_text.strip()
+
+        except Exception as e:
+            self.logger.error(f"HTML转Markdown失败: {str(e)}", exc_info=True)
+            # 出错时回退到简单清理
+            import re
+            clean_text = re.sub(r'<[^>]+>', '', html_content)
+            clean_text = re.sub(r'\s+', ' ', clean_text)
+            return clean_text.strip()
 
     def validate_rss_url(self, rss_url: str) -> bool:
         """
