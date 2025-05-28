@@ -396,12 +396,10 @@ class RSSMessageConverter(MessageConverter):
         """
         media_count = len(media_items)
 
-        if media_count >= 2:
-            return "media_group"  # 媒体组模式
-        elif media_count == 1:
-            return "text_with_preview"  # 文本+预览模式
+        if media_count >= 1:
+            return "media_group"  # 有媒体就使用媒体组模式
         else:
-            return "text_only"  # 纯文本模式
+            return "text_only"  # 无媒体使用纯文本模式
 
     def _format_message_text(self, rss_entry: RSSEntry, send_strategy: str) -> str:
         """
