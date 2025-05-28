@@ -530,52 +530,160 @@ class RSSMessageConverter(MessageConverter):
         content = rss_entry.effective_content or ""
 
         if not content:
+            self.logger.debug("内容为空，直接返回")
             return ""
 
         import re
 
+        # 调试：记录原始内容
+        self.logger.debug(f"原始内容长度: {len(content)}")
+        self.logger.debug(f"原始内容前200字符: {repr(content[:200])}")
+
         # 1. 处理块级元素，保留分段信息
+        original_content = content
+
         # 标题转换为Markdown格式
-        content = re.sub(r'<h([1-6])[^>]*>(.*?)</h[1-6]>', r'\n\n**\2**\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        h_pattern = r'<h([1-6])[^>]*>(.*?)</h[1-6]>'
+        h_matches = re.findall(h_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(h_matches)} 个标题标签: {h_matches}")
+
+        content = re.sub(h_pattern, r'\n\n**\2**\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        if h_matches:
+            self.logger.debug(f"标题转换后前200字符: {repr(content[:200])}")
 
         # 段落标签转换为双换行
-        content = re.sub(r'<p[^>]*>(.*?)</p>', r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        p_pattern = r'<p[^>]*>(.*?)</p>'
+        p_matches = re.findall(p_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(p_matches)} 个段落标签")
+        if len(p_matches) > 0:
+            self.logger.debug(f"段落内容示例: {repr(p_matches[0][:100]) if p_matches[0] else 'None'}")
+
+        content = re.sub(p_pattern, r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        if p_matches:
+            self.logger.debug(f"段落转换后前200字符: {repr(content[:200])}")
 
         # div标签转换为段落分隔
-        content = re.sub(r'<div[^>]*>(.*?)</div>', r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        div_pattern = r'<div[^>]*>(.*?)</div>'
+        div_matches = re.findall(div_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(div_matches)} 个div标签")
+
+        content = re.sub(div_pattern, r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+        if div_matches:
+            self.logger.debug(f"div转换后前200字符: {repr(content[:200])}")
 
         # 换行标签
-        content = re.sub(r'<br[^>]*/?>', '\n', content, flags=re.IGNORECASE)
+        br_pattern = r'<br[^>]*/?>'
+        br_matches = re.findall(br_pattern, content, flags=re.IGNORECASE)
+        self.logger.debug(f"找到 {len(br_matches)} 个br标签")
+
+        content = re.sub(br_pattern, '\n', content, flags=re.IGNORECASE)
+        if br_matches:
+            self.logger.debug(f"br转换后前200字符: {repr(content[:200])}")
 
         # 列表项
-        content = re.sub(r'<li[^>]*>(.*?)</li>', r'\n• \1', content, flags=re.IGNORECASE | re.DOTALL)
+        li_pattern = r'<li[^>]*>(.*?)</li>'
+        li_matches = re.findall(li_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(li_matches)} 个li标签")
+
+        content = re.sub(li_pattern, r'\n• \1', content, flags=re.IGNORECASE | re.DOTALL)
+        if li_matches:
+            self.logger.debug(f"li转换后前200字符: {repr(content[:200])}")
+
+        # 处理其他常见的HTML标签
+        # 强调标签转换为Markdown
+        strong_pattern = r'<(strong|b)[^>]*>(.*?)</\1>'
+        strong_matches = re.findall(strong_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(strong_matches)} 个粗体标签")
+
+        content = re.sub(strong_pattern, r'**\2**', content, flags=re.IGNORECASE | re.DOTALL)
+        if strong_matches:
+            self.logger.debug(f"粗体转换后前200字符: {repr(content[:200])}")
+
+        # 斜体标签转换为Markdown
+        em_pattern = r'<(em|i)[^>]*>(.*?)</\1>'
+        em_matches = re.findall(em_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(em_matches)} 个斜体标签")
+
+        content = re.sub(em_pattern, r'*\2*', content, flags=re.IGNORECASE | re.DOTALL)
+        if em_matches:
+            self.logger.debug(f"斜体转换后前200字符: {repr(content[:200])}")
+
+        # 链接标签转换为Markdown
+        a_pattern = r'<a[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>'
+        a_matches = re.findall(a_pattern, content, flags=re.IGNORECASE | re.DOTALL)
+        self.logger.debug(f"找到 {len(a_matches)} 个链接标签")
+        if a_matches:
+            self.logger.debug(f"链接示例: {a_matches[0] if a_matches else 'None'}")
+
+        content = re.sub(a_pattern, r'[\2](\1)', content, flags=re.IGNORECASE | re.DOTALL)
+        if a_matches:
+            self.logger.debug(f"链接转换后前200字符: {repr(content[:200])}")
 
         # 2. 清理剩余HTML标签
+        remaining_tags = re.findall(r'<[^>]+>', content)
+        self.logger.debug(f"剩余HTML标签数量: {len(remaining_tags)}")
+        if remaining_tags:
+            self.logger.debug(f"剩余标签示例: {remaining_tags[:5]}")
+
         content = re.sub(r'<[^>]+>', '', content)
+        self.logger.debug(f"清理HTML标签后前200字符: {repr(content[:200])}")
 
         # 3. 处理HTML实体
+        entities_before = content.count('&')
+        self.logger.debug(f"HTML实体数量: {entities_before}")
+
         content = content.replace('&nbsp;', ' ')
         content = content.replace('&amp;', '&')
         content = content.replace('&lt;', '<')
         content = content.replace('&gt;', '>')
         content = content.replace('&quot;', '"')
         content = content.replace('&#39;', "'")
+        content = content.replace('&hellip;', '...')
+        content = content.replace('&mdash;', '—')
+        content = content.replace('&ndash;', '–')
+
+        entities_after = content.count('&')
+        self.logger.debug(f"HTML实体处理后数量: {entities_after}")
+        if entities_before != entities_after:
+            self.logger.debug(f"实体转换后前200字符: {repr(content[:200])}")
 
         # 4. 清理空白字符，保留段落结构
+        self.logger.debug(f"空白字符清理前长度: {len(content)}")
+
         content = re.sub(r'[ \t]+', ' ', content)  # 行内多余空格
         content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)  # 多空行合并
         content = content.strip()  # 去掉首尾空白
 
+        self.logger.debug(f"空白字符清理后长度: {len(content)}")
+        self.logger.debug(f"空白字符清理后前200字符: {repr(content[:200])}")
+
         # 5. 清理段落空格
         lines = content.split('\n')
+        self.logger.debug(f"分割后行数: {len(lines)}")
+
         cleaned_lines = []
-        for line in lines:
+        for i, line in enumerate(lines):
             cleaned_line = line.strip()
             if cleaned_line or (not cleaned_lines or cleaned_lines[-1]):
                 cleaned_lines.append(cleaned_line)
+            if i < 5:  # 只记录前5行的调试信息
+                self.logger.debug(f"行 {i}: {repr(line)} -> {repr(cleaned_line)}")
 
         content = '\n'.join(cleaned_lines)
         content = re.sub(r'\n\n+', '\n\n', content)
+
+        self.logger.debug(f"最终内容长度: {len(content)}")
+        self.logger.debug(f"最终内容前200字符: {repr(content[:200])}")
+        self.logger.debug(f"最终内容后200字符: {repr(content[-200:])}")
+
+        # 检查Markdown格式是否正确
+        markdown_elements = {
+            '粗体': len(re.findall(r'\*\*[^*]+\*\*', content)),
+            '斜体': len(re.findall(r'\*[^*]+\*', content)),
+            '链接': len(re.findall(r'\[[^\]]+\]\([^)]+\)', content)),
+            '列表项': len(re.findall(r'\n• ', content))
+        }
+        self.logger.debug(f"Markdown元素统计: {markdown_elements}")
 
         return content
 
