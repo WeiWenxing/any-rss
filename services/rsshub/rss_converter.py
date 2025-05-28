@@ -245,12 +245,50 @@ class RSSMessageConverter(MessageConverter):
             # 转换为绝对URL
             absolute_url = rss_entry.get_absolute_url(enclosure.url)
 
+            # 处理视频封面图
+            thumbnail_url = None
+            if media_type == "video" and enclosure.poster:
+                # 转换poster为绝对URL
+                thumbnail_url = rss_entry.get_absolute_url(enclosure.poster)
+                # 验证poster URL
+                if not self._is_valid_media_url(thumbnail_url):
+                    self.logger.debug(f"视频封面URL无效: {thumbnail_url}")
+                    thumbnail_url = None
+                else:
+                    self.logger.debug(f"视频封面URL有效: {thumbnail_url}")
+
             # 创建MediaItem
-            media_item = MediaItem(
-                type=media_type,
-                url=absolute_url,
-                caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
-            )
+            if media_type == "video":
+                media_item = MediaItem.create_video(
+                    url=absolute_url,
+                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
+                    thumbnail_url=thumbnail_url
+                )
+                poster_info = f" (封面: {thumbnail_url})" if thumbnail_url else ""
+                self.logger.debug(f"创建视频MediaItem: {absolute_url}{poster_info}")
+            elif media_type == "photo":
+                media_item = MediaItem.create_photo(
+                    url=absolute_url,
+                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
+                )
+            elif media_type == "audio":
+                media_item = MediaItem.create_audio(
+                    url=absolute_url,
+                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
+                )
+            elif media_type == "document":
+                media_item = MediaItem.create_document(
+                    url=absolute_url,
+                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
+                    file_size=enclosure.length
+                )
+            else:
+                # 回退到通用创建方式
+                media_item = MediaItem(
+                    type=media_type,
+                    url=absolute_url,
+                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
+                )
 
             return media_item
 

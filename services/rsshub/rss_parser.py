@@ -457,12 +457,20 @@ class RSSParser:
                     if not video_url or not video_url.startswith(('http://', 'https://')):
                         continue
 
-                    # 转换为绝对URL
+                    # 提取poster封面图URL
+                    poster_url = video_tag.get('poster', '').strip()
+                    if poster_url and not poster_url.startswith(('http://', 'https://')):
+                        # 转换相对URL为绝对URL
+                        poster_url = entry.get_absolute_url(poster_url)
+
+                    # 转换视频URL为绝对URL
                     absolute_url = entry.get_absolute_url(video_url)
 
-                    # 添加为视频附件
-                    entry.add_enclosure(absolute_url, 'video/mp4')
-                    self.logger.debug(f"从内容中添加视频附件: {absolute_url}")
+                    # 添加为视频附件，包含poster信息
+                    entry.add_enclosure(absolute_url, 'video/mp4', poster=poster_url if poster_url else None)
+
+                    poster_info = f" (封面: {poster_url})" if poster_url else ""
+                    self.logger.debug(f"从内容中添加视频附件: {absolute_url}{poster_info}")
 
                 except Exception as e:
                     self.logger.debug(f"处理内容视频失败: {video_url}, 错误: {str(e)}")
@@ -627,7 +635,8 @@ class RSSParser:
                 enclosure_dict = {
                     'url': enclosure.url,
                     'mime_type': enclosure.type,
-                    'length': enclosure.length
+                    'length': enclosure.length,
+                    'poster': enclosure.poster
                 }
                 entry_dict['enclosures'].append(enclosure_dict)
 
@@ -685,7 +694,8 @@ class RSSParser:
                     entry.add_enclosure(
                         url=enclosure_dict.get('url', ''),
                         mime_type=enclosure_dict.get('mime_type', ''),
-                        length=enclosure_dict.get('length')
+                        length=enclosure_dict.get('length'),
+                        poster=enclosure_dict.get('poster')
                     )
                 except Exception as e:
                     self.logger.warning(f"恢复附件失败: {str(e)}")

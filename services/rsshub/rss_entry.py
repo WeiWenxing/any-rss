@@ -33,6 +33,7 @@ class RSSEnclosure:
     url: str                    # 媒体文件URL
     type: str                   # MIME类型 (image/jpeg, video/mp4等)
     length: Optional[int] = None # 文件大小（字节）
+    poster: Optional[str] = None # 视频封面图URL（仅对视频有效）
 
     def __post_init__(self):
         """数据验证和标准化"""
@@ -211,7 +212,7 @@ class RSSEntry:
         """获取所有音频附件"""
         return [enc for enc in self.enclosures if enc.is_audio]
 
-    def add_enclosure(self, url: str, mime_type: str, length: Optional[int] = None) -> None:
+    def add_enclosure(self, url: str, mime_type: str, length: Optional[int] = None, poster: Optional[str] = None) -> None:
         """
         添加媒体附件
 
@@ -219,11 +220,13 @@ class RSSEntry:
             url: 媒体文件URL
             mime_type: MIME类型
             length: 文件大小（可选）
+            poster: 视频封面图URL（可选，仅对视频有效）
         """
         try:
-            enclosure = RSSEnclosure(url=url, type=mime_type, length=length)
+            enclosure = RSSEnclosure(url=url, type=mime_type, length=length, poster=poster)
             self.enclosures.append(enclosure)
-            self.logger.debug(f"添加媒体附件: {url} ({mime_type})")
+            poster_info = f" (封面: {poster})" if poster else ""
+            self.logger.debug(f"添加媒体附件: {url} ({mime_type}){poster_info}")
         except Exception as e:
             self.logger.warning(f"添加媒体附件失败: {url}, 错误: {str(e)}")
 
@@ -280,7 +283,8 @@ class RSSEntry:
                 {
                     'url': enc.url,
                     'type': enc.type,
-                    'length': enc.length
+                    'length': enc.length,
+                    'poster': enc.poster
                 }
                 for enc in self.enclosures
             ],
@@ -321,7 +325,8 @@ class RSSEntry:
                 enclosure = RSSEnclosure(
                     url=enc_data['url'],
                     type=enc_data['type'],
-                    length=enc_data.get('length')
+                    length=enc_data['length'],
+                    poster=enc_data.get('poster')
                 )
                 enclosures.append(enclosure)
             except Exception:
@@ -385,7 +390,7 @@ def create_rss_entry(
 
 
 # 便捷函数：创建媒体附件
-def create_enclosure(url: str, mime_type: str, length: Optional[int] = None) -> RSSEnclosure:
+def create_enclosure(url: str, mime_type: str, length: Optional[int] = None, poster: Optional[str] = None) -> RSSEnclosure:
     """
     创建媒体附件的便捷函数
 
@@ -393,11 +398,12 @@ def create_enclosure(url: str, mime_type: str, length: Optional[int] = None) -> 
         url: 媒体文件URL
         mime_type: MIME类型
         length: 文件大小（可选）
+        poster: 视频封面图URL（可选，仅对视频有效）
 
     Returns:
         RSSEnclosure: 媒体附件实例
     """
-    return RSSEnclosure(url=url, type=mime_type, length=length)
+    return RSSEnclosure(url=url, type=mime_type, length=length, poster=poster)
 
 
 if __name__ == "__main__":
