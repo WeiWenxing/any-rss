@@ -231,6 +231,7 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
             self.logger.error(f"💥 添加额外频道订阅异常: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
             return False, str(e), None
 
+
     async def _remove_subscription(self, source_url: str, chat_id: str) -> bool:
         """
         删除RSS订阅

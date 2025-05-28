@@ -370,85 +370,94 @@ class UnifiedCommandHandler(ABC):
             context: 命令上下文
         """
         try:
-            display_name = self.get_module_display_name()
+            self.logger.info(f"🔍 开始处理/{self.module_name}_list命令")
 
-            # 获取当前用户的订阅（如果提供了频道ID参数）
-            if len(context.args) > 0:
-                target_chat_id = context.args[0].strip()
-                subscriptions = self._get_channel_subscriptions(target_chat_id)
+            # 获取所有订阅
+            all_subscriptions = self.manager.get_subscriptions()
 
-                if not subscriptions:
-                    await update.message.reply_text(
-                        f"📋 频道 {target_chat_id} 暂无{display_name}订阅"
-                    )
-                    return
-
-                # 显示订阅列表
-                message_lines = [f"📋 频道 {target_chat_id} 的{display_name}订阅列表:\n"]
-                for source_url in subscriptions:
-                    message_lines.append(f"{source_url} {target_chat_id}")
-
-                message_lines.append(f"\n📊 总计：{len(subscriptions)}个{display_name}订阅")
-                list_text = "\n".join(message_lines)
-                await update.message.reply_text(list_text)
-
-                # 显示删除提示和命令
-                if subscriptions:
-                    delete_text = (
-                        f"🗑️ **删除订阅方法：**\n"
-                        f"点击下方命令可直接复制到剪切板：\n\n"
-                    )
-
-                    delete_commands = []
-                    for source_url in subscriptions:
-                        delete_commands.append(f"/`{self.module_name}_del` {source_url}")
-
-                    delete_text += "\n".join(delete_commands)
-                    await update.message.reply_text(delete_text, parse_mode='Markdown')
-
-            else:
-                # 显示所有订阅
-                all_subscriptions = self.manager.get_subscriptions()
-
-                if not all_subscriptions:
-                    await update.message.reply_text(f"📋 暂无{display_name}订阅")
-                    return
-
-                # 构建订阅列表
-                subscription_lines = []
-                total_sources = len(all_subscriptions)
-                total_channels = 0
-
-                for source_url, channels in all_subscriptions.items():
-                    for channel in channels:
-                        subscription_lines.append(f"{source_url} {channel}")
-                        total_channels += 1
-
-                message_lines = [f"📋 当前{display_name}订阅列表:\n"]
-                message_lines.extend(subscription_lines)
-                message_lines.append(f"\n📊 总计：{total_sources}个{display_name}源，{total_channels}个频道订阅")
-
-                list_text = "\n".join(message_lines)
-                await update.message.reply_text(list_text)
-
-                # 显示删除提示和命令
-                delete_text = (
-                    f"🗑️ **删除订阅方法：**\n"
-                    f"点击下方命令可直接复制到剪切板：\n\n"
+            if not all_subscriptions:
+                self.logger.info(f"📭 {self.module_name}订阅列表为空")
+                await update.message.reply_text(
+                    f"📋 当前没有{self.get_module_display_name()}订阅\n\n"
+                    f"💡 使用 `/{self.module_name}_add <链接> <频道ID>` 添加订阅",
+                    parse_mode='Markdown'
                 )
+                return
 
-                delete_commands = []
-                for source_url in all_subscriptions.keys():
-                    delete_commands.append(f"/`{self.module_name}_del` {source_url}")
+            # 构建markdown格式的订阅列表
+            message_lines = [f"📋 **{self.get_module_display_name()}订阅列表**\n"]
 
-                delete_text += "\n".join(delete_commands)
-                await update.message.reply_text(delete_text, parse_mode='Markdown')
+            total_sources = len(all_subscriptions)
+            total_channels = 0
+
+            for source_url, channels in all_subscriptions.items():
+                for channel in channels:
+                    # 使用代码块格式避免下划线问题，整行都用代码块包围
+                    message_lines.append(f"`{source_url} {channel}`")
+                    total_channels += 1
+
+            # 添加统计信息
+            message_lines.append(f"\n📊 总计：{total_sources}个{self.get_module_display_name()}源，{total_channels}个频道订阅")
+
+            # 尝试获取模块的帮助信息提供者
+            try:
+                from services.common.help_manager import get_help_manager
+                help_manager = get_help_manager()
+
+                # 检查是否有注册的帮助提供者
+                if self.module_name in help_manager.providers:
+                    provider = help_manager.providers[self.module_name]
+                    basic_commands = provider.get_basic_commands()
+
+                    # 添加基础命令信息
+                    message_lines.append(f"\n**基础命令：**")
+                    # 将下划线命令替换为代码块格式避免markdown解析问题
+                    commands_text = self._format_commands_for_markdown(basic_commands)
+                    message_lines.append(commands_text)
+
+                    self.logger.info(f"✅ 成功获取{self.module_name}模块的帮助信息")
+                else:
+                    self.logger.warning(f"⚠️ 未找到{self.module_name}模块的帮助信息提供者")
+
+            except Exception as e:
+                self.logger.warning(f"⚠️ 获取帮助信息失败: {str(e)}")
+
+            # 合并所有内容
+            full_message = "\n".join(message_lines)
+
+            self.logger.info(f"✅ {self.module_name}订阅列表生成完成，总长度: {len(full_message)} 字符")
+            await update.message.reply_text(full_message, parse_mode='Markdown')
 
         except Exception as e:
-            self.logger.error(f"处理{self.get_module_display_name()}列表命令失败", exc_info=True)
-            await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
+            self.logger.error(f"💥 处理/{self.module_name}_list命令失败: {str(e)}", exc_info=True)
+            await update.message.reply_text(f"❌ 获取订阅列表失败: {str(e)}")
 
     # ==================== 内部辅助方法 ====================
+
+    def _format_commands_for_markdown(self, commands_text: str) -> str:
+        """
+        格式化命令文本为markdown格式，避免下划线解析问题
+
+        Args:
+            commands_text: 原始命令文本
+
+        Returns:
+            str: 格式化后的命令文本
+        """
+        try:
+            # 通用的命令格式化：将 /module_command 格式的命令用代码块包围
+            import re
+
+            # 匹配 /模块名_命令名 的模式
+            pattern = rf'/({self.module_name}_\w+)'
+            formatted_text = re.sub(pattern, r'`/\1`', commands_text)
+
+            self.logger.debug(f"命令格式化: {self.module_name} 模块命令已转换为代码块格式")
+            return formatted_text
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 命令格式化失败: {str(e)}")
+            return commands_text
 
     def _check_subscription_status(self, source_url: str, chat_id: str, subscriptions: Dict[str, List[str]]) -> str:
         """
