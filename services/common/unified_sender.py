@@ -225,6 +225,12 @@ class UnifiedTelegramSender:
                     'url': media_item.url,
                     'type': self._convert_media_type(media_item.type)
                 }
+
+                # 如果是视频且有thumbnail_url，添加poster字段供RSS媒体策略使用
+                if media_item.type == MediaType.VIDEO and media_item.thumbnail_url:
+                    media_dict['poster'] = media_item.thumbnail_url
+                    self.logger.debug(f"视频媒体包含封面: {media_item.thumbnail_url}")
+
                 media_list.append(media_dict)
 
             self.logger.info(f"准备使用RSS媒体策略发送 {len(media_list)} 个媒体项")

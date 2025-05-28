@@ -258,37 +258,12 @@ class RSSMessageConverter(MessageConverter):
                     self.logger.debug(f"视频封面URL有效: {thumbnail_url}")
 
             # 创建MediaItem
-            if media_type == "video":
-                media_item = MediaItem.create_video(
-                    url=absolute_url,
-                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
-                    thumbnail_url=thumbnail_url
-                )
-                poster_info = f" (封面: {thumbnail_url})" if thumbnail_url else ""
-                self.logger.debug(f"创建视频MediaItem: {absolute_url}{poster_info}")
-            elif media_type == "photo":
-                media_item = MediaItem.create_photo(
-                    url=absolute_url,
-                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
-                )
-            elif media_type == "audio":
-                media_item = MediaItem.create_audio(
-                    url=absolute_url,
-                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
-                )
-            elif media_type == "document":
-                media_item = MediaItem.create_document(
-                    url=absolute_url,
-                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
-                    file_size=enclosure.length
-                )
-            else:
-                # 回退到通用创建方式
-                media_item = MediaItem(
-                    type=media_type,
-                    url=absolute_url,
-                    caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None
-                )
+            media_item = MediaItem(
+                type=media_type,
+                url=absolute_url,
+                caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
+                thumbnail_url=thumbnail_url  # 传递poster信息
+            )
 
             return media_item
 
