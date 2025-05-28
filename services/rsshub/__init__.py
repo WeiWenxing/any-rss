@@ -6,7 +6,7 @@ RSSHub订阅服务模块
 
 主要组件：
 1. RSSHubManager - RSS订阅管理器
-2. RSSParser - RSS/Atom解析器  
+2. RSSParser - RSS/Atom解析器
 3. RSSMessageConverter - RSS消息转换器
 4. RSSHubScheduler - RSS定时调度器
 5. register_rsshub_commands - 命令注册函数
@@ -27,28 +27,32 @@ from services.common.message_converter import register_converter
 _rss_converter = create_rss_converter()
 register_converter(_rss_converter)
 
+# 自动注册帮助信息提供者
+from .help_provider import register_help_provider
+register_help_provider()
+
 __all__ = [
     # 核心管理器
     'RSSHubManager',
     'create_rsshub_manager',
-    
+
     # RSS解析器
-    'RSSParser', 
+    'RSSParser',
     'create_rss_parser',
-    
+
     # 消息转换器
     'RSSMessageConverter',
     'create_rss_converter',
-    
+
     # RSS实体
     'RSSEntry',
-    'RSSEnclosure', 
+    'RSSEnclosure',
     'create_rss_entry',
-    
+
     # 调度器
     'RSSHubScheduler',
     'create_rsshub_scheduler',
-    
+
     # 命令注册
     'register_rsshub_commands'
-] 
+]

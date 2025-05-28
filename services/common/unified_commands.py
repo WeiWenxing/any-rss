@@ -401,7 +401,7 @@ class UnifiedCommandHandler(ABC):
 
                     delete_commands = []
                     for source_url in subscriptions:
-                        delete_commands.append(f"/{self.module_name}_del {source_url}")
+                        delete_commands.append(f"/`{self.module_name}_del` {source_url}")
 
                     delete_text += "\n".join(delete_commands)
                     await update.message.reply_text(delete_text, parse_mode='Markdown')
@@ -439,7 +439,7 @@ class UnifiedCommandHandler(ABC):
 
                 delete_commands = []
                 for source_url in all_subscriptions.keys():
-                    delete_commands.append(f"/{self.module_name}_del {source_url}")
+                    delete_commands.append(f"/`{self.module_name}_del` {source_url}")
 
                 delete_text += "\n".join(delete_commands)
                 await update.message.reply_text(delete_text, parse_mode='Markdown')
