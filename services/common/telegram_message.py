@@ -8,11 +8,11 @@
 import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Union
-from enum import Enum
 
 
-class MediaType(Enum):
-    """媒体类型枚举"""
+# 媒体类型常量
+class MediaType:
+    """媒体类型常量"""
     PHOTO = "photo"
     VIDEO = "video"
     AUDIO = "audio"
@@ -46,7 +46,7 @@ class MediaItem:
             raise ValueError("MediaItem的url不能为空")
 
         # 验证媒体类型
-        valid_types = [item.value for item in MediaType]
+        valid_types = [MediaType.PHOTO, MediaType.VIDEO, MediaType.AUDIO, MediaType.DOCUMENT]
         if self.type not in valid_types:
             raise ValueError(f"无效的媒体类型: {self.type}，支持的类型: {valid_types}")
 
@@ -61,7 +61,7 @@ class MediaItem:
                     width: Optional[int] = None, height: Optional[int] = None) -> 'MediaItem':
         """创建图片媒体项的便捷方法"""
         return cls(
-            type=MediaType.PHOTO.value,
+            type=MediaType.PHOTO,
             url=url,
             caption=caption,
             width=width,
@@ -74,7 +74,7 @@ class MediaItem:
                     duration: Optional[int] = None, thumbnail_url: Optional[str] = None) -> 'MediaItem':
         """创建视频媒体项的便捷方法"""
         return cls(
-            type=MediaType.VIDEO.value,
+            type=MediaType.VIDEO,
             url=url,
             caption=caption,
             width=width,
@@ -88,7 +88,7 @@ class MediaItem:
                     duration: Optional[int] = None, file_name: Optional[str] = None) -> 'MediaItem':
         """创建音频媒体项的便捷方法"""
         return cls(
-            type=MediaType.AUDIO.value,
+            type=MediaType.AUDIO,
             url=url,
             caption=caption,
             duration=duration,
@@ -100,7 +100,7 @@ class MediaItem:
                        file_name: Optional[str] = None, file_size: Optional[int] = None) -> 'MediaItem':
         """创建文档媒体项的便捷方法"""
         return cls(
-            type=MediaType.DOCUMENT.value,
+            type=MediaType.DOCUMENT,
             url=url,
             caption=caption,
             file_name=file_name,
@@ -194,11 +194,11 @@ class TelegramMessage:
 
     def get_photos(self) -> List[MediaItem]:
         """获取所有图片媒体项"""
-        return self.get_media_by_type(MediaType.PHOTO.value)
+        return self.get_media_by_type(MediaType.PHOTO)
 
     def get_videos(self) -> List[MediaItem]:
         """获取所有视频媒体项"""
-        return self.get_media_by_type(MediaType.VIDEO.value)
+        return self.get_media_by_type(MediaType.VIDEO)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式（用于序列化）"""

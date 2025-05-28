@@ -21,7 +21,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from services.common.message_converter import MessageConverter, ConversionError, ConverterType, register_converter
-from services.common.telegram_message import TelegramMessage, MediaItem, MediaType
+from services.common.telegram_message import TelegramMessage, MediaItem
 from .rss_entry import RSSEntry, RSSEnclosure
 
 
@@ -283,39 +283,47 @@ class RSSMessageConverter(MessageConverter):
             return media_items
 
         try:
-            # 提取图片链接
-            img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
-            img_matches = re.findall(img_pattern, content, re.IGNORECASE)
+            # 使用公共媒体解析器提取媒体
+            from services.common.media_parser import extract_media_from_html
 
-            for img_url in img_matches:
+            media_list = extract_media_from_html(content)
+            self.logger.debug(f"公共媒体解析器提取到 {len(media_list)} 个媒体项")
+
+            for media_dict in media_list:
                 try:
                     # 转换为绝对URL
-                    absolute_url = rss_entry.get_absolute_url(img_url)
+                    absolute_url = rss_entry.get_absolute_url(media_dict['url'])
 
                     # 验证URL
                     if not self._is_valid_media_url(absolute_url):
                         continue
 
+                    # 确定媒体类型
+                    media_type = "photo" if media_dict['type'] == 'image' else "video"
+
                     # 创建MediaItem
                     media_item = MediaItem(
-                        type="photo",
+                        type=media_type,
                         url=absolute_url,
-                        caption=None  # 内容图片不添加标题
+                        caption=None  # 内容媒体不添加标题
                     )
 
                     media_items.append(media_item)
 
                     # 限制数量
-                    if len(media_items) >= 5:  # 从内容提取的图片限制为5个
+                    if len(media_items) >= 5:  # 从内容提取的媒体限制为5个
                         break
 
                 except Exception as e:
-                    self.logger.debug(f"处理内容图片失败: {img_url}, 错误: {str(e)}")
+                    self.logger.debug(f"处理内容媒体失败: {media_dict.get('url', 'unknown')}, 错误: {str(e)}")
                     continue
 
             self.logger.debug(f"从内容中提取到 {len(media_items)} 个媒体项")
             return media_items
 
+        except ImportError:
+            self.logger.warning("公共媒体解析器不可用，跳过内容媒体提取")
+            return []
         except Exception as e:
             self.logger.warning(f"从内容提取媒体失败: {str(e)}")
             return []
