@@ -1109,7 +1109,218 @@ class RSSHubScheduler:
 
 ### 8.1 RSS解析算法
 
-#### 8.1.1 RSS/Atom格式检测
+#### 8.1.1 订阅添加算法（/rsshub_add命令完整流程）
+
+```python
+async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    RSSHub订阅添加的完整算法实现（当前实际实现）
+
+    核心设计原则：
+    1. 严格的执行顺序：参数验证→订阅状态检查→统一反馈流程→分支处理
+    2. API请求优化原则：重复订阅零消耗，后续频道无需API，只有首个频道才发起API请求
+    3. 三分支处理逻辑：重复订阅、首个频道、后续频道
+    4. 统一用户反馈：隐藏技术实现细节，用户体验一致
+    """
+
+    try:
+        # ==================== 阶段1: 参数验证（无HTTP请求） ====================
+        display_name = handler.get_module_display_name()  # "RSS"
+        user = update.message.from_user
+        chat_id = update.message.chat_id
+
+        logger.info(f"🚀 开始处理 /rsshub_add 命令 - 用户: {user.username}(ID:{user.id})")
+
+        # 1.1 参数数量验证
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                f"❌ 参数不足\n\n"
+                f"用法: /rsshub_add <RSS链接> <频道ID>\n\n"
+                f"示例:\n"
+                f"/rsshub_add https://rsshub.app/github/issue/DIYgod/RSSHub @tech_channel\n"
+                f"/rsshub_add https://rsshub.app/bilibili/user/video/2267573 -1001234567890"
+            )
+            return
+
+        source_url = context.args[0].strip()
+        target_chat_id = context.args[1].strip()
+        logger.info(f"📋 解析参数 - 源URL: {source_url}, 目标频道: {target_chat_id}")
+
+        # 1.2 URL格式验证（无HTTP请求）
+        url_valid, url_error = handler.validate_source_url(source_url)
+        if not url_valid:
+            logger.error(f"❌ URL验证失败: {url_error}")
+            await update.message.reply_text(f"❌ {url_error}")
+            return
+
+        # 1.3 频道ID格式验证（无HTTP请求）
+        chat_valid, chat_error = handler.validate_chat_id(target_chat_id)
+        if not chat_valid:
+            logger.error(f"❌ 频道ID验证失败: {chat_error}")
+            await update.message.reply_text(f"❌ {chat_error}")
+            return
+
+        # 1.4 URL标准化
+        source_url = handler.normalize_source_url(source_url)
+
+        # 1.5 执行额外验证（RSS源验证，第一次API请求）
+        extra_valid, extra_error = await handler.perform_additional_validation(source_url, target_chat_id)
+        if not extra_valid:
+            logger.error(f"❌ 额外验证失败: {extra_error}")
+            await update.message.reply_text(f"❌ {extra_error}")
+            return
+
+        # ==================== 阶段2: 订阅状态检查（无HTTP请求） ====================
+        logger.info(f"📊 检查订阅状态")
+        subscriptions = manager.get_subscriptions()
+        subscription_status = handler._check_subscription_status(source_url, target_chat_id, subscriptions)
+        logger.info(f"📋 订阅状态检查结果: {subscription_status}")
+
+        # ==================== 分支1: 重复订阅处理（零API消耗） ====================
+        if subscription_status == "duplicate":
+            logger.info(f"⚠️ 检测到重复订阅，直接返回提示信息")
+            await update.message.reply_text(
+                handler._format_duplicate_subscription_message(source_url, target_chat_id)
+            )
+            return
+
+        # ==================== 阶段3: 统一反馈流程开始 ====================
+        # 注意：首个频道和后续频道使用完全相同的用户反馈流程
+        logger.info(f"💬 发送处理中反馈消息")
+        processing_message = await update.message.reply_text(
+            handler._format_processing_message(source_url, target_chat_id)
+        )
+
+        try:
+            # ==================== 分支2: 首个频道处理 ====================
+            if subscription_status == "first_channel":
+                logger.info(f"🆕 首个频道订阅流程")
+
+                # 2.1 添加首个频道订阅（第二次API请求：获取RSS源信息）
+                logger.info(f"💾 添加首个频道订阅")
+                success, error_msg, content_info = await handler._add_first_channel_subscription(source_url, target_chat_id)
+                if not success:
+                    logger.error(f"❌ 首个频道订阅失败: {error_msg}")
+                    await processing_message.edit_text(
+                        handler._format_error_message(source_url, error_msg)
+                    )
+                    return
+                logger.info(f"✅ 首个频道订阅添加成功")
+
+                # 2.2 获取历史内容（第三次API请求：获取RSS条目）
+                logger.info(f"📥 获取历史内容")
+                check_success, check_error_msg, content_list = manager.check_updates(source_url)
+                if not check_success:
+                    logger.error(f"❌ 获取历史内容失败: {check_error_msg}")
+                    await processing_message.edit_text(
+                        handler._format_final_success_message(source_url, target_chat_id, 0)
+                    )
+                    return
+
+                if not content_list:
+                    logger.info(f"📭 没有新条目，完成订阅")
+                    await processing_message.edit_text(
+                        handler._format_final_success_message(source_url, target_chat_id, 0)
+                    )
+                    return
+
+                content_count = len(content_list)
+                logger.info(f"📊 检测到新条目: {content_count} 个")
+
+                # 2.3 进度反馈
+                await processing_message.edit_text(
+                    handler._format_progress_message(source_url, target_chat_id, content_count)
+                )
+
+                # 2.4 发送内容到频道
+                logger.info(f"📤 开始批量发送内容到频道")
+                sent_count = await manager.send_content_batch(
+                    context.bot, content_list, source_url, [target_chat_id]
+                )
+                logger.info(f"✅ 批量发送完成: 成功发送 {sent_count}/{content_count} 个内容")
+
+            # ==================== 分支3: 后续频道处理（零API消耗） ====================
+            else:  # subscription_status == "additional_channel"
+                logger.info(f"➕ 后续频道订阅流程（无需API请求）")
+
+                # 3.1 添加后续频道订阅（无API请求）
+                success, error_msg, content_info = await handler._add_additional_channel_subscription(
+                    source_url, target_chat_id
+                )
+                if not success:
+                    logger.error(f"❌ 后续频道订阅失败: {error_msg}")
+                    await processing_message.edit_text(
+                        handler._format_error_message(source_url, error_msg)
+                    )
+                    return
+
+                # 3.2 获取已知内容ID列表（用于历史对齐，无API请求）
+                if isinstance(content_info, dict) and content_info.get("need_alignment"):
+                    content_list = content_info.get("known_item_ids", [])
+                    content_count = len(content_list)
+                    logger.info(f"🔄 需要历史对齐: {content_count} 个已知条目")
+                else:
+                    content_count = 0
+                    logger.info(f"📭 无需历史对齐")
+
+                if content_count > 0:
+                    # 3.3 进度反馈
+                    await processing_message.edit_text(
+                        handler._format_progress_message(source_url, target_chat_id, content_count)
+                    )
+
+                    # 3.4 执行具体操作：历史对齐（用户看不到技术细节，无API请求）
+                    logger.info(f"🔄 开始历史对齐")
+                    alignment_success, alignment_msg, sent_count = await alignment.perform_historical_alignment(
+                        context.bot, source_url, target_chat_id, manager, content_list
+                    )
+                    logger.info(f"✅ 历史对齐完成: {'成功' if alignment_success else '失败'}, 对齐条目: {sent_count}")
+                else:
+                    sent_count = 0
+
+            # ==================== 阶段4: 最终反馈（统一格式） ====================
+            logger.info(f"🎉 发送最终成功反馈")
+            await processing_message.edit_text(
+                handler._format_final_success_message(source_url, target_chat_id, sent_count)
+            )
+
+            logger.info(f"🎊 /rsshub_add 命令处理完成 - 源: {source_url}, 频道: {target_chat_id}")
+
+        except Exception as e:
+            # 错误反馈
+            logger.error(f"💥 订阅处理失败: {source_url} -> {target_chat_id}", exc_info=True)
+            await processing_message.edit_text(
+                handler._format_error_message(source_url, str(e))
+            )
+
+    except Exception as e:
+        logger.error(f"💥 处理RSS添加命令失败", exc_info=True)
+        await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
+```
+
+**算法关键设计点：**
+
+1. **严格的执行顺序**：参数验证→订阅状态检查→统一反馈流程→分支处理
+2. **API请求优化原则**：
+   - 重复订阅：立即返回，零API消耗
+   - 后续频道：无需API请求，只做转发
+   - 首个频道：3次API请求（验证+获取源信息+获取条目）
+3. **三分支处理逻辑**：
+   - 重复订阅：立即返回，零API消耗
+   - 首个频道：API验证→添加订阅→获取历史内容→发送到频道
+   - 后续频道：添加订阅→获取已知ID→历史对齐（无API请求）
+4. **统一用户反馈**：隐藏技术实现细节，用户体验一致
+5. **数据传递机制**：通过`content_info`在内存中传递对齐信息
+
+**当前实现的API请求分析：**
+- **首个频道分支**：3次API请求
+  1. `perform_additional_validation()` - RSS源验证
+  2. `_add_first_channel_subscription()` - 获取RSS源信息
+  3. `manager.check_updates()` - 获取RSS条目
+- **后续频道分支**：0次API请求
+- **重复订阅分支**：0次API请求
+
+#### 8.1.2 RSS/Atom格式检测
 ```python
 def _detect_feed_format(xml_content: str) -> str:
     """
@@ -1143,7 +1354,7 @@ def _detect_feed_format(xml_content: str) -> str:
         return 'unknown'
 ```
 
-#### 8.1.2 条目ID生成算法
+#### 8.1.3 条目ID生成算法
 ```python
 def _generate_item_id(entry: RSSEntry) -> str:
     """
@@ -1174,7 +1385,7 @@ def _generate_item_id(entry: RSSEntry) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 ```
 
-#### 8.1.3 新条目检测算法（参考douyin模块）
+#### 8.1.4 新条目检测算法（参考douyin模块）
 ```python
 def check_updates(self, rss_url: str) -> Tuple[bool, str, List[Any]]:
     """
