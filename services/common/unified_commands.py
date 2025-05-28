@@ -52,20 +52,21 @@ class UnifiedCommandHandler(ABC):
 
     # ==================== 抽象接口（子类必须实现）====================
 
-    @abstractmethod
+    # 注意：get_source_display_name 已移至可选接口，避免子类重写时浪费API
+
+    # ==================== 可选接口（子类可重写）====================
+
     def get_source_display_name(self, source_url: str) -> str:
         """
-        获取数据源的显示名称
+        获取数据源的显示名称（默认直接返回URL，避免API浪费）
 
         Args:
             source_url: 数据源URL
 
         Returns:
-            str: 显示名称
+            str: 显示名称（默认为URL本身）
         """
-        pass
-
-    # ==================== 可选接口（子类可重写）====================
+        return source_url
 
     def get_module_display_name(self) -> str:
         """

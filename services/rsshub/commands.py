@@ -54,18 +54,7 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
 
     # ==================== 实现UnifiedCommandHandler抽象接口 ====================
 
-    def get_source_display_name(self, source_url: str) -> str:
-        """
-        获取RSS源的显示名称（不请求API，避免浪费调用次数）
-
-        Args:
-            source_url: RSS源URL
-
-        Returns:
-            str: 显示名称
-        """
-        # 直接返回URL，不请求API获取标题
-        return source_url
+    # 注意：get_source_display_name 现在使用基类默认实现，直接返回URL
 
     # ==================== 重写UnifiedCommandHandler的可选方法 ====================
 
