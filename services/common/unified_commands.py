@@ -417,13 +417,18 @@ class UnifiedCommandHandler(ABC):
         Returns:
             Tuple[bool, str, Optional[Dict]]: (是否成功, 错误信息, 内容数据)
         """
-        # 默认实现：直接添加到订阅列表
+        # 修复：manager的add_subscription只返回布尔值，不是元组
         try:
-            subscriptions = self.manager.get_subscriptions()
-            subscriptions[source_url] = [chat_id]
-            # 这里需要子类实现具体的保存逻辑
-            return True, "", {}
+            success = self.manager.add_subscription(source_url, chat_id)
+            if success:
+                self.logger.info(f"✅ 首个频道订阅添加成功: {source_url} -> {chat_id}")
+                return True, "", {}
+            else:
+                error_msg = "添加订阅失败"
+                self.logger.error(f"❌ 首个频道订阅添加失败: {source_url} -> {chat_id}, 错误: {error_msg}")
+                return False, error_msg, None
         except Exception as e:
+            self.logger.error(f"❌ 首个频道订阅添加异常: {source_url} -> {chat_id}", exc_info=True)
             return False, str(e), None
 
     async def _add_additional_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[Dict]]:
@@ -438,10 +443,14 @@ class UnifiedCommandHandler(ABC):
             Tuple[bool, str, Optional[Dict]]: (是否成功, 错误信息, 对齐信息)
         """
         try:
-            subscriptions = self.manager.get_subscriptions()
-            existing_channels = subscriptions.get(source_url, [])
-            existing_channels.append(chat_id)
-            subscriptions[source_url] = existing_channels
+            # 修复：manager的add_subscription只返回布尔值，不是元组
+            success = self.manager.add_subscription(source_url, chat_id)
+            if not success:
+                error_msg = "添加订阅失败"
+                self.logger.error(f"❌ 额外频道订阅添加失败: {source_url} -> {chat_id}, 错误: {error_msg}")
+                return False, error_msg, None
+
+            self.logger.info(f"✅ 额外频道订阅添加成功: {source_url} -> {chat_id}")
 
             # 获取已知内容列表（用于历史对齐）
             known_item_ids = self.manager.get_known_item_ids(source_url)
@@ -455,6 +464,7 @@ class UnifiedCommandHandler(ABC):
 
             return True, "", alignment_info
         except Exception as e:
+            self.logger.error(f"❌ 额外频道订阅添加异常: {source_url} -> {chat_id}", exc_info=True)
             return False, str(e), None
 
     async def _remove_subscription(self, source_url: str, chat_id: str) -> bool:
@@ -469,26 +479,17 @@ class UnifiedCommandHandler(ABC):
             bool: 是否删除成功
         """
         try:
-            subscriptions = self.manager.get_subscriptions()
-
-            if source_url not in subscriptions:
-                return False
-
-            channels = subscriptions[source_url]
-            if chat_id in channels:
-                channels.remove(chat_id)
-
-                # 如果没有频道订阅了，删除整个源
-                if not channels:
-                    del subscriptions[source_url]
-
-                # 这里需要子类实现具体的保存逻辑
+            # 修复：manager的remove_subscription只返回布尔值，不是元组
+            success = self.manager.remove_subscription(source_url, chat_id)
+            if success:
+                self.logger.info(f"✅ 订阅删除成功: {source_url} -> {chat_id}")
                 return True
             else:
+                self.logger.warning(f"⚠️ 订阅删除失败: {source_url} -> {chat_id}")
                 return False
 
         except Exception as e:
-            self.logger.error(f"删除订阅失败: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ 删除订阅异常: {source_url} -> {chat_id}", exc_info=True)
             return False
 
     def _get_channel_subscriptions(self, chat_id: str) -> List[str]:
