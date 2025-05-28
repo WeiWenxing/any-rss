@@ -261,7 +261,6 @@ class RSSMessageConverter(MessageConverter):
             media_item = MediaItem(
                 type=media_type,
                 url=absolute_url,
-                caption=rss_entry.title if len(rss_entry.enclosures) == 1 else None,
                 thumbnail_url=thumbnail_url  # 传递poster信息
             )
 

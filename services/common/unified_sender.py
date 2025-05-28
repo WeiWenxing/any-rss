@@ -241,7 +241,8 @@ class UnifiedTelegramSender:
             success_messages = await media_sender.send_media_group_with_strategy(
                 chat_id=chat_id,
                 media_list=analyzed_media,
-                caption=message.media_group[0].caption if message.media_group else None
+                caption=message.text,  # 使用TelegramMessage.text传递完整信息
+                parse_mode=message.parse_mode
             )
 
             if success_messages:

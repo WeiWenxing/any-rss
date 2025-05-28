@@ -163,7 +163,8 @@ class MediaSender:
         self,
         chat_id: str,
         media_list: List[MediaInfo],
-        caption: str = ""
+        caption: str = "",
+        parse_mode: Optional[str] = None
     ) -> List[Message]:
         """
         使用策略发送媒体组
@@ -172,6 +173,7 @@ class MediaSender:
             chat_id: 目标聊天ID
             media_list: 媒体信息列表
             caption: 标题
+            parse_mode: 解析模式
 
         Returns:
             List[Message]: 发送成功的消息列表，失败返回空列表
@@ -190,7 +192,7 @@ class MediaSender:
 
         # 1. 先尝试URL直接发送的媒体
         if url_direct_media:
-            url_messages = await self._send_url_direct_group(chat_id, url_direct_media, caption)
+            url_messages = await self._send_url_direct_group(chat_id, url_direct_media, caption, parse_mode)
 
             # 如果URL发送成功，记录消息
             if url_messages:
@@ -204,13 +206,13 @@ class MediaSender:
 
         # 2. 处理需要下载上传的媒体
         if download_upload_media:
-            download_messages = await self._send_download_upload_group(chat_id, download_upload_media, caption if not sent_messages else "")
+            download_messages = await self._send_download_upload_group(chat_id, download_upload_media, caption if not sent_messages else "", parse_mode)
             if download_messages:
                 sent_messages.extend(download_messages)
 
         return sent_messages
 
-    async def _send_url_direct_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> List[Message]:
+    async def _send_url_direct_group(self, chat_id: str, media_list: List[MediaInfo], caption: str, parse_mode: Optional[str] = None) -> List[Message]:
         """
         直接使用URL发送媒体组
 
@@ -218,6 +220,7 @@ class MediaSender:
             chat_id: 目标聊天ID
             media_list: 媒体信息列表
             caption: 标题
+            parse_mode: 解析模式
 
         Returns:
             List[Message]: 发送成功的消息列表，失败返回空列表
@@ -231,12 +234,14 @@ class MediaSender:
                 if media_info.media_type == 'video':
                     media_item = InputMediaVideo(
                         media=media_info.url,
-                        caption=caption if i == 0 else None
+                        caption=caption if i == 0 else None,
+                        parse_mode=parse_mode
                     )
                 else:  # image
                     media_item = InputMediaPhoto(
                         media=media_info.url,
-                        caption=caption if i == 0 else None
+                        caption=caption if i == 0 else None,
+                        parse_mode=parse_mode
                     )
                 telegram_media.append(media_item)
 
@@ -249,7 +254,7 @@ class MediaSender:
             logging.error(f"❌ URL直接发送失败: {str(e)}")
             return []
 
-    async def _send_download_upload_group(self, chat_id: str, media_list: List[MediaInfo], caption: str) -> List[Message]:
+    async def _send_download_upload_group(self, chat_id: str, media_list: List[MediaInfo], caption: str, parse_mode: Optional[str] = None) -> List[Message]:
         """
         下载后上传发送媒体组
 
@@ -257,6 +262,7 @@ class MediaSender:
             chat_id: 目标聊天ID
             media_list: 媒体信息列表
             caption: 标题
+            parse_mode: 解析模式
 
         Returns:
             List[Message]: 发送成功的消息列表，失败返回空列表
@@ -302,7 +308,8 @@ class MediaSender:
                     # 构建视频媒体项，如果有封面图则使用
                     video_kwargs = {
                         'media': file_content,
-                        'caption': caption if i == 0 else None
+                        'caption': caption if i == 0 else None,
+                        'parse_mode': parse_mode
                     }
 
                     # 如果有本地封面图，添加thumbnail参数
@@ -315,7 +322,8 @@ class MediaSender:
                 else:  # image
                     media_item = InputMediaPhoto(
                         media=file_content,
-                        caption=caption if i == 0 else None
+                        caption=caption if i == 0 else None,
+                        parse_mode=parse_mode
                     )
                 telegram_media.append(media_item)
 
