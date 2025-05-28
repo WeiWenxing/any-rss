@@ -1169,23 +1169,48 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if subscription_status == "first_channel":
                 logger.info(f"🆕 首个频道订阅流程")
 
-                # 2.1 添加首个频道订阅（一次性API请求：获取RSS源信息和内容）
-                logger.info(f"💾 添加首个频道订阅")
-                success, error_msg, content_list = await handler._add_first_channel_subscription(source_url, target_chat_id)
+                # 2.1 添加首个频道订阅记录（无API请求，仅添加订阅）
+                logger.info(f"📝 添加首个频道订阅记录")
+                success, error_msg, _ = await handler._add_first_channel_subscription(source_url, target_chat_id)
                 if not success:
                     logger.error(f"❌ 首个频道订阅失败: {error_msg}")
                     await processing_message.edit_text(
                         handler._format_error_message(source_url, error_msg)
                     )
                     return
-                logger.info(f"✅ 首个频道订阅添加成功，获取到 {len(content_list) if content_list else 0} 个内容")
+                logger.info(f"✅ 首个频道订阅记录添加成功")
 
-                # 2.2 发送历史内容（无需额外API请求，使用已获取的内容）
+                # 2.2 获取历史内容（第一次API请求：获取RSS条目）
+                logger.info(f"📥 获取历史内容")
+                check_success, check_error_msg, content_list = manager.check_updates(source_url)
+                if not check_success:
+                    logger.error(f"❌ 获取历史内容失败: {check_error_msg}")
+                    await processing_message.edit_text(
+                        handler._format_final_success_message(source_url, target_chat_id, 0)
+                    )
+                    return
+
+                if not content_list:
+                    logger.info(f"📭 没有新条目，完成订阅")
+                    await processing_message.edit_text(
+                        handler._format_final_success_message(source_url, target_chat_id, 0)
+                    )
+                    return
+
+                content_count = len(content_list)
+                logger.info(f"📊 检测到新条目: {content_count} 个")
+
+                # 2.3 进度反馈
+                await processing_message.edit_text(
+                    handler._format_progress_message(source_url, target_chat_id, content_count)
+                )
+
+                # 2.4 发送内容到频道（第二次API请求：发送到Telegram）
                 logger.info(f"📤 开始批量发送内容到频道")
                 sent_count = await manager.send_content_batch(
                     context.bot, content_list, source_url, [target_chat_id]
                 )
-                logger.info(f"✅ 批量发送完成: 成功发送 {sent_count}/{len(content_list)} 个内容")
+                logger.info(f"✅ 批量发送完成: 成功发送 {sent_count}/{content_count} 个内容")
 
             # ==================== 分支3: 后续频道处理（零API消耗） ====================
             else:  # subscription_status == "additional_channel"
@@ -1261,8 +1286,9 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 5. **数据传递机制**：通过`content_info`在内存中传递对齐信息
 
 **当前实现的API请求分析：**
-- **首个频道分支**：1次API请求
-  1. `_add_first_channel_subscription()` - 一次性获取RSS源信息和内容
+- **首个频道分支**：2次API请求
+  1. `manager.check_updates()` - 获取RSS条目
+  2. `manager.send_content_batch()` - 发送到Telegram
 - **后续频道分支**：0次API请求
 - **重复订阅分支**：0次API请求
 

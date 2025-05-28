@@ -56,7 +56,7 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
 
     def get_source_display_name(self, source_url: str) -> str:
         """
-        获取RSS源的显示名称
+        获取RSS源的显示名称（不请求API，避免浪费调用次数）
 
         Args:
             source_url: RSS源URL
@@ -64,16 +64,8 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
         Returns:
             str: 显示名称
         """
-        try:
-            # 尝试获取RSS源的标题
-            feed_info = self.rss_parser.get_feed_info(source_url)
-            title = feed_info.get('title', '')
-            if title:
-                return f"{title} ({source_url})"
-            else:
-                return source_url
-        except Exception:
-            return source_url
+        # 直接返回URL，不请求API获取标题
+        return source_url
 
     # ==================== 重写UnifiedCommandHandler的可选方法 ====================
 
@@ -85,121 +77,6 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
             str: 模块显示名称
         """
         return "RSS"
-
-    async def _add_first_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[List[Dict]]]:
-        """
-        添加首个频道订阅（一次性获取RSS源信息和内容）
-
-        Args:
-            source_url: RSS源URL
-            chat_id: 频道ID
-
-        Returns:
-            Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 内容数据列表)
-        """
-        try:
-            self.logger.info(f"📥 添加首个频道订阅: {source_url} -> {chat_id}")
-
-            # 1. 获取RSS源信息和最新内容（一次性API请求）
-            success, error_msg, content_list = self.manager.fetch_latest_content(source_url)
-            if not success:
-                self.logger.error(f"❌ 获取RSS内容失败: {error_msg}")
-                return False, error_msg, None
-
-            # 2. 获取RSS源标题（用于订阅存储）
-            try:
-                feed_info = self.rss_parser.get_feed_info(source_url)
-                rss_title = feed_info.get('title', '')
-                self.logger.info(f"📰 RSS源标题: {rss_title}")
-            except Exception as e:
-                self.logger.warning(f"⚠️ 获取RSS标题失败，使用默认值: {str(e)}")
-                rss_title = ""
-
-            # 3. 添加订阅记录
-            subscription_success = self.manager.add_subscription(source_url, chat_id, rss_title)
-            if not subscription_success:
-                self.logger.error(f"❌ 添加订阅记录失败")
-                return False, "添加订阅记录失败", None
-
-            # 4. 保存已知条目ID（避免重复推送）
-            if content_list:
-                known_item_ids = [self.manager.generate_content_id(content) for content in content_list]
-                self.manager.save_known_item_ids(source_url, known_item_ids)
-                self.logger.info(f"💾 保存已知条目ID: {len(known_item_ids)} 个")
-
-            self.logger.info(f"✅ 首个频道订阅添加成功: {len(content_list) if content_list else 0} 个内容")
-            return True, "", content_list
-
-        except Exception as e:
-            self.logger.error(f"💥 添加首个频道订阅失败: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
-            return False, f"添加订阅失败: {str(e)}", None
-
-    async def _add_additional_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[Dict]]:
-        """
-        添加额外频道订阅（需要历史对齐）
-
-        Args:
-            source_url: RSS源URL
-            chat_id: 频道ID
-
-        Returns:
-            Tuple[bool, str, Optional[Dict]]: (是否成功, 错误信息, 对齐信息)
-        """
-        try:
-            self.logger.info(f"➕ 开始添加额外频道订阅: {source_url} -> {chat_id}")
-
-            # 添加订阅
-            self.logger.info(f"💾 保存订阅配置到管理器")
-            success = self.manager.add_subscription(source_url, chat_id)
-            if not success:
-                self.logger.error(f"❌ 添加订阅失败: {source_url} -> {chat_id}")
-                return False, "添加订阅失败", None
-
-            # 获取已知内容列表（用于历史对齐）
-            self.logger.info(f"📋 获取已知内容列表用于历史对齐")
-            known_item_ids = self.manager.get_known_item_ids(source_url)
-            self.logger.info(f"📊 已知内容统计: {len(known_item_ids)} 个条目")
-
-            # 返回对齐信息
-            alignment_info = {
-                "need_alignment": True,
-                "known_item_ids": known_item_ids,
-                "new_channel": chat_id
-            }
-
-            self.logger.info(f"✅ 额外频道订阅添加成功，需要历史对齐: {source_url} -> {chat_id}")
-            return True, "", alignment_info
-
-        except Exception as e:
-            self.logger.error(f"💥 添加额外频道订阅异常: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
-            return False, str(e), None
-
-
-    async def _remove_subscription(self, source_url: str, chat_id: str) -> bool:
-        """
-        删除RSS订阅
-
-        Args:
-            source_url: RSS源URL
-            chat_id: 频道ID
-
-        Returns:
-            bool: 是否删除成功
-        """
-        try:
-            self.logger.info(f"🗑️ 开始删除RSS订阅: {source_url} -> {chat_id}")
-
-            result = self.manager.remove_subscription(source_url, chat_id)
-
-            if result:
-                self.logger.info(f"✅ RSS订阅删除成功: {source_url} -> {chat_id}")
-            else:
-                self.logger.warning(f"⚠️ RSS订阅删除失败（可能不存在）: {source_url} -> {chat_id}")
-
-            return result
-        except Exception as e:
-            self.logger.error(f"💥 删除RSS订阅异常: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
-            return False
 
 
 # 全局实例
