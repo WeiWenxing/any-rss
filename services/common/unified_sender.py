@@ -24,6 +24,7 @@ from telegram.error import TelegramError
 
 from .telegram_message import TelegramMessage, MediaItem, MediaType
 from .unified_interval_manager import UnifiedIntervalManager, create_unified_interval_manager
+from .media_strategy import create_media_strategy_manager
 
 
 class UnifiedTelegramSender:
@@ -205,9 +206,6 @@ class UnifiedTelegramSender:
             List[Message]: 发送成功的消息列表
         """
         try:
-            # 导入RSS媒体策略（延迟导入避免循环依赖）
-            from services.rss.media_strategy import create_media_strategy_manager
-
             # 创建或获取缓存的媒体策略管理器
             strategy_key = id(bot)  # 使用bot实例ID作为缓存键
             if strategy_key not in self._media_strategy_cache:
