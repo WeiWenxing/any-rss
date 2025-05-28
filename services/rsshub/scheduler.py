@@ -114,6 +114,21 @@ def create_rsshub_scheduler(data_dir: str = "storage/rsshub") -> RSSHubScheduler
     return RSSHubScheduler(data_dir)
 
 
+# 创建全局调度器实例
+rsshub_scheduler = RSSHubScheduler()
+
+
+# 导出函数供telegram_bot调用
+async def run_scheduled_check(bot: Bot) -> None:
+    """
+    RSSHub定时检查入口函数
+
+    Args:
+        bot: Telegram Bot实例
+    """
+    await rsshub_scheduler.run_scheduled_check(bot)
+
+
 if __name__ == "__main__":
     # 模块测试代码
     import asyncio
