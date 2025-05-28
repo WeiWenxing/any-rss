@@ -567,10 +567,10 @@ class RSSParser:
             for h_tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
                 h_text = h_tag.get_text().strip()
                 if h_text:
-                    # 创建新的标签结构：换行 + 粗体 + 换行
-                    new_content = soup.new_string(f"\n\n**{h_text}**\n\n")
+                    # 创建新的标签结构：换行 + 斜体 + 换行
+                    new_content = soup.new_string(f"\n\n*{h_text}*\n\n")
                     h_tag.replace_with(new_content)
-                    self.logger.debug(f"转换标题: {h_tag.name} -> **{h_text}**")
+                    self.logger.debug(f"转换标题: {h_tag.name} -> *{h_text}*")
                 else:
                     h_tag.decompose()
 
