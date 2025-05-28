@@ -86,43 +86,53 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
         """
         return "RSS"
 
-    async def _add_first_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[Dict]]:
+    async def _add_first_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
-        添加首个频道订阅（RSS特定实现）
+        添加首个频道订阅（一次性获取RSS源信息和内容）
 
         Args:
             source_url: RSS源URL
             chat_id: 频道ID
 
         Returns:
-            Tuple[bool, str, Optional[Dict]]: (是否成功, 错误信息, 内容数据)
+            Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 错误信息, 内容数据列表)
         """
         try:
-            self.logger.info(f"🆕 开始添加首个频道订阅: {source_url} -> {chat_id}")
+            self.logger.info(f"📥 添加首个频道订阅: {source_url} -> {chat_id}")
 
-            # 获取RSS源信息
+            # 1. 获取RSS源信息和最新内容（一次性API请求）
+            success, error_msg, content_list = self.manager.fetch_latest_content(source_url)
+            if not success:
+                self.logger.error(f"❌ 获取RSS内容失败: {error_msg}")
+                return False, error_msg, None
+
+            # 2. 获取RSS源标题（用于订阅存储）
             try:
-                self.logger.info(f"📡 获取RSS源信息: {source_url}")
                 feed_info = self.rss_parser.get_feed_info(source_url)
                 rss_title = feed_info.get('title', '')
-                self.logger.info(f"📰 RSS源标题: {rss_title if rss_title else '无标题'}")
+                self.logger.info(f"📰 RSS源标题: {rss_title}")
             except Exception as e:
-                self.logger.warning(f"⚠️ 获取RSS源信息失败: {str(e)}")
-                rss_title = ''
+                self.logger.warning(f"⚠️ 获取RSS标题失败，使用默认值: {str(e)}")
+                rss_title = ""
 
-            # 添加订阅
-            self.logger.info(f"💾 保存订阅配置到管理器")
-            success = self.manager.add_subscription(source_url, chat_id, rss_title)
-            if not success:
-                self.logger.error(f"❌ 添加订阅失败: {source_url} -> {chat_id}")
-                return False, "添加订阅失败", None
+            # 3. 添加订阅记录
+            subscription_success = self.manager.add_subscription(source_url, chat_id, rss_title)
+            if not subscription_success:
+                self.logger.error(f"❌ 添加订阅记录失败")
+                return False, "添加订阅记录失败", None
 
-            self.logger.info(f"✅ 首个频道订阅添加成功: {source_url} -> {chat_id}")
-            return True, "", {}
+            # 4. 保存已知条目ID（避免重复推送）
+            if content_list:
+                known_item_ids = [self.manager.generate_content_id(content) for content in content_list]
+                self.manager.save_known_item_ids(source_url, known_item_ids)
+                self.logger.info(f"💾 保存已知条目ID: {len(known_item_ids)} 个")
+
+            self.logger.info(f"✅ 首个频道订阅添加成功: {len(content_list) if content_list else 0} 个内容")
+            return True, "", content_list
 
         except Exception as e:
-            self.logger.error(f"💥 添加首个频道订阅异常: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
-            return False, str(e), None
+            self.logger.error(f"💥 添加首个频道订阅失败: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            return False, f"添加订阅失败: {str(e)}", None
 
     async def _add_additional_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[Dict]]:
         """
