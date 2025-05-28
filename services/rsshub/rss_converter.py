@@ -378,7 +378,7 @@ class RSSMessageConverter(MessageConverter):
                             break
                 title = truncated_title + "..."
 
-            message_parts.append(f"# {title}")
+            message_parts.append(f"*{title}*")
             message_parts.append("")  # 标题后空行
 
             # 2. 处理内容摘要
@@ -427,7 +427,7 @@ class RSSMessageConverter(MessageConverter):
             self.logger.error(f"格式化消息文本失败: {str(e)}", exc_info=True)
             # 返回基础格式
             title = rss_entry.title[:15] + "..." if len(rss_entry.title) > 15 else rss_entry.title
-            return f"# {title}\n\n[查看原文]({rss_entry.link})"
+            return f"*{title}*\n\n[查看原文]({rss_entry.link})"
 
     def _extract_and_clean_content(self, rss_entry: RSSEntry) -> str:
         """
