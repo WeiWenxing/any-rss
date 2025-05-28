@@ -772,37 +772,38 @@ async def rsshub_add_command(rss_url: str, chat_id: str):
     """添加RSSHub订阅的伪代码实现 - 统一反馈流程"""
 
     # 1. 参数验证
-    if not validate_rss_url(rss_url):
+    if not handler.validate_source_url(rss_url):
         return error_response("RSS链接格式不正确")
 
-    if not validate_chat_id(chat_id):
+    if not handler.validate_chat_id(chat_id):
         return error_response("频道ID格式不正确")
 
     # 2. 检查订阅状态
-    subscription_status = check_subscription_status(rss_url, chat_id)
+    subscriptions = manager.get_subscriptions()
+    subscription_status = handler._check_subscription_status(rss_url, chat_id, subscriptions)
 
     if subscription_status == "duplicate":
         # 重复订阅分支 - 直接返回
-        await send_message(duplicate_response(rss_url, chat_id))
+        await update.message.reply_text(handler._format_duplicate_subscription_message(rss_url, chat_id))
         return
 
     # 3. 立即反馈（非重复订阅才需要处理反馈）
-    processing_message = await send_processing_feedback(rss_url, chat_id)
+    processing_message = await update.message.reply_text(handler._format_processing_message(rss_url, chat_id))
 
     # 4. 统一处理流程（首个频道和后续频道使用相同的用户反馈）
     try:
         if subscription_status == "first_channel":
             # 首个频道：获取历史内容
-            content_list = await fetch_rss_content(rss_url)
-            content_count = len(content_list)
+            success, error_msg, content_list = manager.check_updates(rss_url)
+            content_count = len(content_list) if content_list else 0
         else:
             # 后续频道：获取已知内容ID列表
-            content_list = get_known_item_ids(rss_url)
-            content_count = len(content_list)
+            known_item_ids = manager.get_known_item_ids(rss_url)
+            content_count = len(known_item_ids)
 
         # 5. 进度反馈（统一格式）
-        await edit_message(processing_message,
-                          progress_feedback(rss_url, chat_id, content_count))
+        await processing_message.edit_text(
+            handler._format_progress_message(rss_url, chat_id, content_count))
 
         # 6. 执行具体操作（用户无感知差异）
         if subscription_status == "first_channel":
@@ -812,20 +813,20 @@ async def rsshub_add_command(rss_url: str, chat_id: str):
             )
         else:
             # 历史对齐（用户看不到技术细节）
-            from .alignment import perform_historical_alignment
-            alignment_success = await perform_historical_alignment(
-                bot, rss_url, content_list, chat_id
+            from services.common.unified_alignment import UnifiedAlignment
+            alignment = UnifiedAlignment()
+            alignment_success, alignment_msg, sent_count = await alignment.perform_historical_alignment(
+                bot, rss_url, chat_id, manager, known_item_ids
             )
-            sent_count = len(content_list) if alignment_success else 0
 
         # 7. 最终反馈（统一格式）
-        await edit_message(processing_message,
-                          final_success_response(rss_url, chat_id, sent_count))
+        await processing_message.edit_text(
+            handler._format_final_success_message(rss_url, chat_id, sent_count))
 
     except Exception as e:
         # 错误反馈
-        await edit_message(processing_message,
-                          error_response(rss_url, str(e)))
+        await processing_message.edit_text(
+            handler._format_error_message(rss_url, str(e)))
 ```
 
 #### 7.1.2 /rsshub_del - 删除RSSHub订阅
@@ -885,41 +886,32 @@ async def rsshub_del_command(rss_url: str, chat_id: str):
     """删除RSSHub订阅的伪代码实现"""
 
     # 1. 参数验证
-    if not validate_rss_url(rss_url):
-        return error_response("RSS链接格式不正确")
+    if not handler.validate_source_url(rss_url):
+        await update.message.reply_text("❌ RSS链接格式不正确")
+        return
 
-    if not validate_chat_id(chat_id):
-        return error_response("频道ID格式不正确")
+    if not handler.validate_chat_id(chat_id):
+        await update.message.reply_text("❌ 频道ID格式不正确")
+        return
 
-    # 2. 查找订阅
-    subscriptions = get_subscriptions()
+    # 2. 标准化URL
+    rss_url = handler.normalize_source_url(rss_url)
 
-    if rss_url not in subscriptions:
-        return not_found_response(rss_url, chat_id, "该RSS源未被任何频道订阅")
+    # 3. 执行删除
+    success = manager.remove_subscription(rss_url, chat_id)
 
-    if chat_id not in subscriptions[rss_url]:
-        return not_found_response(rss_url, chat_id, "该频道未订阅此RSS源")
-
-    # 3. 删除频道
-    try:
-        subscriptions[rss_url].remove(chat_id)
-
-        # 检查是否为最后一个频道
-        if len(subscriptions[rss_url]) == 0:
-            # 最后频道：只删除订阅配置，保留历史数据
-            del subscriptions[rss_url]
-            remaining_count = 0
-        else:
-            # 普通删除：只移除频道
-            remaining_count = len(subscriptions[rss_url])
-
-        # 4. 更新配置
-        save_subscriptions(subscriptions)
-
-        return success_response(rss_url, chat_id, remaining_count)
-
-    except Exception as e:
-        return error_response(f"删除订阅失败: {str(e)}")
+    if success:
+        source_display = handler.get_source_display_name(rss_url)
+        await update.message.reply_text(
+            f"✅ 删除RSS订阅成功\n\n"
+            f"📡 RSS源: {source_display}\n"
+            f"📢 频道: {chat_id}"
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ 删除失败\n\n"
+            f"该RSS订阅不存在或已被删除"
+        )
 ```
 
 #### 7.1.3 /rsshub_list - 查看订阅列表
@@ -976,38 +968,57 @@ async def rsshub_list_command():
     """查看订阅列表的伪代码实现"""
 
     try:
-        # 1. 获取订阅配置
-        subscriptions = get_subscriptions()
+        # 1. 获取所有订阅
+        all_subscriptions = manager.get_subscriptions()
 
-        # 2. 检查是否有订阅
-        if not subscriptions:
-            return empty_list_response()
+        if not all_subscriptions:
+            await update.message.reply_text(
+                f"📋 当前没有RSS订阅\n\n"
+                f"💡 使用 `/rsshub_add <链接> <频道ID>` 添加订阅",
+                parse_mode='Markdown'
+            )
+            return
 
-        # 3. 格式化订阅列表
-        formatted_list = []
-        total_sources = len(subscriptions)
+        # 2. 构建markdown格式的订阅列表
+        message_lines = [f"📋 **RSS订阅列表**\n"]
+
+        total_sources = len(all_subscriptions)
         total_channels = 0
 
-        for rss_url, channels in subscriptions.items():
-            # 获取RSS源信息（可选，用于显示标题）
-            feed_info = get_feed_info_from_url(rss_url)
-            feed_display = feed_info.get('title', 'RSS源') if feed_info else 'RSS源'
+        for source_url, channels in all_subscriptions.items():
+            for channel in channels:
+                # 使用代码块格式避免下划线问题，整行都用代码块包围
+                message_lines.append(f"`{source_url} {channel}`")
+                total_channels += 1
 
-            # 格式化频道列表
-            channel_list = ', '.join(channels)
-            total_channels += len(channels)
+        # 3. 添加统计信息
+        message_lines.append(f"\n📊 总计：{total_sources}个RSS源，{total_channels}个频道订阅")
 
-            formatted_list.append(f"📰 {feed_display}\n   🔗 {rss_url}\n   📺 {channel_list}")
+        # 4. 尝试获取模块的帮助信息提供者
+        try:
+            from services.common.help_manager import get_help_manager
+            help_manager = get_help_manager()
 
-        # 4. 生成完整响应（确保URL完整显示）
-        response_text = "📋 当前RSSHub订阅列表：\n\n"
-        response_text += "\n\n".join(formatted_list)
-        response_text += f"\n\n📊 总计：{total_sources}个RSS源，{total_channels}个频道订阅"
+            # 检查是否有注册的帮助提供者
+            if "rsshub" in help_manager.providers:
+                provider = help_manager.providers["rsshub"]
+                basic_commands = provider.get_basic_commands()
 
-        return success_list_response(response_text)
+                # 添加基础命令信息
+                message_lines.append(f"\n**基础命令：**")
+                # 将下划线命令替换为代码块格式避免markdown解析问题
+                commands_text = handler._format_commands_for_markdown(basic_commands)
+                message_lines.append(commands_text)
+
+        except Exception as e:
+            logger.warning(f"⚠️ 获取帮助信息失败: {str(e)}")
+
+        # 5. 合并所有内容并发送
+        full_message = "\n".join(message_lines)
+        await update.message.reply_text(full_message, parse_mode='Markdown')
 
     except Exception as e:
-        return error_response(f"获取订阅列表失败: {str(e)}")
+        await update.message.reply_text(f"❌ 获取订阅列表失败: {str(e)}")
 ```
 
 ### 7.2 内部接口设计
@@ -1016,45 +1027,55 @@ async def rsshub_list_command():
 ```python
 class RSSHubManager:
     # 订阅管理（完全复用douyin接口）
-    def add_subscription(self, rss_url: str, chat_id: str) -> tuple[bool, str, str, List[RSSEntry]]
-    def remove_subscription(self, rss_url: str) -> tuple[bool, str]
+    def add_subscription(self, rss_url: str, chat_id: str, rss_title: str = "") -> bool
+    def remove_subscription(self, rss_url: str, chat_id: str) -> bool
     def get_subscriptions(self) -> Dict[str, List[str]]
     def get_subscription_channels(self, rss_url: str) -> List[str]
 
     # 内容获取（RSS专用）
-    def download_and_parse_feed(self, rss_url: str) -> tuple[bool, str, List[RSSEntry]]
-    def check_updates(self, rss_url: str) -> tuple[bool, str, List[RSSEntry]]
+    def fetch_latest_content(self, rss_url: str) -> Tuple[bool, str, Optional[List[Dict]]]
+    def check_updates(self, rss_url: str) -> Tuple[bool, str, List[Any]]
 
     # 去重管理（完全复用douyin接口）
     def get_known_item_ids(self, rss_url: str) -> List[str]
-    def add_known_item_ids(self, rss_url: str, item_ids: List[str]) -> bool
+    def save_known_item_ids(self, rss_url: str, item_ids: List[str])
+    def add_known_item_id(self, rss_url: str, item_id: str)
+    def is_known_item(self, rss_url: str, item_id: str) -> bool
 
     # 消息映射（完全复用douyin接口）
-    def save_message_mapping(self, rss_url: str, item_id: str, chat_id: str, message_ids: List[int]) -> bool
+    def save_message_mapping(self, rss_url: str, item_id: str, chat_id: str, message_ids: List[int])
     def get_message_mapping(self, rss_url: str, item_id: str) -> Dict[str, List[int]]
-    def get_available_source_channels(self, rss_url: str, item_id: str) -> List[str]
+    def get_all_available_message_sources(self, rss_url: str, item_id: str) -> List[Tuple[str, List[int]]]
 
     # 批量发送（完全复用douyin接口）
-    async def send_content_batch(self, bot, content_items: List[RSSEntry], rss_url: str, target_channels: List[str]) -> int
+    async def send_content_batch(self, bot, content_items: List[Any], rss_url: str, target_channels: List[str]) -> int
+
+    # 内容ID生成（统一接口）
+    def generate_content_id(self, content_data: Dict) -> str
 ```
 
 #### 7.2.2 Parser接口（RSS专用）
 ```python
-class RSSHubParser:
+class RSSParser:
     # RSS解析核心功能
-    def parse_rss_feed(self, rss_url: str) -> tuple[bool, str, List[RSSEntry]]
-    def parse_rss_xml(self, xml_content: str) -> List[RSSEntry]
-    def extract_entry_info(self, entry_element) -> RSSEntry
-    def generate_entry_id(self, entry: RSSEntry) -> str
+    def parse_feed(self, rss_url: str) -> List[RSSEntry]
+    def parse_xml_content(self, xml_content: str) -> List[RSSEntry]
+    def validate_rss_url(self, rss_url: str) -> bool
+    def get_feed_info(self, rss_url: str) -> Dict[str, Any]
+    def _parse_rss_entry(self, entry_element, feed_info: Dict) -> RSSEntry
+    def _parse_atom_entry(self, entry_element, feed_info: Dict) -> RSSEntry
+    def _generate_item_id(self, entry: RSSEntry) -> str
 ```
 
 #### 7.2.3 统一消息转换器接口
 ```python
-class RSSHubMessageConverter:
-    def to_telegram_message(self, rss_entry: RSSEntry) -> TelegramMessage
-    def extract_media_items(self, rss_entry: RSSEntry) -> List[MediaItem]
-    def format_message_text(self, rss_entry: RSSEntry) -> str
-    def determine_send_strategy(self, rss_entry: RSSEntry) -> str  # "media_group" | "text_with_preview"
+class RSSMessageConverter:
+    def convert_to_telegram_message(self, content_data: Dict) -> TelegramMessage
+    def get_module_name(self) -> str
+    def _extract_media_items(self, content_data: Dict) -> List[MediaItem]
+    def _format_message_text(self, content_data: Dict) -> str
+    def _determine_send_strategy(self, content_data: Dict) -> str  # "media_group" | "text_with_preview"
+    def _create_media_item(self, enclosure: Dict) -> Optional[MediaItem]
 ```
 
 #### 7.2.4 统一发送器接口（跨模块复用）
@@ -1070,11 +1091,16 @@ class UnifiedTelegramSender:
 ```python
 class RSSHubScheduler:
     # 定时检查（复用douyin逻辑）
-    def check_all_subscriptions(self) -> None
-    def check_single_subscription(self, rss_url: str) -> tuple[bool, str, List[RSSEntry]]
+    async def check_all_subscriptions(self) -> None
+    async def check_single_subscription(self, rss_url: str) -> Tuple[bool, str, List[Any]]
 
     # 批量发送（复用douyin的send_content_batch）
-    def send_new_entries(self, rss_url: str, entries: List[RSSEntry]) -> None
+    async def send_new_content(self, rss_url: str, content_items: List[Any]) -> None
+
+    # 调度控制
+    def start_scheduler(self) -> None
+    def stop_scheduler(self) -> None
+    def is_running(self) -> bool
 ```
 
 ---
@@ -1085,7 +1111,7 @@ class RSSHubScheduler:
 
 #### 8.1.1 RSS/Atom格式检测
 ```python
-def detect_feed_format(xml_content: str) -> str:
+def _detect_feed_format(xml_content: str) -> str:
     """
     检测RSS/Atom格式
 
@@ -1119,7 +1145,7 @@ def detect_feed_format(xml_content: str) -> str:
 
 #### 8.1.2 条目ID生成算法
 ```python
-def generate_entry_id(entry: RSSEntry) -> str:
+def _generate_item_id(entry: RSSEntry) -> str:
     """
     生成条目唯一ID
 
@@ -1150,39 +1176,52 @@ def generate_entry_id(entry: RSSEntry) -> str:
 
 #### 8.1.3 新条目检测算法（参考douyin模块）
 ```python
-def detect_new_entries(current_entries: List[RSSEntry], known_item_ids: List[str]) -> List[RSSEntry]:
+def check_updates(self, rss_url: str) -> Tuple[bool, str, List[Any]]:
     """
     检测新条目（参考douyin模块的逻辑）
 
     算法（参考douyin模块的check_updates逻辑）：
-    1. 为每个当前条目生成item_id
-    2. 与已知ID列表比较
-    3. 筛选出新条目
-    4. 按发布时间排序
+    1. 获取RSS源的最新内容
+    2. 为每个当前条目生成item_id
+    3. 与已知ID列表比较
+    4. 筛选出新条目
+    5. 按发布时间排序
     """
-    new_entries = []
+    try:
+        # 获取最新内容
+        success, error_msg, content_data_list = self.fetch_latest_content(rss_url)
+        if not success:
+            return False, error_msg, []
 
-    for entry in current_entries:
-        item_id = generate_entry_id(entry)
+        # 获取已知条目ID
+        known_item_ids = self.get_known_item_ids(rss_url)
+        new_content_items = []
 
-        # 如果这个item_id不在已知列表中，说明是新的
-        if item_id not in known_item_ids:
-            entry.item_id = item_id
-            new_entries.append(entry)
-            logging.info(f"发现新RSS条目: {entry.title} (ID: {item_id})")
+        for content_data in content_data_list:
+            item_id = self.generate_content_id(content_data)
 
-    # 按发布时间排序（旧的在前，确保发送顺序）
-    new_entries.sort(key=lambda x: parse_date(x.published or ""))
+            # 如果这个item_id不在已知列表中，说明是新的
+            if not self.is_known_item(rss_url, item_id):
+                content_data['item_id'] = item_id
+                new_content_items.append(content_data)
+                self.logger.info(f"发现新RSS条目: {content_data.get('title', 'Unknown')} (ID: {item_id})")
 
-    logging.info(f"RSS条目检测完成，发现 {len(new_entries)} 个新条目")
-    return new_entries
+        # 按发布时间排序（旧的在前，确保发送顺序）
+        new_content_items.sort(key=lambda x: x.get('time', ''))
+
+        self.logger.info(f"RSS条目检测完成，发现 {len(new_content_items)} 个新条目")
+        return True, "", new_content_items
+
+    except Exception as e:
+        self.logger.error(f"检查RSS更新失败: {str(e)}", exc_info=True)
+        return False, str(e), []
 ```
 
 ### 8.2 多频道转发算法
 
 #### 8.2.1 转发策略选择
 ```python
-def select_forward_strategy(entry: RSSEntry, target_channels: List[str]) -> tuple[str, List[str]]:
+def _select_forward_strategy(content_data: Dict, target_channels: List[str]) -> Tuple[str, List[str]]:
     """
     选择转发策略
 
@@ -1204,72 +1243,95 @@ def select_forward_strategy(entry: RSSEntry, target_channels: List[str]) -> tupl
 
 #### 8.2.2 转发源选择算法
 ```python
-def select_forward_source(rss_url: str, item_id: str, target_channels: List[str]) -> str:
+def get_all_available_message_sources(self, rss_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
     """
-    为新频道选择转发源
+    获取所有可用的转发源
 
     算法优先级：
     1. 订阅列表中的第一个频道
     2. 任意有该条目消息ID的频道
-    3. None（需要直接发送）
 
     Returns:
-        source_channel_id or None
+        List[Tuple[str, List[int]]]: [(频道ID, 消息ID列表), ...]
     """
-    # 获取该RSS URL的所有订阅频道
-    all_channels = manager.get_subscription_channels(rss_url)
+    try:
+        # 获取该条目的消息映射
+        message_mapping = self.get_message_mapping(rss_url, item_id)
+        if not message_mapping:
+            return []
 
-    # 优先选择第一个频道
-    if all_channels and all_channels[0] not in target_channels:
-        message_mapping = manager.get_message_mapping(rss_url, item_id)
-        if all_channels[0] in message_mapping:
-            return all_channels[0]
+        # 获取该RSS URL的所有订阅频道
+        all_channels = self.get_subscription_channels(rss_url)
+        available_sources = []
 
-    # 选择任意可用频道
-    available_channels = manager.get_available_source_channels(rss_url, item_id)
-    for channel in available_channels:
-        if channel not in target_channels:
-            return channel
+        # 优先选择第一个频道
+        if all_channels and all_channels[0] in message_mapping:
+            message_ids = message_mapping[all_channels[0]]
+            if message_ids:
+                available_sources.append((all_channels[0], message_ids))
 
-    return None
+        # 添加其他可用频道
+        for channel_id, message_ids in message_mapping.items():
+            if channel_id != all_channels[0] and message_ids:
+                available_sources.append((channel_id, message_ids))
+
+        return available_sources
+
+    except Exception as e:
+        self.logger.error(f"获取可用转发源失败: {str(e)}", exc_info=True)
+        return []
 ```
 
 ### 8.3 历史对齐算法
 
-#### 8.3.1 历史条目获取（实时获取策略）
+#### 8.3.1 历史内容对齐（使用统一对齐器）
 ```python
-def get_historical_entries(rss_url: str, known_item_ids: List[str]) -> List[RSSEntry]:
+async def perform_historical_alignment(
+    self,
+    bot: Bot,
+    source_url: str,
+    target_chat_id: str,
+    manager: Any,
+    content_items: Optional[List[Any]] = None
+) -> Tuple[bool, str, int]:
     """
-    获取历史条目用于新频道对齐（实时获取策略）
+    执行历史内容对齐（使用统一对齐器）
 
     算法（与douyin模块一致）：
-    1. 实时从RSS源获取当前所有条目
-    2. 筛选出已知的条目（在known_item_ids中的）
-    3. 按发布时间排序
-    4. 返回历史条目列表
+    1. 获取已知内容ID列表
+    2. 执行批量对齐操作
+    3. 从可用频道转发历史内容到新频道
+    4. 记录转发结果
 
     Returns:
-        历史条目列表（按时间倒序）
+        Tuple[bool, str, int]: (成功状态, 错误信息, 对齐数量)
     """
-    # 实时获取RSS数据
-    success, error_msg, all_entries = parser.download_and_parse_feed(rss_url)
-    if not success:
-        logging.error(f"获取RSS历史条目失败: {error_msg}")
-        return []
+    try:
+        self.logger.info(f"开始执行历史对齐: {source_url} -> {target_chat_id}")
 
-    # 筛选出已知的条目（用于历史对齐）
-    historical_entries = []
-    for entry in all_entries:
-        item_id = generate_entry_id(entry)
-        if item_id in known_item_ids:
-            entry.item_id = item_id
-            historical_entries.append(entry)
+        # 1. 获取已知内容ID列表
+        if content_items is None:
+            known_item_ids = manager.get_known_item_ids(source_url)
+            self.logger.info(f"从管理器获取到 {len(known_item_ids)} 个已知内容ID")
+        else:
+            known_item_ids = [getattr(item, 'item_id', str(item)) for item in content_items]
+            self.logger.info(f"使用提供的 {len(known_item_ids)} 个内容项")
 
-    # 按发布时间排序（新的在前）
-    historical_entries.sort(key=lambda x: parse_date(x.published or ""), reverse=True)
+        if not known_item_ids:
+            return True, "没有历史内容需要对齐", 0
 
-    logging.info(f"获取到 {len(historical_entries)} 个历史RSS条目用于对齐")
-    return historical_entries
+        # 2. 执行批量对齐（使用douyin模块的逻辑）
+        aligned_count = await self._perform_batch_alignment(
+            bot, source_url, target_chat_id, known_item_ids, manager
+        )
+
+        self.logger.info(f"历史对齐完成: 成功对齐 {aligned_count} 个内容")
+        return True, f"成功对齐 {aligned_count} 个历史内容", aligned_count
+
+    except Exception as e:
+        error_msg = f"历史对齐失败: {str(e)}"
+        self.logger.error(error_msg, exc_info=True)
+        return False, error_msg, 0
 ```
 
 #### 8.3.2 批量转发控制
