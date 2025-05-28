@@ -54,47 +54,6 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
 
     # ==================== 实现UnifiedCommandHandler抽象接口 ====================
 
-    def validate_source_url(self, source_url: str) -> Tuple[bool, str]:
-        """
-        验证RSS URL格式
-
-        Args:
-            source_url: RSS源URL
-
-        Returns:
-            Tuple[bool, str]: (是否有效, 错误信息)
-        """
-        if not source_url:
-            return False, "RSS URL不能为空"
-
-        try:
-            # 基础URL格式验证
-            parsed = urlparse(source_url)
-            if not parsed.scheme or not parsed.netloc:
-                return False, "RSS URL格式错误，缺少协议或域名"
-
-            # 检查协议
-            if parsed.scheme not in ['http', 'https']:
-                return False, "RSS URL必须使用HTTP或HTTPS协议"
-
-            return True, ""
-
-        except Exception as e:
-            return False, f"RSS URL验证失败: {str(e)}"
-
-    def normalize_source_url(self, source_url: str) -> str:
-        """
-        标准化RSS URL
-
-        Args:
-            source_url: 原始URL
-
-        Returns:
-            str: 标准化后的URL
-        """
-        # RSS URL一般不需要特殊标准化，直接返回
-        return source_url.strip()
-
     def get_source_display_name(self, source_url: str) -> str:
         """
         获取RSS源的显示名称
@@ -126,32 +85,6 @@ class RSSHubCommandHandler(UnifiedCommandHandler):
             str: 模块显示名称
         """
         return "RSS"
-
-    async def perform_additional_validation(self, source_url: str, chat_id: str) -> Tuple[bool, str]:
-        """
-        执行额外的RSS验证
-
-        Args:
-            source_url: RSS源URL
-            chat_id: 频道ID
-
-        Returns:
-            Tuple[bool, str]: (是否通过, 错误信息)
-        """
-        try:
-            self.logger.info(f"🔍 开始RSS源有效性验证: {source_url}")
-
-            # 验证RSS源有效性
-            is_valid = self.rss_parser.validate_rss_url(source_url)
-            if not is_valid:
-                self.logger.error(f"❌ RSS源验证失败: 源无效或无法访问 - {source_url}")
-                return False, "RSS源无效或无法访问"
-
-            self.logger.info(f"✅ RSS源验证通过: {source_url}")
-            return True, ""
-        except Exception as e:
-            self.logger.error(f"💥 RSS源验证异常: {source_url}, 错误: {str(e)}", exc_info=True)
-            return False, f"RSS源验证失败: {str(e)}"
 
     async def _add_first_channel_subscription(self, source_url: str, chat_id: str) -> Tuple[bool, str, Optional[Dict]]:
         """

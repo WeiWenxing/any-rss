@@ -53,32 +53,6 @@ class UnifiedCommandHandler(ABC):
     # ==================== 抽象接口（子类必须实现）====================
 
     @abstractmethod
-    def validate_source_url(self, source_url: str) -> Tuple[bool, str]:
-        """
-        验证数据源URL格式
-
-        Args:
-            source_url: 数据源URL
-
-        Returns:
-            Tuple[bool, str]: (是否有效, 错误信息)
-        """
-        pass
-
-    @abstractmethod
-    def normalize_source_url(self, source_url: str) -> str:
-        """
-        标准化数据源URL
-
-        Args:
-            source_url: 原始URL
-
-        Returns:
-            str: 标准化后的URL
-        """
-        pass
-
-    @abstractmethod
     def get_source_display_name(self, source_url: str) -> str:
         """
         获取数据源的显示名称
@@ -121,19 +95,6 @@ class UnifiedCommandHandler(ABC):
 
         return True, ""
 
-    async def perform_additional_validation(self, source_url: str, chat_id: str) -> Tuple[bool, str]:
-        """
-        执行额外的验证（子类可重写）
-
-        Args:
-            source_url: 数据源URL
-            chat_id: 频道ID
-
-        Returns:
-            Tuple[bool, str]: (是否通过, 错误信息)
-        """
-        return True, ""
-
     # ==================== 通用命令处理逻辑（完全复用douyin逻辑）====================
 
     async def handle_add_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -169,17 +130,8 @@ class UnifiedCommandHandler(ABC):
             target_chat_id = context.args[1].strip()
             self.logger.info(f"📋 解析参数 - 源URL: {source_url}, 目标频道: {target_chat_id}")
 
-            # 验证URL格式
-            self.logger.info(f"🔍 步骤2: URL格式验证")
-            url_valid, url_error = self.validate_source_url(source_url)
-            if not url_valid:
-                self.logger.error(f"❌ URL验证失败: {url_error}")
-                await update.message.reply_text(f"❌ {url_error}")
-                return
-            self.logger.info(f"✅ URL格式验证通过")
-
             # 验证频道ID格式
-            self.logger.info(f"🔍 步骤3: 频道ID格式验证")
+            self.logger.info(f"🔍 步骤2: 频道ID格式验证")
             chat_valid, chat_error = self.validate_chat_id(target_chat_id)
             if not chat_valid:
                 self.logger.error(f"❌ 频道ID验证失败: {chat_error}")
@@ -187,25 +139,8 @@ class UnifiedCommandHandler(ABC):
                 return
             self.logger.info(f"✅ 频道ID格式验证通过")
 
-            # 标准化URL
-            original_url = source_url
-            source_url = self.normalize_source_url(source_url)
-            if original_url != source_url:
-                self.logger.info(f"🔄 URL标准化: {original_url} -> {source_url}")
-            else:
-                self.logger.info(f"📌 URL无需标准化: {source_url}")
-
-            # 执行额外验证
-            self.logger.info(f"🔍 步骤4: 执行额外验证")
-            extra_valid, extra_error = await self.perform_additional_validation(source_url, target_chat_id)
-            if not extra_valid:
-                self.logger.error(f"❌ 额外验证失败: {extra_error}")
-                await update.message.reply_text(f"❌ {extra_error}")
-                return
-            self.logger.info(f"✅ 额外验证通过")
-
             # 2. 检查订阅状态
-            self.logger.info(f"📊 步骤5: 检查订阅状态")
+            self.logger.info(f"📊 步骤3: 检查订阅状态")
             subscriptions = self.manager.get_subscriptions()
             self.logger.info(f"📈 当前订阅统计: {len(subscriptions)} 个源，总频道数: {sum(len(channels) for channels in subscriptions.values())}")
 
@@ -219,7 +154,7 @@ class UnifiedCommandHandler(ABC):
                 return
 
             # 3. 立即反馈（非重复订阅才需要处理反馈）
-            self.logger.info(f"💬 步骤6: 发送处理中反馈消息")
+            self.logger.info(f"💬 步骤4: 发送处理中反馈消息")
             processing_message = await update.message.reply_text(self._format_processing_message(source_url, target_chat_id))
             self.logger.info(f"✅ 处理中消息已发送，消息ID: {processing_message.message_id}")
 
@@ -227,7 +162,7 @@ class UnifiedCommandHandler(ABC):
             try:
                 if subscription_status == "first_channel":
                     # 首个频道：获取历史内容
-                    self.logger.info(f"🆕 步骤7a: 首个频道订阅流程")
+                    self.logger.info(f"🆕 步骤5a: 首个频道订阅流程")
                     success, error_msg, content_info = await self._add_first_channel_subscription(source_url, target_chat_id)
                     if not success:
                         self.logger.error(f"❌ 首个频道订阅失败: {error_msg}")
@@ -235,7 +170,7 @@ class UnifiedCommandHandler(ABC):
                         return
                     self.logger.info(f"✅ 首个频道订阅添加成功")
 
-                    self.logger.info(f"📥 步骤8a: 获取历史内容")
+                    self.logger.info(f"📥 步骤6a: 获取历史内容")
                     check_success, check_error_msg, content_list = self.manager.check_updates(source_url)
                     if not check_success:
                         self.logger.error(f"❌ 获取历史内容失败: {check_error_msg}")
@@ -251,7 +186,7 @@ class UnifiedCommandHandler(ABC):
                     self.logger.info(f"📊 获取到历史内容: {content_count} 个条目")
                 else:
                     # 后续频道：获取已知内容ID列表
-                    self.logger.info(f"➕ 步骤7b: 后续频道订阅流程")
+                    self.logger.info(f"➕ 步骤5b: 后续频道订阅流程")
                     success, error_msg, content_info = await self._add_additional_channel_subscription(source_url, target_chat_id)
                     if not success:
                         self.logger.error(f"❌ 后续频道订阅失败: {error_msg}")
@@ -269,31 +204,31 @@ class UnifiedCommandHandler(ABC):
 
                 # 5. 进度反馈（统一格式）
                 if content_count > 0:
-                    self.logger.info(f"📈 步骤9: 更新进度反馈 - 内容数量: {content_count}")
+                    self.logger.info(f"📈 步骤7: 更新进度反馈 - 内容数量: {content_count}")
                     await processing_message.edit_text(self._format_progress_message(source_url, target_chat_id, content_count))
 
                     # 6. 执行具体操作（用户无感知差异）
                     if subscription_status == "first_channel":
                         # 发送到频道
-                        self.logger.info(f"📤 步骤10a: 开始批量发送内容到频道")
+                        self.logger.info(f"📤 步骤8a: 开始批量发送内容到频道")
                         sent_count = await self.manager.send_content_batch(
                             context.bot, content_list, source_url, [target_chat_id]
                         )
                         self.logger.info(f"✅ 批量发送完成: 成功发送 {sent_count}/{content_count} 个内容")
                     else:
                         # 历史对齐（用户看不到技术细节）
-                        self.logger.info(f"🔄 步骤10b: 开始历史对齐")
+                        self.logger.info(f"🔄 步骤8b: 开始历史对齐")
                         alignment_success, alignment_msg, sent_count = await self.alignment.perform_historical_alignment(
                             context.bot, source_url, target_chat_id, self.manager, content_list
                         )
                         self.logger.info(f"✅ 历史对齐完成: {'成功' if alignment_success else '失败'}, 对齐条目: {sent_count}, 消息: {alignment_msg}")
 
                     # 7. 最终反馈（统一格式）
-                    self.logger.info(f"🎉 步骤11: 发送最终成功反馈")
+                    self.logger.info(f"🎉 步骤9: 发送最终成功反馈")
                     await processing_message.edit_text(self._format_final_success_message(source_url, target_chat_id, sent_count))
                 else:
                     # 无内容的情况
-                    self.logger.info(f"📭 步骤11: 无内容，发送成功反馈")
+                    self.logger.info(f"📭 步骤9: 无内容，发送成功反馈")
                     await processing_message.edit_text(self._format_final_success_message(source_url, target_chat_id, 0))
 
                 self.logger.info(f"🎊 /{self.module_name}_add 命令处理完成 - 源: {source_url}, 频道: {target_chat_id}")
@@ -330,15 +265,6 @@ class UnifiedCommandHandler(ABC):
 
             source_url = context.args[0].strip()
             target_chat_id = context.args[1].strip()
-
-            # 验证URL格式
-            url_valid, url_error = self.validate_source_url(source_url)
-            if not url_valid:
-                await update.message.reply_text(f"❌ {url_error}")
-                return
-
-            # 标准化URL
-            source_url = self.normalize_source_url(source_url)
 
             # 执行删除
             success = await self._remove_subscription(source_url, target_chat_id)

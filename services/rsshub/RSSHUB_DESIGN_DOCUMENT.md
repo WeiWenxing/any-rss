@@ -772,9 +772,6 @@ async def rsshub_add_command(rss_url: str, chat_id: str):
     """添加RSSHub订阅的伪代码实现 - 统一反馈流程"""
 
     # 1. 参数验证
-    if not handler.validate_source_url(rss_url):
-        return error_response("RSS链接格式不正确")
-
     if not handler.validate_chat_id(chat_id):
         return error_response("频道ID格式不正确")
 
@@ -886,18 +883,11 @@ async def rsshub_del_command(rss_url: str, chat_id: str):
     """删除RSSHub订阅的伪代码实现"""
 
     # 1. 参数验证
-    if not handler.validate_source_url(rss_url):
-        await update.message.reply_text("❌ RSS链接格式不正确")
-        return
-
     if not handler.validate_chat_id(chat_id):
         await update.message.reply_text("❌ 频道ID格式不正确")
         return
 
-    # 2. 标准化URL
-    rss_url = handler.normalize_source_url(rss_url)
-
-    # 3. 执行删除
+    # 2. 执行删除
     success = manager.remove_subscription(rss_url, chat_id)
 
     if success:
@@ -1146,28 +1136,11 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         target_chat_id = context.args[1].strip()
         logger.info(f"📋 解析参数 - 源URL: {source_url}, 目标频道: {target_chat_id}")
 
-        # 1.2 URL格式验证（无HTTP请求）
-        url_valid, url_error = handler.validate_source_url(source_url)
-        if not url_valid:
-            logger.error(f"❌ URL验证失败: {url_error}")
-            await update.message.reply_text(f"❌ {url_error}")
-            return
-
-        # 1.3 频道ID格式验证（无HTTP请求）
+        # 1.2 频道ID格式验证（无HTTP请求）
         chat_valid, chat_error = handler.validate_chat_id(target_chat_id)
         if not chat_valid:
             logger.error(f"❌ 频道ID验证失败: {chat_error}")
             await update.message.reply_text(f"❌ {chat_error}")
-            return
-
-        # 1.4 URL标准化
-        source_url = handler.normalize_source_url(source_url)
-
-        # 1.5 执行额外验证（RSS源验证，第一次API请求）
-        extra_valid, extra_error = await handler.perform_additional_validation(source_url, target_chat_id)
-        if not extra_valid:
-            logger.error(f"❌ 额外验证失败: {extra_error}")
-            await update.message.reply_text(f"❌ {extra_error}")
             return
 
         # ==================== 阶段2: 订阅状态检查（无HTTP请求） ====================
@@ -1196,7 +1169,7 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if subscription_status == "first_channel":
                 logger.info(f"🆕 首个频道订阅流程")
 
-                # 2.1 添加首个频道订阅（第二次API请求：获取RSS源信息）
+                # 2.1 添加首个频道订阅（第一次API请求：获取RSS源信息）
                 logger.info(f"💾 添加首个频道订阅")
                 success, error_msg, content_info = await handler._add_first_channel_subscription(source_url, target_chat_id)
                 if not success:
@@ -1207,7 +1180,7 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     return
                 logger.info(f"✅ 首个频道订阅添加成功")
 
-                # 2.2 获取历史内容（第三次API请求：获取RSS条目）
+                # 2.2 获取历史内容（第二次API请求：获取RSS条目）
                 logger.info(f"📥 获取历史内容")
                 check_success, check_error_msg, content_list = manager.check_updates(source_url)
                 if not check_success:
@@ -1313,10 +1286,9 @@ async def rsshub_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 5. **数据传递机制**：通过`content_info`在内存中传递对齐信息
 
 **当前实现的API请求分析：**
-- **首个频道分支**：3次API请求
-  1. `perform_additional_validation()` - RSS源验证
-  2. `_add_first_channel_subscription()` - 获取RSS源信息
-  3. `manager.check_updates()` - 获取RSS条目
+- **首个频道分支**：2次API请求
+  1. `_add_first_channel_subscription()` - 获取RSS源信息
+  2. `manager.check_updates()` - 获取RSS条目
 - **后续频道分支**：0次API请求
 - **重复订阅分支**：0次API请求
 
