@@ -116,6 +116,7 @@ class TelegramMessage:
     所有模块（douyin、rss、rsshub等）的最终输出格式，确保消息结构的一致性
     """
     text: str                                    # 消息文本内容
+    caption: Optional[str] = None                # 媒体组的caption（用于媒体组发送时的简短描述）
     media_group: List[MediaItem] = field(default_factory=list)  # 媒体组列表
     parse_mode: Optional[str] = "Markdown"        # 解析模式
     disable_web_page_preview: bool = False       # 是否禁用链接预览
@@ -204,6 +205,7 @@ class TelegramMessage:
         """转换为字典格式（用于序列化）"""
         return {
             'text': self.text,
+            'caption': self.caption,
             'media_group': [
                 {
                     'type': item.type,
@@ -243,6 +245,7 @@ class TelegramMessage:
 
         return cls(
             text=data['text'],
+            caption=data.get('caption'),
             media_group=media_group,
             parse_mode=data.get('parse_mode', "Markdown"),
             disable_web_page_preview=data.get('disable_web_page_preview', False),
@@ -250,43 +253,46 @@ class TelegramMessage:
         )
 
     @classmethod
-    def create_text_message(cls, text: str, parse_mode: Optional[str] = None,
+    def create_text_message(cls, text: str, caption: Optional[str] = None, parse_mode: Optional[str] = None,
                            disable_web_page_preview: bool = False) -> 'TelegramMessage':
         """创建纯文本消息的便捷方法"""
         return cls(
             text=text,
+            caption=caption,
             parse_mode=parse_mode or "Markdown",
             disable_web_page_preview=disable_web_page_preview
         )
 
     @classmethod
     def create_media_message(cls, text: str, media_items: List[MediaItem],
-                            parse_mode: Optional[str] = None) -> 'TelegramMessage':
+                            caption: Optional[str] = None, parse_mode: Optional[str] = None) -> 'TelegramMessage':
         """创建媒体消息的便捷方法"""
         return cls(
             text=text,
+            caption=caption,
             media_group=media_items,
             parse_mode=parse_mode or "Markdown"
         )
 
 
-def create_simple_text_message(text: str) -> TelegramMessage:
+def create_simple_text_message(text: str, caption: Optional[str] = None) -> TelegramMessage:
     """创建简单文本消息的快捷函数"""
-    return TelegramMessage.create_text_message(text)
+    return TelegramMessage.create_text_message(text, caption)
 
 
-def create_single_photo_message(text: str, photo_url: str, caption: Optional[str] = None) -> TelegramMessage:
+def create_single_photo_message(text: str, photo_url: str, caption: Optional[str] = None,
+                               media_caption: Optional[str] = None) -> TelegramMessage:
     """创建单图片消息的快捷函数"""
-    message = TelegramMessage.create_text_message(text)
-    message.add_photo(photo_url, caption)
+    message = TelegramMessage.create_text_message(text, caption)
+    message.add_photo(photo_url, media_caption)
     return message
 
 
 def create_single_video_message(text: str, video_url: str, caption: Optional[str] = None,
-                               duration: Optional[int] = None) -> TelegramMessage:
+                               media_caption: Optional[str] = None, duration: Optional[int] = None) -> TelegramMessage:
     """创建单视频消息的快捷函数"""
-    message = TelegramMessage.create_text_message(text)
-    message.add_video(video_url, caption, duration=duration)
+    message = TelegramMessage.create_text_message(text, caption)
+    message.add_video(video_url, media_caption, duration=duration)
     return message
 
 

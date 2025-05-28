@@ -116,11 +116,11 @@ class RSSMessageConverter(MessageConverter):
             send_strategy = self._determine_send_strategy(media_items)
 
             # 3. 格式化消息文本
-            message_text = self._format_message_text(rss_entry, send_strategy)
+            message_text, caption = self._format_message_text(rss_entry, send_strategy)
 
             # 4. 构建TelegramMessage对象
             telegram_message = self._build_telegram_message(
-                message_text, media_items, send_strategy
+                message_text, media_items, send_strategy, caption
             )
 
             self.logger.debug(f"RSS条目转换完成: {rss_entry.item_id}, 策略: {send_strategy}")
@@ -351,21 +351,22 @@ class RSSMessageConverter(MessageConverter):
         else:
             return "text_only"  # 无媒体使用纯文本模式
 
-    def _format_message_text(self, rss_entry: RSSEntry, send_strategy: str) -> str:
+    def _format_message_text(self, rss_entry: RSSEntry, send_strategy: str) -> tuple[str, str]:
         """
-        根据发送策略格式化消息文本
+        根据发送策略格式化消息文本和caption
 
         Args:
             rss_entry: RSS条目对象
             send_strategy: 发送策略
 
         Returns:
-            str: 格式化后的消息文本
+            tuple[str, str]: (完整消息文本, 简短caption)
         """
         try:
-            message_parts = []
+            # 生成完整的消息文本
+            text_parts = []
 
-            # 1. 处理标题 - 使用Markdown一级标题，截断到15个字符
+            # 1. 处理标题 - 使用Markdown粗体，截断到15个字符
             title = rss_entry.title or "无标题"
             if len(title) > 15:
                 # 在词边界截断，避免破坏词汇
@@ -378,8 +379,8 @@ class RSSMessageConverter(MessageConverter):
                             break
                 title = truncated_title + "..."
 
-            message_parts.append(f"*{title}*")
-            message_parts.append("")  # 标题后空行
+            text_parts.append(f"*{title}*")
+            text_parts.append("")  # 标题后空行
 
             # 2. 处理内容摘要
             content = self._extract_and_clean_content(rss_entry)
@@ -390,8 +391,8 @@ class RSSMessageConverter(MessageConverter):
                     # 按句子边界截断
                     content = self._smart_truncate(content, max_content_length)
 
-                message_parts.append(content)
-                message_parts.append("")  # 内容后空行
+                text_parts.append(content)
+                text_parts.append("")  # 内容后空行
 
             # 3. 处理元信息 - 使用英文标签
             meta_parts = []
@@ -407,27 +408,84 @@ class RSSMessageConverter(MessageConverter):
                 meta_parts.append(f"Category: {rss_entry.category}")
 
             if meta_parts:
-                message_parts.append(" | ".join(meta_parts))
-                message_parts.append("")  # 元信息后空行
+                text_parts.append(" | ".join(meta_parts))
+                text_parts.append("")  # 元信息后空行
 
             # 4. 添加原文链接
             if rss_entry.link:
-                message_parts.append(f"[查看原文]({rss_entry.link})")
+                text_parts.append(f"[查看原文]({rss_entry.link})")
 
-            # 组合消息文本
-            message_text = "\n".join(message_parts)
+            # 组合完整消息文本
+            full_text = "\n".join(text_parts)
 
             # 确保不超过最大长度
-            if len(message_text) > self.max_text_length:
-                message_text = message_text[:self.max_text_length-3] + "..."
+            if len(full_text) > self.max_text_length:
+                full_text = full_text[:self.max_text_length-3] + "..."
 
-            return message_text
+            # 生成caption（使用新的策略）
+            caption = self._generate_caption(full_text, title, rss_entry.link)
+
+            return full_text, caption
 
         except Exception as e:
             self.logger.error(f"格式化消息文本失败: {str(e)}", exc_info=True)
             # 返回基础格式
             title = rss_entry.title[:15] + "..." if len(rss_entry.title) > 15 else rss_entry.title
-            return f"*{title}*\n\n[查看原文]({rss_entry.link})"
+            fallback_text = f"*{title}*\n\n[查看原文]({rss_entry.link})"
+            fallback_caption = self._generate_caption(fallback_text, title, rss_entry.link)
+            return fallback_text, fallback_caption
+
+    def _generate_caption(self, full_text: str, title: str, link: Optional[str]) -> str:
+        """
+        生成媒体组的caption
+
+        策略：
+        - 如果full_text长度 < 1024，则caption为空（让媒体组不显示caption）
+        - 否则，生成简短的caption（只包含标题和链接）
+
+        Args:
+            full_text: 完整的消息文本
+            title: 处理后的标题
+            link: 原文链接
+
+        Returns:
+            str: 生成的caption
+        """
+        try:
+            # 如果完整文本长度小于1024，不需要caption
+            if len(full_text) < 1024:
+                self.logger.debug(f"完整文本长度 {len(full_text)} < 1024，caption设为空")
+                return ""
+
+            # 生成简短的caption
+            caption_parts = []
+            caption_parts.append(f"*{title}*")
+
+            if link:
+                caption_parts.append(f"[查看原文]({link})")
+
+            caption = "\n\n".join(caption_parts)
+
+            # 确保caption不超过1024字符（Telegram限制）
+            if len(caption) > 1024:
+                # 如果标题太长导致超限，截断标题
+                max_title_length = 1024 - len(f"\n\n[查看原文]({link})") if link else 1024
+                if max_title_length > 10:  # 保证标题至少有10个字符
+                    truncated_title = title[:max_title_length-6] + "..."  # 预留"*...*"的空间
+                    caption_parts = [f"*{truncated_title}*"]
+                    if link:
+                        caption_parts.append(f"[查看原文]({link})")
+                    caption = "\n\n".join(caption_parts)
+                else:
+                    # 如果链接太长，只保留标题
+                    caption = f"*{title[:1018]}*"  # 预留"*"的空间
+
+            self.logger.debug(f"生成caption，长度: {len(caption)}")
+            return caption
+
+        except Exception as e:
+            self.logger.error(f"生成caption失败: {str(e)}", exc_info=True)
+            return ""  # 出错时返回空caption
 
     def _extract_and_clean_content(self, rss_entry: RSSEntry) -> str:
         """
@@ -499,7 +557,8 @@ class RSSMessageConverter(MessageConverter):
         self,
         message_text: str,
         media_items: List[MediaItem],
-        send_strategy: str
+        send_strategy: str,
+        caption: str
     ) -> TelegramMessage:
         """
         构建TelegramMessage对象
@@ -508,6 +567,7 @@ class RSSMessageConverter(MessageConverter):
             message_text: 消息文本
             media_items: 媒体项列表
             send_strategy: 发送策略
+            caption: 简短caption
 
         Returns:
             TelegramMessage: 统一的Telegram消息对象
@@ -519,7 +579,8 @@ class RSSMessageConverter(MessageConverter):
                     text=message_text,
                     media_group=media_items,
                     parse_mode="Markdown",
-                    disable_web_page_preview=True  # 媒体组模式禁用链接预览
+                    disable_web_page_preview=True,  # 媒体组模式禁用链接预览
+                    caption=caption
                 )
             elif send_strategy == "text_with_preview":
                 # 文本+预览模式（不发送媒体组，启用链接预览）
@@ -527,7 +588,8 @@ class RSSMessageConverter(MessageConverter):
                     text=message_text,
                     media_group=[],  # 不使用媒体组
                     parse_mode="Markdown",
-                    disable_web_page_preview=False  # 启用链接预览
+                    disable_web_page_preview=False,  # 启用链接预览
+                    caption=caption
                 )
             else:
                 # 纯文本模式
@@ -535,7 +597,8 @@ class RSSMessageConverter(MessageConverter):
                     text=message_text,
                     media_group=[],
                     parse_mode="Markdown",
-                    disable_web_page_preview=False  # 启用链接预览作为补偿
+                    disable_web_page_preview=False,  # 启用链接预览作为补偿
+                    caption=caption
                 )
 
         except Exception as e:
@@ -544,7 +607,8 @@ class RSSMessageConverter(MessageConverter):
             return TelegramMessage(
                 text=message_text,
                 parse_mode="Markdown",
-                disable_web_page_preview=False
+                disable_web_page_preview=False,
+                caption=caption
             )
 
     def get_converter_info(self) -> dict:
