@@ -108,23 +108,23 @@ class RSSHubScheduler(UnifiedScheduler):
         清理过期的已知条目ID（保留最近的条目）
         """
         try:
-            all_rss_urls = self.manager.get_all_rss_urls()
-            max_known_items = 1000  # 每个RSS源最多保留1000个已知条目
+            all_source_urls = self.manager.get_all_source_urls()
+            max_known_items = 1000  # 每个源最多保留1000个已知条目
 
-            for rss_url in all_rss_urls:
+            for source_url in all_source_urls:
                 try:
-                    known_item_ids = self.manager.get_known_item_ids(rss_url)
+                    known_item_ids = self.manager.get_known_item_ids(source_url)
 
                     if len(known_item_ids) > max_known_items:
                         # 保留最新的条目（简单的FIFO策略）
                         trimmed_ids = known_item_ids[-max_known_items:]
-                        self.manager.save_known_item_ids(rss_url, trimmed_ids)
+                        self.manager.save_known_item_ids(source_url, trimmed_ids)
 
                         removed_count = len(known_item_ids) - len(trimmed_ids)
-                        self.logger.info(f"清理RSS源过期条目: {rss_url}, 移除 {removed_count} 个旧条目")
+                        self.logger.info(f"清理{self.module_name}源过期条目: {source_url}, 移除 {removed_count} 个旧条目")
 
                 except Exception as e:
-                    self.logger.warning(f"清理RSS源已知条目失败: {rss_url}, 错误: {str(e)}")
+                    self.logger.warning(f"清理{self.module_name}源已知条目失败: {source_url}, 错误: {str(e)}")
                     continue
 
         except Exception as e:

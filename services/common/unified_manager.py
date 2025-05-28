@@ -11,6 +11,7 @@
 4. 标准的已发送标记逻辑
 5. 可配置的间隔管理集成
 6. 统一的错误处理和日志记录
+7. 通用的数据存储和管理功能（文件系统、缓存、JSON读写）
 
 作者: Assistant
 创建时间: 2024年
@@ -18,8 +19,12 @@
 
 import logging
 import asyncio
+import json
+import hashlib
+import re
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any, Tuple, Union
+from pathlib import Path
 from telegram import Bot, Message
 
 from .unified_interval_manager import UnifiedIntervalManager
@@ -33,6 +38,7 @@ class UnifiedContentManager(ABC):
     统一内容管理器基类
 
     抽取douyin模块的核心业务逻辑，为所有数据源模块提供统一的业务处理模式
+    包含完整的数据存储和管理功能
     """
 
     def __init__(self, module_name: str, data_dir: str = None):
@@ -50,64 +56,145 @@ class UnifiedContentManager(ABC):
         self.sender = UnifiedTelegramSender()
         self.interval_manager = UnifiedIntervalManager("batch_send")
 
+        # 初始化数据存储（如果提供了data_dir）
+        if data_dir:
+            self._init_data_storage(data_dir)
+        else:
+            # 如果没有提供data_dir，子类需要自己管理数据存储
+            self._subscriptions_cache = None
+            self._message_mappings_cache = None
+            self._known_items_cache = None
+
         self.logger.info(f"{module_name}统一管理器初始化完成")
 
-    def _get_converter_type(self) -> ConverterType:
+    def _init_data_storage(self, data_dir: str):
         """
-        根据模块名获取对应的转换器类型
+        初始化数据存储系统（通用实现）
 
-        Returns:
-            ConverterType: 转换器类型枚举
+        Args:
+            data_dir: 数据存储目录
         """
-        module_to_converter_map = {
-            "douyin": ConverterType.DOUYIN,
-            "rsshub": ConverterType.RSSHUB,
-            "rss": ConverterType.RSS
-        }
+        self.data_dir = Path(data_dir)
 
-        converter_type = module_to_converter_map.get(self.module_name)
-        if not converter_type:
-            self.logger.warning(f"未找到模块 {self.module_name} 对应的转换器类型，使用通用转换器")
-            return ConverterType.GENERIC
+        # 确保数据目录存在
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        return converter_type
+        # 数据文件路径（完全复用douyin模块的文件结构）
+        self.config_dir = self.data_dir / "config"
+        self.data_storage_dir = self.data_dir / "data"
+        self.media_dir = self.data_dir / "media"
 
-    def _get_module_converter(self) -> Optional[MessageConverter]:
-        """
-        获取当前模块的消息转换器
+        self.subscriptions_file = self.config_dir / "subscriptions.json"
+        self.message_mappings_file = self.config_dir / "message_mappings.json"
 
-        Returns:
-            Optional[MessageConverter]: 转换器实例，如果不存在则返回None
-        """
+        # 确保目录存在
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.data_storage_dir.mkdir(parents=True, exist_ok=True)
+        self.media_dir.mkdir(parents=True, exist_ok=True)
+
+        # 内存缓存（完全复用douyin模块的缓存结构）
+        self._subscriptions_cache = {}
+        self._message_mappings_cache = {}
+        self._known_items_cache = {}
+
+        # 加载数据
+        self._load_all_data()
+
+        self.logger.info(f"数据存储系统初始化完成，数据目录: {data_dir}")
+
+    def _load_all_data(self):
+        """加载所有数据到内存缓存（通用实现）"""
         try:
-            converter_type = self._get_converter_type()
-            converter = get_converter(converter_type)
-
-            if not converter:
-                self.logger.error(f"未找到 {converter_type.value} 转换器，请确保转换器已正确注册")
-                return None
-
-            return converter
+            self._load_subscriptions()
+            self._load_message_mappings()
+            self.logger.info(f"{self.module_name}数据加载完成")
         except Exception as e:
-            self.logger.error(f"获取模块转换器失败: {str(e)}", exc_info=True)
-            return None
+            self.logger.error(f"加载{self.module_name}数据失败: {str(e)}", exc_info=True)
 
-    # ==================== 抽象接口（子类必须实现）====================
+    def _load_subscriptions(self):
+        """加载订阅数据（通用实现）"""
+        try:
+            if self.subscriptions_file.exists():
+                with open(self.subscriptions_file, 'r', encoding='utf-8') as f:
+                    self._subscriptions_cache = json.load(f)
+                self.logger.debug(f"加载订阅数据: {len(self._subscriptions_cache)} 个源")
+            else:
+                self._subscriptions_cache = {}
+                self.logger.debug("订阅文件不存在，初始化为空")
+        except Exception as e:
+            self.logger.error(f"加载订阅数据失败: {str(e)}", exc_info=True)
+            self._subscriptions_cache = {}
 
-    @abstractmethod
+    def _load_message_mappings(self):
+        """加载消息映射数据（通用实现）"""
+        try:
+            if self.message_mappings_file.exists():
+                with open(self.message_mappings_file, 'r', encoding='utf-8') as f:
+                    self._message_mappings_cache = json.load(f)
+                self.logger.debug(f"加载消息映射数据: {len(self._message_mappings_cache)} 个源")
+            else:
+                self._message_mappings_cache = {}
+                self.logger.debug("消息映射文件不存在，初始化为空")
+        except Exception as e:
+            self.logger.error(f"加载消息映射数据失败: {str(e)}", exc_info=True)
+            self._message_mappings_cache = {}
+
+    def _save_subscriptions(self):
+        """保存订阅数据（通用实现）"""
+        try:
+            with open(self.subscriptions_file, 'w', encoding='utf-8') as f:
+                json.dump(self._subscriptions_cache, f, ensure_ascii=False, indent=2)
+            self.logger.debug("订阅数据保存成功")
+        except Exception as e:
+            self.logger.error(f"保存订阅数据失败: {str(e)}", exc_info=True)
+
+    def _save_message_mappings(self):
+        """保存消息映射数据（通用实现）"""
+        try:
+            with open(self.message_mappings_file, 'w', encoding='utf-8') as f:
+                json.dump(self._message_mappings_cache, f, ensure_ascii=False, indent=2)
+            self.logger.debug("消息映射数据保存成功")
+        except Exception as e:
+            self.logger.error(f"保存消息映射数据失败: {str(e)}", exc_info=True)
+
+    def _safe_filename(self, url: str) -> str:
+        """
+        生成安全的文件名（通用实现，复用douyin模块逻辑）
+
+        Args:
+            url: URL字符串
+
+        Returns:
+            str: 安全的文件名
+        """
+        # 移除协议前缀
+        clean_url = re.sub(r'^https?://', '', url)
+        # 替换特殊字符
+        clean_url = re.sub(r'[^\w\-_.]', '_', clean_url)
+        # 限制长度并添加哈希
+        if len(clean_url) > 50:
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            clean_url = clean_url[:42] + '_' + url_hash
+
+        return clean_url
+
+    # ==================== 通用数据管理实现 ====================
+
     def get_subscriptions(self) -> Dict[str, List[str]]:
         """
-        获取所有订阅信息
+        获取所有订阅信息（通用实现）
 
         Returns:
             Dict[str, List[str]]: {源URL: [频道ID列表]}
         """
-        pass
+        if self._subscriptions_cache is None:
+            # 如果没有初始化数据存储，子类需要自己实现
+            raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+        return self._subscriptions_cache.copy()
 
-    @abstractmethod
     def get_subscription_channels(self, source_url: str) -> List[str]:
         """
-        获取指定源的订阅频道列表
+        获取指定源的订阅频道列表（通用实现）
 
         Args:
             source_url: 数据源URL
@@ -115,7 +202,346 @@ class UnifiedContentManager(ABC):
         Returns:
             List[str]: 频道ID列表
         """
-        pass
+        if self._subscriptions_cache is None:
+            raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+        return self._subscriptions_cache.get(source_url, []).copy()
+
+    def get_known_item_ids(self, source_url: str) -> List[str]:
+        """
+        获取已知的内容ID列表（通用实现）
+
+        Args:
+            source_url: 数据源URL
+
+        Returns:
+            List[str]: 已知内容ID列表
+        """
+        try:
+            # 检查缓存
+            if self._known_items_cache is not None and source_url in self._known_items_cache:
+                return self._known_items_cache[source_url].copy()
+
+            # 从文件加载（按设计文档的目录结构）
+            url_hash = self._safe_filename(source_url)
+            url_dir = self.data_storage_dir / url_hash
+            known_items_file = url_dir / "known_item_ids.json"
+
+            if known_items_file.exists():
+                with open(known_items_file, 'r', encoding='utf-8') as f:
+                    known_items = json.load(f)
+                    if self._known_items_cache is not None:
+                        self._known_items_cache[source_url] = known_items
+                    return known_items.copy()
+
+            # 文件不存在，返回空列表
+            if self._known_items_cache is not None:
+                self._known_items_cache[source_url] = []
+            return []
+
+        except Exception as e:
+            self.logger.error(f"获取已知条目ID失败: {source_url}, 错误: {str(e)}", exc_info=True)
+            return []
+
+    def save_known_item_ids(self, source_url: str, item_ids: List[str]):
+        """
+        保存已知的内容ID列表（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_ids: 内容ID列表
+        """
+        try:
+            # 更新缓存
+            if self._known_items_cache is not None:
+                self._known_items_cache[source_url] = item_ids.copy()
+
+            # 保存到文件
+            url_hash = self._safe_filename(source_url)
+            url_dir = self.data_storage_dir / url_hash
+            url_dir.mkdir(parents=True, exist_ok=True)
+
+            known_items_file = url_dir / "known_item_ids.json"
+            with open(known_items_file, 'w', encoding='utf-8') as f:
+                json.dump(item_ids, f, ensure_ascii=False, indent=2)
+
+            self.logger.debug(f"保存已知条目ID成功: {source_url}, {len(item_ids)} 个")
+
+        except Exception as e:
+            self.logger.error(f"保存已知条目ID失败: {source_url}, 错误: {str(e)}", exc_info=True)
+
+    def save_message_mapping(self, source_url: str, item_id: str, chat_id: str, message_ids: List[int]):
+        """
+        保存消息ID映射（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+            chat_id: 频道ID
+            message_ids: 消息ID列表
+        """
+        try:
+            if self._message_mappings_cache is None:
+                raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+
+            # 初始化数据结构
+            if source_url not in self._message_mappings_cache:
+                self._message_mappings_cache[source_url] = {}
+
+            if item_id not in self._message_mappings_cache[source_url]:
+                self._message_mappings_cache[source_url][item_id] = {}
+
+            # 保存映射
+            self._message_mappings_cache[source_url][item_id][chat_id] = message_ids
+
+            # 保存到文件
+            self._save_message_mappings()
+
+            self.logger.debug(f"保存消息映射成功: {source_url}/{item_id} -> {chat_id}: {message_ids}")
+
+        except Exception as e:
+            self.logger.error(f"保存消息映射失败: {source_url}/{item_id} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+
+    def get_all_available_message_sources(self, source_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
+        """
+        获取所有可用的消息转发源（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+
+        Returns:
+            List[Tuple[str, List[int]]]: 所有可用的转发源列表 [(频道ID, 消息ID列表), ...]
+        """
+        try:
+            if self._message_mappings_cache is None:
+                raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+
+            if source_url not in self._message_mappings_cache:
+                return []
+
+            if item_id not in self._message_mappings_cache[source_url]:
+                return []
+
+            mappings = self._message_mappings_cache[source_url][item_id]
+            return [(chat_id, msg_ids) for chat_id, msg_ids in mappings.items()]
+
+        except Exception as e:
+            self.logger.error(f"获取消息转发源失败: {source_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+            return []
+
+    # ==================== 通用订阅管理实现 ====================
+
+    def add_subscription(self, source_url: str, chat_id: str, title: str = "") -> bool:
+        """
+        添加订阅（通用实现，完全复用douyin模块的订阅结构）
+
+        Args:
+            source_url: 数据源URL
+            chat_id: 频道ID
+            title: 源标题（可选，仅用于日志）
+
+        Returns:
+            bool: 是否添加成功
+        """
+        try:
+            if self._subscriptions_cache is None:
+                raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+
+            self.logger.info(f"💾 开始添加{self.module_name}订阅: {source_url} -> {chat_id}")
+            if title:
+                self.logger.info(f"📰 源标题: {title}")
+
+            # 初始化源数据结构（完全复用douyin的简单映射格式）
+            if source_url not in self._subscriptions_cache:
+                self.logger.info(f"🆕 创建新的{self.module_name}源订阅: {source_url}")
+                self._subscriptions_cache[source_url] = []
+
+            # 检查频道是否已存在
+            channels = self._subscriptions_cache[source_url]
+            if chat_id not in channels:
+                channels.append(chat_id)
+                self._save_subscriptions()
+                self.logger.info(f"✅ 添加{self.module_name}订阅成功: {source_url} -> {chat_id} (当前频道数: {len(channels)})")
+                return True
+            else:
+                self.logger.info(f"ℹ️ {self.module_name}订阅已存在: {source_url} -> {chat_id}")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"💥 添加{self.module_name}订阅失败: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            return False
+
+    def remove_subscription(self, source_url: str, chat_id: str) -> bool:
+        """
+        删除订阅（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            chat_id: 频道ID
+
+        Returns:
+            bool: 是否删除成功
+        """
+        try:
+            if self._subscriptions_cache is None:
+                raise NotImplementedError("数据存储未初始化，子类需要实现此方法")
+
+            self.logger.info(f"🗑️ 开始删除{self.module_name}订阅: {source_url} -> {chat_id}")
+
+            if source_url not in self._subscriptions_cache:
+                self.logger.warning(f"⚠️ {self.module_name}源不存在: {source_url}")
+                return False
+
+            channels = self._subscriptions_cache[source_url]
+            if chat_id in channels:
+                channels.remove(chat_id)
+
+                # 如果没有频道订阅了，删除整个源
+                if not channels:
+                    del self._subscriptions_cache[source_url]
+                    self.logger.info(f"🗑️ 删除{self.module_name}源（无订阅频道）: {source_url}")
+                else:
+                    self.logger.info(f"📊 {self.module_name}源剩余频道数: {len(channels)}")
+
+                self._save_subscriptions()
+                self.logger.info(f"✅ 删除{self.module_name}订阅成功: {source_url} -> {chat_id}")
+                return True
+            else:
+                self.logger.warning(f"⚠️ {self.module_name}订阅不存在: {source_url} -> {chat_id}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"💥 删除{self.module_name}订阅失败: {source_url} -> {chat_id}, 错误: {str(e)}", exc_info=True)
+            return False
+
+    # ==================== 通用已知内容管理实现 ====================
+
+    def add_known_item_id(self, source_url: str, item_id: str):
+        """
+        添加已知的内容ID（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+        """
+        try:
+            known_items = self.get_known_item_ids(source_url)
+            if item_id not in known_items:
+                known_items.append(item_id)
+                self.save_known_item_ids(source_url, known_items)
+                self.logger.debug(f"添加已知条目ID: {source_url}/{item_id}")
+        except Exception as e:
+            self.logger.error(f"添加已知条目ID失败: {source_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+
+    def is_known_item(self, source_url: str, item_id: str) -> bool:
+        """
+        检查内容是否已知（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+
+        Returns:
+            bool: 是否已知
+        """
+        try:
+            known_items = self.get_known_item_ids(source_url)
+            return item_id in known_items
+        except Exception as e:
+            self.logger.error(f"检查已知条目失败: {source_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+            return False
+
+    # ==================== 通用便利方法 ====================
+
+    def get_channel_subscriptions(self, chat_id: str) -> List[str]:
+        """
+        获取频道的所有订阅（通用实现）
+
+        Args:
+            chat_id: 频道ID
+
+        Returns:
+            List[str]: 数据源URL列表
+        """
+        subscriptions = []
+        for source_url, channels in self.get_subscriptions().items():
+            if chat_id in channels:
+                subscriptions.append(source_url)
+        return subscriptions
+
+    def get_message_mapping(self, source_url: str, item_id: str) -> Dict[str, List[int]]:
+        """
+        获取指定条目的消息映射（通用实现）
+
+        Args:
+            source_url: 数据源URL
+            item_id: 内容ID
+
+        Returns:
+            Dict[str, List[int]]: 消息映射 {频道ID: [消息ID列表]}
+        """
+        try:
+            sources = self.get_all_available_message_sources(source_url, item_id)
+            return {chat_id: msg_ids for chat_id, msg_ids in sources}
+        except Exception as e:
+            self.logger.error(f"获取消息映射失败: {source_url}/{item_id}, 错误: {str(e)}", exc_info=True)
+            return {}
+
+    def get_all_source_urls(self) -> List[str]:
+        """
+        获取所有数据源URL列表（通用实现）
+
+        Returns:
+            List[str]: 数据源URL列表
+        """
+        return list(self.get_subscriptions().keys())
+
+    def cleanup_orphaned_data(self) -> int:
+        """
+        清理孤立的数据（没有对应订阅的数据）（通用实现）
+
+        Returns:
+            int: 清理的文件数量
+        """
+        try:
+            self.logger.info(f"🧹 开始清理{self.module_name}孤立数据")
+            
+            # 获取当前所有订阅的URL
+            current_urls = set(self.get_subscriptions().keys())
+            
+            # 扫描data目录
+            cleaned_count = 0
+            if hasattr(self, 'data_storage_dir') and self.data_storage_dir.exists():
+                for url_dir in self.data_storage_dir.iterdir():
+                    if url_dir.is_dir():
+                        # 检查是否有对应的URL文件
+                        url_file = url_dir / "url.txt"
+                        if url_file.exists():
+                            try:
+                                stored_url = url_file.read_text(encoding='utf-8').strip()
+                                if stored_url not in current_urls:
+                                    # 删除孤立的目录
+                                    import shutil
+                                    shutil.rmtree(url_dir)
+                                    cleaned_count += 1
+                                    self.logger.info(f"🗑️ 删除孤立数据目录: {url_dir.name} (URL: {stored_url})")
+                            except Exception as e:
+                                self.logger.warning(f"⚠️ 处理目录失败: {url_dir}, 错误: {str(e)}")
+                        else:
+                            # 没有URL文件的目录也删除
+                            import shutil
+                            shutil.rmtree(url_dir)
+                            cleaned_count += 1
+                            self.logger.info(f"🗑️ 删除无效数据目录: {url_dir.name}")
+            
+            self.logger.info(f"✅ {self.module_name}数据清理完成，清理了 {cleaned_count} 个孤立目录")
+            return cleaned_count
+            
+        except Exception as e:
+            self.logger.error(f"💥 清理{self.module_name}数据失败: {str(e)}", exc_info=True)
+            return 0
+
+    # ==================== 抽象接口（子类必须实现）====================
 
     @abstractmethod
     def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
@@ -131,30 +557,6 @@ class UnifiedContentManager(ABC):
         pass
 
     @abstractmethod
-    def get_known_item_ids(self, source_url: str) -> List[str]:
-        """
-        获取已知的内容ID列表
-
-        Args:
-            source_url: 数据源URL
-
-        Returns:
-            List[str]: 已知内容ID列表
-        """
-        pass
-
-    @abstractmethod
-    def save_known_item_ids(self, source_url: str, item_ids: List[str]):
-        """
-        保存已知的内容ID列表
-
-        Args:
-            source_url: 数据源URL
-            item_ids: 内容ID列表
-        """
-        pass
-
-    @abstractmethod
     def generate_content_id(self, content_data: Dict) -> str:
         """
         生成内容的唯一标识
@@ -164,33 +566,6 @@ class UnifiedContentManager(ABC):
 
         Returns:
             str: 唯一标识
-        """
-        pass
-
-    @abstractmethod
-    def save_message_mapping(self, source_url: str, item_id: str, chat_id: str, message_ids: List[int]):
-        """
-        保存消息ID映射
-
-        Args:
-            source_url: 数据源URL
-            item_id: 内容ID
-            chat_id: 频道ID
-            message_ids: 消息ID列表
-        """
-        pass
-
-    @abstractmethod
-    def get_all_available_message_sources(self, source_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
-        """
-        获取所有可用的消息转发源
-
-        Args:
-            source_url: 数据源URL
-            item_id: 内容ID
-
-        Returns:
-            List[Tuple[str, List[int]]]: 所有可用的转发源列表 [(频道ID, 消息ID列表), ...]
         """
         pass
 
