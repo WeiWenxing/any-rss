@@ -283,11 +283,10 @@ class UnifiedCommandHandler(ABC):
                     else:
                         # 历史对齐（用户看不到技术细节）
                         self.logger.info(f"🔄 步骤10b: 开始历史对齐")
-                        alignment_success = await self.alignment.align_content_to_channel(
-                            context.bot, self.manager, source_url, content_list, target_chat_id
+                        alignment_success, alignment_msg, sent_count = await self.alignment.perform_historical_alignment(
+                            context.bot, source_url, target_chat_id, self.manager, content_list
                         )
-                        sent_count = len(content_list) if alignment_success else 0
-                        self.logger.info(f"✅ 历史对齐完成: {'成功' if alignment_success else '失败'}, 对齐条目: {sent_count}")
+                        self.logger.info(f"✅ 历史对齐完成: {'成功' if alignment_success else '失败'}, 对齐条目: {sent_count}, 消息: {alignment_msg}")
 
                     # 7. 最终反馈（统一格式）
                     self.logger.info(f"🎉 步骤11: 发送最终成功反馈")
