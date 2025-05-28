@@ -519,24 +519,41 @@ class RSSMessageConverter(MessageConverter):
 
     def _extract_and_clean_content(self, rss_entry: RSSEntry) -> str:
         """
-        提取和清理内容
+        提取和清理内容，保留分段信息
 
         Args:
             rss_entry: RSS条目对象
 
         Returns:
-            str: 清理后的内容
+            str: 清理后的内容，保留段落结构
         """
         content = rss_entry.effective_content or ""
 
         if not content:
             return ""
 
-        # 清理HTML标签
         import re
+
+        # 1. 处理块级元素，保留分段信息
+        # 标题转换为Markdown格式
+        content = re.sub(r'<h([1-6])[^>]*>(.*?)</h[1-6]>', r'\n\n**\2**\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+
+        # 段落标签转换为双换行
+        content = re.sub(r'<p[^>]*>(.*?)</p>', r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+
+        # div标签转换为段落分隔
+        content = re.sub(r'<div[^>]*>(.*?)</div>', r'\n\n\1\n\n', content, flags=re.IGNORECASE | re.DOTALL)
+
+        # 换行标签
+        content = re.sub(r'<br[^>]*/?>', '\n', content, flags=re.IGNORECASE)
+
+        # 列表项
+        content = re.sub(r'<li[^>]*>(.*?)</li>', r'\n• \1', content, flags=re.IGNORECASE | re.DOTALL)
+
+        # 2. 清理剩余HTML标签
         content = re.sub(r'<[^>]+>', '', content)
 
-        # 处理HTML实体
+        # 3. 处理HTML实体
         content = content.replace('&nbsp;', ' ')
         content = content.replace('&amp;', '&')
         content = content.replace('&lt;', '<')
@@ -544,12 +561,21 @@ class RSSMessageConverter(MessageConverter):
         content = content.replace('&quot;', '"')
         content = content.replace('&#39;', "'")
 
-        # 清理多余的空白字符
-        content = re.sub(r'\s+', ' ', content)
-        content = content.strip()
+        # 4. 清理空白字符，保留段落结构
+        content = re.sub(r'[ \t]+', ' ', content)  # 行内多余空格
+        content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)  # 多空行合并
+        content = content.strip()  # 去掉首尾空白
 
-        # 处理换行，保持段落结构
-        content = re.sub(r'\n\s*\n', '\n\n', content)
+        # 5. 清理段落空格
+        lines = content.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            cleaned_line = line.strip()
+            if cleaned_line or (not cleaned_lines or cleaned_lines[-1]):
+                cleaned_lines.append(cleaned_line)
+
+        content = '\n'.join(cleaned_lines)
+        content = re.sub(r'\n\n+', '\n\n', content)
 
         return content
 
