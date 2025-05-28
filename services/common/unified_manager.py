@@ -609,6 +609,16 @@ class UnifiedContentManager(ABC):
         """
         pass
 
+    @abstractmethod
+    def _get_module_converter(self):
+        """
+        获取模块特定的消息转换器
+
+        Returns:
+            MessageConverter: 消息转换器实例
+        """
+        pass
+
     # ==================== 通用业务逻辑（完全复用douyin逻辑）====================
 
     def check_updates(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:

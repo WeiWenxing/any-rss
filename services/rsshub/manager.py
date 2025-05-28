@@ -130,6 +130,15 @@ class RSSHubManager(UnifiedContentManager):
         else:
             return f"rss_item_{hash(str(content_data))}"
 
+    def _get_module_converter(self):
+        """
+        获取RSS模块的消息转换器（实现基类抽象方法）
+
+        Returns:
+            RSSConverter: RSS消息转换器实例
+        """
+        return self.rss_converter
+
     # ==================== RSS特定的便利方法 ====================
 
     def get_all_rss_urls(self) -> List[str]:
