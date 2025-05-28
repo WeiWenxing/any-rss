@@ -233,9 +233,9 @@ class UnifiedTelegramSender:
 
             self.logger.info(f"准备使用RSS媒体策略发送 {len(media_list)} 个媒体项")
 
-            # 分析媒体文件（可访问性、大小、策略决策）
+            # 分析媒体文件
             analyzed_media = strategy_manager.analyze_media_files(media_list)
-            self.logger.info(f"媒体分析完成，策略决策: {[m.send_strategy.value for m in analyzed_media]}")
+            self.logger.info(f"媒体分析完成，共 {len(analyzed_media)} 个媒体项")
 
             # 使用RSS媒体策略发送
             success_messages = await media_sender.send_media_group_with_strategy(
