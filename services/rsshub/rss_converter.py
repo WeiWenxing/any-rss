@@ -363,9 +363,6 @@ class RSSMessageConverter(MessageConverter):
             tuple[str, str]: (完整消息文本, 简短caption)
         """
         try:
-            # 生成完整的消息文本
-            text_parts = []
-
             # 1. 处理标题 - 使用Markdown粗体，截断到15个字符
             title = rss_entry.title or "无标题"
             if len(title) > 15:
@@ -379,52 +376,119 @@ class RSSMessageConverter(MessageConverter):
                             break
                 title = truncated_title + "..."
 
-            text_parts.append(f"*{title}*")
-            text_parts.append("")  # 标题后空行
+            # 2. 构建固定部分（除了内容摘要外的所有部分）
+            fixed_parts = []
 
-            # 2. 处理内容摘要
-            content = self._extract_and_clean_content(rss_entry)
-            if content:
-                # 限制内容长度，为元信息预留空间
-                max_content_length = self.max_text_length - 300
-                if len(content) > max_content_length:
-                    # 按句子边界截断
-                    content = self._smart_truncate(content, max_content_length)
+            # 标题部分
+            title_part = f"*{title}*"
+            fixed_parts.append(title_part)
+            fixed_parts.append("")  # 标题后空行
 
-                text_parts.append(content)
-                text_parts.append("")  # 内容后空行
-
-            # 3. 处理元信息 - 使用英文标签
+            # 元信息部分
             meta_parts = []
-
             if rss_entry.author:
                 meta_parts.append(f"Author: {rss_entry.author}")
-
             if rss_entry.effective_published_time:
                 time_str = rss_entry.effective_published_time.strftime("%Y-%m-%d %H:%M")
                 meta_parts.append(f"Date: {time_str}")
-
             if rss_entry.category:
                 meta_parts.append(f"Category: {rss_entry.category}")
 
+            meta_text = ""
             if meta_parts:
-                text_parts.append(" | ".join(meta_parts))
-                text_parts.append("")  # 元信息后空行
+                meta_text = " | ".join(meta_parts)
+                fixed_parts.append("")  # 内容后空行（为元信息预留）
+                fixed_parts.append(meta_text)
+                fixed_parts.append("")  # 元信息后空行
 
-            # 4. 添加原文链接
+            # 链接部分
+            link_part = ""
             if rss_entry.link:
-                text_parts.append(f"[查看原文]({rss_entry.link})")
+                link_part = f"[查看原文]({rss_entry.link})"
+                fixed_parts.append(link_part)
 
-            # 组合完整消息文本
-            full_text = "\n".join(text_parts)
+            # 3. 计算固定部分的总长度
+            fixed_text = "\n".join(fixed_parts)
+            fixed_length = len(fixed_text)
 
-            # 确保不超过最大长度
+            # 4. 计算内容摘要的最大允许长度
+            # 预留一些空间给内容后的空行和可能的截断标记
+            content_space_overhead = 2  # 内容前后的空行 "\n\n"
+            truncate_overhead = 3  # 可能的"..."
+            max_content_length = self.max_text_length - fixed_length - content_space_overhead - truncate_overhead
+
+            # 确保最大内容长度不为负数
+            if max_content_length < 0:
+                max_content_length = 0
+                self.logger.warning(f"固定部分长度 {fixed_length} 超过最大文本长度 {self.max_text_length}")
+
+            # 5. 处理内容摘要
+            content = self._extract_and_clean_content(rss_entry)
+            if content and max_content_length > 0:
+                if len(content) > max_content_length:
+                    # 按句子边界截断
+                    content = self._smart_truncate(content, max_content_length)
+            elif max_content_length <= 0:
+                content = ""  # 如果没有空间，不显示内容
+
+            # 6. 组合最终的消息文本
+            final_parts = []
+            final_parts.append(title_part)
+            final_parts.append("")  # 标题后空行
+
+            if content:
+                final_parts.append(content)
+                final_parts.append("")  # 内容后空行
+
+            if meta_text:
+                final_parts.append(meta_text)
+                final_parts.append("")  # 元信息后空行
+
+            if link_part:
+                final_parts.append(link_part)
+
+            full_text = "\n".join(final_parts)
+
+            # 7. 最终长度检查（防御性编程）
             if len(full_text) > self.max_text_length:
+                self.logger.warning(f"文本长度 {len(full_text)} 仍超过限制 {self.max_text_length}，强制截断")
                 full_text = full_text[:self.max_text_length-3] + "..."
 
-            # 生成caption（使用新的策略）
-            caption = self._generate_caption(full_text, title, rss_entry.link)
+            # 8. 生成caption
+            if len(full_text) < 1000:
+                caption = ""
+            else:
+                # 复用已计算的固定部分，只改变最大长度限制
+                caption_max_length = 1000
+                caption_overhead = 5  # 预留空间给可能的截断和空行
+                caption_max_content_length = caption_max_length - fixed_length - caption_overhead
 
+                # 如果有足够空间，添加部分内容到caption
+                caption_parts = []
+                caption_parts.append(title_part)
+                caption_parts.append("")  # 标题后空行
+
+                if content and caption_max_content_length > 50:  # 至少要有50字符才值得添加内容
+                    # 截断内容用于caption
+                    caption_content = self._smart_truncate(content, caption_max_content_length)
+                    caption_parts.append(caption_content)
+                    caption_parts.append("")  # 内容后空行
+
+                if meta_text:
+                    caption_parts.append(meta_text)
+                    caption_parts.append("")  # 元信息后空行
+
+                if link_part:
+                    caption_parts.append(link_part)
+
+                caption = "\n".join(caption_parts)
+
+                # 最终长度检查
+                if len(caption) > caption_max_length:
+                    self.logger.warning(f"Caption长度 {len(caption)} 超过1024限制，强制截断")
+                    caption = caption[:caption_max_length-3] + "..."
+
+            self.logger.debug(f"文本长度控制: 固定部分={fixed_length}, 内容空间={max_content_length}, 最终长度={len(full_text)}")
             return full_text, caption
 
         except Exception as e:
@@ -432,60 +496,26 @@ class RSSMessageConverter(MessageConverter):
             # 返回基础格式
             title = rss_entry.title[:15] + "..." if len(rss_entry.title) > 15 else rss_entry.title
             fallback_text = f"*{title}*\n\n[查看原文]({rss_entry.link})"
-            fallback_caption = self._generate_caption(fallback_text, title, rss_entry.link)
-            return fallback_text, fallback_caption
 
-    def _generate_caption(self, full_text: str, title: str, link: Optional[str]) -> str:
-        """
-        生成媒体组的caption
+            # 使用相同的caption生成策略
+            if len(fallback_text) < 1000:
+                fallback_caption = ""
+            else:
+                # 计算fallback caption的固定部分
+                caption_title_part = f"*{title}*"
+                caption_link_part = f"[查看原文]({rss_entry.link})" if rss_entry.link else ""
 
-        策略：
-        - 如果full_text长度 < 1024，则caption为空（让媒体组不显示caption）
-        - 否则，生成简短的caption（只包含标题和链接）
-
-        Args:
-            full_text: 完整的消息文本
-            title: 处理后的标题
-            link: 原文链接
-
-        Returns:
-            str: 生成的caption
-        """
-        try:
-            # 如果完整文本长度小于1024，不需要caption
-            if len(full_text) < 1024:
-                self.logger.debug(f"完整文本长度 {len(full_text)} < 1024，caption设为空")
-                return ""
-
-            # 生成简短的caption
-            caption_parts = []
-            caption_parts.append(f"*{title}*")
-
-            if link:
-                caption_parts.append(f"[查看原文]({link})")
-
-            caption = "\n\n".join(caption_parts)
-
-            # 确保caption不超过1024字符（Telegram限制）
-            if len(caption) > 1024:
-                # 如果标题太长导致超限，截断标题
-                max_title_length = 1024 - len(f"\n\n[查看原文]({link})") if link else 1024
-                if max_title_length > 10:  # 保证标题至少有10个字符
-                    truncated_title = title[:max_title_length-6] + "..."  # 预留"*...*"的空间
-                    caption_parts = [f"*{truncated_title}*"]
-                    if link:
-                        caption_parts.append(f"[查看原文]({link})")
-                    caption = "\n\n".join(caption_parts)
+                # 简单的fallback caption（只包含标题和链接）
+                if caption_link_part:
+                    fallback_caption = f"{caption_title_part}\n\n{caption_link_part}"
                 else:
-                    # 如果链接太长，只保留标题
-                    caption = f"*{title[:1018]}*"  # 预留"*"的空间
+                    fallback_caption = caption_title_part
 
-            self.logger.debug(f"生成caption，长度: {len(caption)}")
-            return caption
+                # 确保不超过1024字符
+                if len(fallback_caption) > 1024:
+                    fallback_caption = fallback_caption[:1021] + "..."
 
-        except Exception as e:
-            self.logger.error(f"生成caption失败: {str(e)}", exc_info=True)
-            return ""  # 出错时返回空caption
+            return fallback_text, fallback_caption
 
     def _extract_and_clean_content(self, rss_entry: RSSEntry) -> str:
         """
