@@ -9,7 +9,7 @@ import tempfile
 import asyncio
 from enum import Enum
 from typing import List, Dict, Tuple, Optional
-from telegram import Bot, InputMediaPhoto, InputMediaVideo
+from telegram import Bot, InputMediaPhoto, InputMediaVideo, Message
 from .config import get_config
 from .network_utils import get_network_manager
 
