@@ -541,6 +541,46 @@ class UnifiedContentManager(ABC):
             self.logger.error(f"💥 清理{self.module_name}数据失败: {str(e)}", exc_info=True)
             return 0
 
+    # ==================== 通用维护方法 ====================
+
+    def cleanup_old_known_items(self, max_known_items: int = 10000) -> int:
+        """
+        清理过期的已知条目ID（保留最近的条目）（通用实现）
+
+        Args:
+            max_known_items: 每个源最多保留的已知条目数量
+
+        Returns:
+            int: 清理的条目总数
+        """
+        try:
+            all_source_urls = self.get_all_source_urls()
+            total_removed = 0
+
+            for source_url in all_source_urls:
+                try:
+                    known_item_ids = self.get_known_item_ids(source_url)
+
+                    if len(known_item_ids) > max_known_items:
+                        # 保留最新的条目（简单的FIFO策略）
+                        trimmed_ids = known_item_ids[-max_known_items:]
+                        self.save_known_item_ids(source_url, trimmed_ids)
+
+                        removed_count = len(known_item_ids) - len(trimmed_ids)
+                        total_removed += removed_count
+                        self.logger.info(f"清理{self.module_name}源过期条目: {source_url}, 移除 {removed_count} 个旧条目")
+
+                except Exception as e:
+                    self.logger.warning(f"清理{self.module_name}源已知条目失败: {source_url}, 错误: {str(e)}")
+                    continue
+
+            self.logger.info(f"✅ {self.module_name}已知条目清理完成，总共移除 {total_removed} 个过期条目")
+            return total_removed
+
+        except Exception as e:
+            self.logger.error(f"清理{self.module_name}已知条目失败: {str(e)}", exc_info=True)
+            return 0
+
     # ==================== 抽象接口（子类必须实现）====================
 
     @abstractmethod

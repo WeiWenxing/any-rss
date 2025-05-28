@@ -53,7 +53,7 @@ class RSSHubScheduler(UnifiedScheduler):
         self.rss_converter = create_rss_converter()
 
         # 调度配置（复用douyin的配置逻辑）
-        self.check_interval = 300  # 5分钟检查一次（与douyin保持一致）
+        self.check_interval = 3600  # 1小时检查一次
         self.max_concurrent_feeds = 5  # 最大并发RSS源数量
         self.max_items_per_batch = 20  # 每批最大条目数量
 
@@ -93,111 +93,13 @@ class RSSHubScheduler(UnifiedScheduler):
             # 清理孤立的数据
             cleaned_count = self.manager.cleanup_orphaned_data()
 
-            # 清理过期的已知条目（保留最近1000个）
-            await self._cleanup_old_known_items()
+            # 清理过期的已知条目（保留最近10000个）
+            removed_count = self.manager.cleanup_old_known_items(max_known_items=10000)
 
-            self.logger.info(f"RSSHub数据清理完成，清理了 {cleaned_count} 个孤立数据项")
+            self.logger.info(f"RSSHub数据清理完成，清理了 {cleaned_count} 个孤立数据项，{removed_count} 个过期条目")
 
         except Exception as e:
             self.logger.error(f"RSSHub数据清理失败: {str(e)}", exc_info=True)
-
-    # ==================== RSS特定的辅助方法 ====================
-
-    async def _cleanup_old_known_items(self) -> None:
-        """
-        清理过期的已知条目ID（保留最近的条目）
-        """
-        try:
-            all_source_urls = self.manager.get_all_source_urls()
-            max_known_items = 1000  # 每个源最多保留1000个已知条目
-
-            for source_url in all_source_urls:
-                try:
-                    known_item_ids = self.manager.get_known_item_ids(source_url)
-
-                    if len(known_item_ids) > max_known_items:
-                        # 保留最新的条目（简单的FIFO策略）
-                        trimmed_ids = known_item_ids[-max_known_items:]
-                        self.manager.save_known_item_ids(source_url, trimmed_ids)
-
-                        removed_count = len(known_item_ids) - len(trimmed_ids)
-                        self.logger.info(f"清理{self.module_name}源过期条目: {source_url}, 移除 {removed_count} 个旧条目")
-
-                except Exception as e:
-                    self.logger.warning(f"清理{self.module_name}源已知条目失败: {source_url}, 错误: {str(e)}")
-                    continue
-
-        except Exception as e:
-            self.logger.error(f"清理已知条目失败: {str(e)}", exc_info=True)
-
-    # ==================== 兼容性接口（保持向后兼容）====================
-
-    async def check_all_rss_updates(self, bot: Bot) -> Dict[str, Any]:
-        """
-        检查所有RSS源的更新（兼容性接口，内部调用统一调度器）
-
-        Args:
-            bot: Telegram Bot实例
-
-        Returns:
-            Dict[str, Any]: 检查结果统计
-        """
-        try:
-            self.logger.info("开始检查所有RSS源更新")
-            start_time = datetime.now()
-
-            # 调用父类的统一调度逻辑
-            await self.run_scheduled_check(bot)
-
-            # 获取统计信息
-            stats = self.get_scheduler_statistics()
-
-            # 记录检查完成
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-
-            self.logger.info(
-                f"RSS更新检查完成: "
-                f"总源数={stats.get('total_sources', 0)}, "
-                f"总订阅={stats.get('total_subscriptions', 0)}, "
-                f"耗时={duration:.2f}秒"
-            )
-
-            return {
-                "total_feeds": stats.get('total_sources', 0),
-                "total_subscriptions": stats.get('total_subscriptions', 0),
-                "duration": duration
-            }
-
-        except Exception as e:
-            self.logger.error(f"检查RSS更新失败: {str(e)}", exc_info=True)
-            return {"total_feeds": 0, "total_subscriptions": 0, "errors": 1}
-
-    def get_scheduler_stats(self) -> Dict[str, Any]:
-        """
-        获取调度器统计信息（兼容性接口）
-
-        Returns:
-            Dict[str, Any]: 统计信息
-        """
-        try:
-            # 获取父类的统计信息
-            base_stats = self.get_scheduler_statistics()
-
-            # 添加RSS特定信息
-            rss_specific_stats = {
-                "check_interval": self.check_interval,
-                "max_concurrent_feeds": self.max_concurrent_feeds,
-                "max_items_per_batch": self.max_items_per_batch,
-                "last_check_time": datetime.now().isoformat()
-            }
-
-            # 合并统计信息
-            return {**base_stats, **rss_specific_stats}
-
-        except Exception as e:
-            self.logger.error(f"获取调度器统计信息失败: {str(e)}", exc_info=True)
-            return {}
 
 
 # 便捷函数：创建RSSHub调度器实例
@@ -227,7 +129,7 @@ if __name__ == "__main__":
         print(f"✅ 创建RSSHub调度器: {type(scheduler).__name__}")
 
         # 测试统计信息
-        stats = scheduler.get_scheduler_stats()
+        stats = scheduler.get_scheduler_statistics()
         print(f"✅ 获取统计信息: {stats.get('total_sources', 0)} 个RSS源")
 
         # 测试数据清理
