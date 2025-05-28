@@ -16,7 +16,6 @@ class RSSConfig:
     request_timeout: int = 30
     request_retries: int = 3
     request_backoff_factor: float = 1.5
-    max_concurrent_feeds: int = 5
 
     # 媒体处理配置
     max_media_per_batch: int = 10

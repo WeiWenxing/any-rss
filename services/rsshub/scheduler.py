@@ -52,10 +52,8 @@ class RSSHubScheduler(UnifiedScheduler):
         self.rss_parser = create_rss_parser()
         self.rss_converter = create_rss_converter()
 
-        # 调度配置（复用douyin的配置逻辑）
+        # 调度配置
         self.check_interval = 3600  # 1小时检查一次
-        self.max_concurrent_feeds = 5  # 最大并发RSS源数量
-        self.max_items_per_batch = 20  # 每批最大条目数量
 
         self.logger.info(f"RSSHub调度器初始化完成，检查间隔: {self.check_interval}秒")
 
