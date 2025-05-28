@@ -383,10 +383,28 @@ class UnifiedCommandHandler(ABC):
                     )
                     return
 
+                # 显示订阅列表
                 message_lines = [f"📋 频道 {target_chat_id} 的{display_name}订阅列表:\n"]
-                for i, source_url in enumerate(subscriptions, 1):
-                    source_display = self.get_source_display_name(source_url)
-                    message_lines.append(f"{i}. {source_display}")
+                for source_url in subscriptions:
+                    message_lines.append(f"{source_url} {target_chat_id}")
+
+                message_lines.append(f"\n📊 总计：{len(subscriptions)}个{display_name}订阅")
+                list_text = "\n".join(message_lines)
+                await update.message.reply_text(list_text)
+
+                # 显示删除提示和命令
+                if subscriptions:
+                    delete_text = (
+                        f"🗑️ **删除订阅方法：**\n"
+                        f"点击下方命令可直接复制到剪切板：\n\n"
+                    )
+
+                    delete_commands = []
+                    for source_url in subscriptions:
+                        delete_commands.append(f"/{self.module_name}_del {source_url}")
+
+                    delete_text += "\n".join(delete_commands)
+                    await update.message.reply_text(delete_text, parse_mode='Markdown')
 
             else:
                 # 显示所有订阅
@@ -396,14 +414,35 @@ class UnifiedCommandHandler(ABC):
                     await update.message.reply_text(f"📋 暂无{display_name}订阅")
                     return
 
-                message_lines = [f"📋 所有{display_name}订阅列表:\n"]
-                for i, (source_url, channels) in enumerate(all_subscriptions.items(), 1):
-                    source_display = self.get_source_display_name(source_url)
-                    message_lines.append(f"{i}. {source_display}")
-                    message_lines.append(f"   📢 频道数: {len(channels)}")
+                # 构建订阅列表
+                subscription_lines = []
+                total_sources = len(all_subscriptions)
+                total_channels = 0
 
-            message_text = "\n".join(message_lines)
-            await update.message.reply_text(message_text)
+                for source_url, channels in all_subscriptions.items():
+                    for channel in channels:
+                        subscription_lines.append(f"{source_url} {channel}")
+                        total_channels += 1
+
+                message_lines = [f"📋 当前{display_name}订阅列表:\n"]
+                message_lines.extend(subscription_lines)
+                message_lines.append(f"\n📊 总计：{total_sources}个{display_name}源，{total_channels}个频道订阅")
+
+                list_text = "\n".join(message_lines)
+                await update.message.reply_text(list_text)
+
+                # 显示删除提示和命令
+                delete_text = (
+                    f"🗑️ **删除订阅方法：**\n"
+                    f"点击下方命令可直接复制到剪切板：\n\n"
+                )
+
+                delete_commands = []
+                for source_url in all_subscriptions.keys():
+                    delete_commands.append(f"/{self.module_name}_del {source_url}")
+
+                delete_text += "\n".join(delete_commands)
+                await update.message.reply_text(delete_text, parse_mode='Markdown')
 
         except Exception as e:
             self.logger.error(f"处理{self.get_module_display_name()}列表命令失败", exc_info=True)
