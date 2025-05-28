@@ -203,7 +203,7 @@ class RSSMessageConverter(MessageConverter):
         media_items = []
 
         try:
-            # 处理RSS enclosures
+            # 直接使用RSSParser已经解析好的所有媒体附件
             for enclosure in rss_entry.enclosures:
                 media_item = self._convert_enclosure_to_media_item(enclosure, rss_entry)
                 if media_item:
@@ -213,14 +213,6 @@ class RSSMessageConverter(MessageConverter):
                     if len(media_items) >= self.max_media_items:
                         self.logger.debug(f"达到最大媒体数量限制: {self.max_media_items}")
                         break
-
-            # 从内容中提取额外媒体（如果enclosures不足）
-            if len(media_items) < self.max_media_items:
-                content_media = self._extract_media_from_content(rss_entry)
-                for media_item in content_media:
-                    if len(media_items) >= self.max_media_items:
-                        break
-                    media_items.append(media_item)
 
             self.logger.debug(f"提取到 {len(media_items)} 个媒体项")
             return media_items
@@ -265,68 +257,6 @@ class RSSMessageConverter(MessageConverter):
         except Exception as e:
             self.logger.warning(f"转换enclosure失败: {enclosure.url}, 错误: {str(e)}")
             return None
-
-    def _extract_media_from_content(self, rss_entry: RSSEntry) -> List[MediaItem]:
-        """
-        从RSS内容中提取媒体链接
-
-        Args:
-            rss_entry: RSS条目对象
-
-        Returns:
-            List[MediaItem]: 从内容提取的媒体项列表
-        """
-        media_items = []
-        content = rss_entry.effective_content
-
-        if not content:
-            return media_items
-
-        try:
-            # 使用公共媒体解析器提取媒体
-            from services.common.media_parser import extract_media_from_html
-
-            media_list = extract_media_from_html(content)
-            self.logger.debug(f"公共媒体解析器提取到 {len(media_list)} 个媒体项")
-
-            for media_dict in media_list:
-                try:
-                    # 转换为绝对URL
-                    absolute_url = rss_entry.get_absolute_url(media_dict['url'])
-
-                    # 验证URL
-                    if not self._is_valid_media_url(absolute_url):
-                        continue
-
-                    # 确定媒体类型
-                    media_type = "photo" if media_dict['type'] == 'image' else "video"
-
-                    # 创建MediaItem
-                    media_item = MediaItem(
-                        type=media_type,
-                        url=absolute_url,
-                        caption=None  # 内容媒体不添加标题
-                    )
-
-                    media_items.append(media_item)
-
-                    # 限制数量
-                    if len(media_items) >= 5:  # 从内容提取的媒体限制为5个
-                        break
-
-                except Exception as e:
-                    self.logger.debug(f"处理内容媒体失败: {media_dict.get('url', 'unknown')}, 错误: {str(e)}")
-                    continue
-
-            self.logger.debug(f"从内容中提取到 {len(media_items)} 个媒体项")
-            return media_items
-
-        except ImportError:
-            self.logger.warning("公共媒体解析器不可用，跳过内容媒体提取")
-            return []
-        except Exception as e:
-            self.logger.warning(f"从内容提取媒体失败: {str(e)}")
-            return []
 
     def _determine_media_type(self, mime_type: str) -> Optional[str]:
         """
