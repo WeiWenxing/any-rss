@@ -365,51 +365,54 @@ class RSSMessageConverter(MessageConverter):
         try:
             message_parts = []
 
-            if send_strategy == "media_group":
-                # 媒体组模式：简洁文本
-                message_parts.append(f"📰 **{rss_entry.title}**")
+            # 1. 处理标题 - 使用Markdown一级标题，截断到15个字符
+            title = rss_entry.title or "无标题"
+            if len(title) > 15:
+                # 在词边界截断，避免破坏词汇
+                truncated_title = title[:15]
+                # 如果截断位置不是空格，向前找到最近的空格或标点
+                if len(title) > 15 and title[15] not in [' ', '，', '。', '、', '；']:
+                    for i in range(14, 0, -1):
+                        if title[i] in [' ', '，', '。', '、', '；']:
+                            truncated_title = title[:i]
+                            break
+                title = truncated_title + "..."
 
-                if rss_entry.author:
-                    message_parts.append(f"👤 {rss_entry.author}")
+            message_parts.append(f"# {title}")
+            message_parts.append("")  # 标题后空行
 
-                if rss_entry.effective_published_time:
-                    time_str = rss_entry.effective_published_time.strftime("%Y-%m-%d %H:%M")
-                    message_parts.append(f"⏰ {time_str}")
+            # 2. 处理内容摘要
+            content = self._extract_and_clean_content(rss_entry)
+            if content:
+                # 限制内容长度，为元信息预留空间
+                max_content_length = self.max_text_length - 300
+                if len(content) > max_content_length:
+                    # 按句子边界截断
+                    content = self._smart_truncate(content, max_content_length)
 
-                if rss_entry.link:
-                    message_parts.append(f"🔗 [查看原文]({rss_entry.link})")
+                message_parts.append(content)
+                message_parts.append("")  # 内容后空行
 
-            else:
-                # 文本模式：完整内容
-                message_parts.append(f"📰 **{rss_entry.title}**")
+            # 3. 处理元信息 - 使用英文标签
+            meta_parts = []
 
-                # 添加描述或内容摘要
-                content = rss_entry.effective_content
-                if content:
-                    # 限制内容长度
-                    max_content_length = self.max_text_length - 500  # 预留空间给其他信息
-                    if len(content) > max_content_length:
-                        content = content[:max_content_length] + "..."
+            if rss_entry.author:
+                meta_parts.append(f"Author: {rss_entry.author}")
 
-                    message_parts.append(f"\n{content}")
+            if rss_entry.effective_published_time:
+                time_str = rss_entry.effective_published_time.strftime("%Y-%m-%d %H:%M")
+                meta_parts.append(f"Date: {time_str}")
 
-                # 添加元信息
-                meta_parts = []
-                if rss_entry.effective_published_time:
-                    time_str = rss_entry.effective_published_time.strftime("%Y-%m-%d %H:%M")
-                    meta_parts.append(f"⏰ {time_str}")
+            if rss_entry.category:
+                meta_parts.append(f"Category: {rss_entry.category}")
 
-                if rss_entry.author:
-                    meta_parts.append(f"👤 {rss_entry.author}")
+            if meta_parts:
+                message_parts.append(" | ".join(meta_parts))
+                message_parts.append("")  # 元信息后空行
 
-                if rss_entry.category:
-                    meta_parts.append(f"🏷️ {rss_entry.category}")
-
-                if meta_parts:
-                    message_parts.append(f"\n{' | '.join(meta_parts)}")
-
-                if rss_entry.link:
-                    message_parts.append(f"\n🔗 [查看原文]({rss_entry.link})")
+            # 4. 添加原文链接
+            if rss_entry.link:
+                message_parts.append(f"[查看原文]({rss_entry.link})")
 
             # 组合消息文本
             message_text = "\n".join(message_parts)
@@ -423,7 +426,74 @@ class RSSMessageConverter(MessageConverter):
         except Exception as e:
             self.logger.error(f"格式化消息文本失败: {str(e)}", exc_info=True)
             # 返回基础格式
-            return f"📰 {rss_entry.title}\n🔗 {rss_entry.link}"
+            title = rss_entry.title[:15] + "..." if len(rss_entry.title) > 15 else rss_entry.title
+            return f"# {title}\n\n[查看原文]({rss_entry.link})"
+
+    def _extract_and_clean_content(self, rss_entry: RSSEntry) -> str:
+        """
+        提取和清理内容
+
+        Args:
+            rss_entry: RSS条目对象
+
+        Returns:
+            str: 清理后的内容
+        """
+        content = rss_entry.effective_content or ""
+
+        if not content:
+            return ""
+
+        # 清理HTML标签
+        import re
+        content = re.sub(r'<[^>]+>', '', content)
+
+        # 处理HTML实体
+        content = content.replace('&nbsp;', ' ')
+        content = content.replace('&amp;', '&')
+        content = content.replace('&lt;', '<')
+        content = content.replace('&gt;', '>')
+        content = content.replace('&quot;', '"')
+        content = content.replace('&#39;', "'")
+
+        # 清理多余的空白字符
+        content = re.sub(r'\s+', ' ', content)
+        content = content.strip()
+
+        # 处理换行，保持段落结构
+        content = re.sub(r'\n\s*\n', '\n\n', content)
+
+        return content
+
+    def _smart_truncate(self, text: str, max_length: int) -> str:
+        """
+        智能截断文本，在句子边界截断
+
+        Args:
+            text: 要截断的文本
+            max_length: 最大长度
+
+        Returns:
+            str: 截断后的文本
+        """
+        if len(text) <= max_length:
+            return text
+
+        # 在句子边界截断
+        sentence_endings = ['。', '！', '？', '.', '!', '?']
+
+        # 从max_length向前查找句子结束符
+        for i in range(max_length, max(0, max_length - 100), -1):
+            if i < len(text) and text[i] in sentence_endings:
+                return text[:i+1]
+
+        # 如果找不到句子边界，在词边界截断
+        for i in range(max_length, max(0, max_length - 50), -1):
+            if i < len(text) and text[i] in [' ', '，', '、', '；']:
+                return text[:i] + "..."
+
+        # 最后直接截断
+        return text[:max_length-3] + "..."
 
     def _build_telegram_message(
         self,
