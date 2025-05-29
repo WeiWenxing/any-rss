@@ -315,6 +315,10 @@ class DouyinFetcher:
                     "duration": music_info.get("duration", ""),
                 }
 
+            # 添加视频封面信息
+            if content_info.get("media_type") == "video" and data.get("pic"):
+                content_info["thumbnail_url"] = data.get("pic")
+
             logging.info(f"内容信息提取完成: {content_info['title']}, 媒体类型: {content_info.get('media_type', 'unknown')}")
             return content_info
 

@@ -138,7 +138,7 @@ class DouyinSender:
                 logging.info(f"尝试下载并发送视频 ({url_type}): {video_url}")
 
                 # 下载视频文件
-                success, error_msg, local_path = self.manager.download_and_save_media(
+                success, error_msg, local_path, thumbnail_path = self.manager.download_and_save_media(
                     content_info, video_url
                 )
 
@@ -148,22 +148,33 @@ class DouyinSender:
 
                 try:
                     # 创建媒体组（使用本地文件）
-                    media_group = [
-                        InputMediaVideo(
-                            media=open(local_path, 'rb'),
-                            caption=caption,
-                            parse_mode='Markdown'
-                        )
-                    ]
+                    with open(local_path, 'rb') as video_file:
+                        # 准备thumbnail参数
+                        thumbnail_file = None
+                        if thumbnail_path and os.path.exists(thumbnail_path):
+                            thumbnail_file = open(thumbnail_path, 'rb')
 
-                    # 发送媒体组
-                    messages = await bot.send_media_group(
-                        chat_id=target_chat_id,
-                        media=media_group
-                    )
+                        try:
+                            media_group = [
+                                InputMediaVideo(
+                                    media=video_file,
+                                    caption=caption,
+                                    parse_mode='Markdown',
+                                    thumbnail=thumbnail_file
+                                )
+                            ]
 
-                    logging.info(f"视频文件发送成功 ({url_type}): {content_info.get('title', '无标题')}")
-                    return messages  # 成功发送，返回消息列表
+                            # 发送媒体组
+                            messages = await bot.send_media_group(
+                                chat_id=target_chat_id,
+                                media=media_group
+                            )
+
+                            logging.info(f"视频文件发送成功 ({url_type}): {content_info.get('title', '无标题')}")
+                            return messages  # 成功发送，返回消息列表
+                        finally:
+                            if thumbnail_file:
+                                thumbnail_file.close()
 
                 except TelegramError as telegram_error:
                     logging.warning(f"Telegram文件发送失败 ({url_type}): {str(telegram_error)}")
@@ -172,6 +183,7 @@ class DouyinSender:
                 finally:
                     # 清理临时文件
                     self._cleanup_temp_file(local_path)
+                    self._cleanup_temp_file(thumbnail_path)
 
             except Exception as e:
                 logging.warning(f"处理下载URL失败 ({url_type}): {str(e)}", exc_info=True)

@@ -454,7 +454,7 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"保存全部内容数据失败: {douyin_url}", exc_info=True)
 
-    def download_and_save_media(self, content_info: Dict, media_url: str) -> Tuple[bool, str, Optional[str]]:
+    def download_and_save_media(self, content_info: Dict, media_url: str) -> Tuple[bool, str, Optional[str], Optional[str]]:
         """
         下载并保存媒体文件
 
@@ -463,7 +463,7 @@ class DouyinManager:
             media_url: 要下载的媒体URL
 
         Returns:
-            Tuple[bool, str, Optional[str]]: (是否成功, 错误信息, 本地文件路径)
+            Tuple[bool, str, Optional[str], Optional[str]]: (是否成功, 错误信息, 本地文件路径, 封面文件路径)
         """
         try:
             # 从content_info中提取douyin_url
@@ -479,7 +479,7 @@ class DouyinManager:
             if media_type == "video":
                 # 下载视频文件
                 if not media_url:
-                    return False, "视频URL为空", None
+                    return False, "视频URL为空", None, None
 
                 # 确定文件扩展名
                 file_ext = ".mp4"  # 默认为mp4
@@ -487,17 +487,27 @@ class DouyinManager:
 
                 # 下载文件
                 success, error_msg = self.fetcher.download_media(media_url, str(local_path))
-                if success:
-                    logging.info(f"视频下载完成: {local_path}")
-                    return True, "", str(local_path)
-                else:
-                    return False, error_msg, None
+                if not success:
+                    return False, error_msg, None, None
+
+                # 下载视频封面（如果有）
+                thumbnail_path = None
+                thumbnail_url = content_info.get("thumbnail_url")
+                if thumbnail_url:
+                    thumbnail_filename = f"{content_id}_thumbnail.jpg"
+                    thumbnail_local_path = media_dir / thumbnail_filename
+                    thumb_success, thumb_error = self.fetcher.download_media(thumbnail_url, str(thumbnail_local_path))
+                    if thumb_success:
+                        thumbnail_path = str(thumbnail_local_path)
+
+                logging.info(f"视频下载完成: {local_path}")
+                return True, "", str(local_path), thumbnail_path
 
             elif media_type == "images":
                 # 下载图片文件（多张）
                 images = content_info.get("images", [])
                 if not images:
-                    return False, "图片列表为空", None
+                    return False, "图片列表为空", None, None
 
                 # 下载第一张图片作为代表
                 image_url = images[0]
@@ -507,14 +517,14 @@ class DouyinManager:
                 success, error_msg = self.fetcher.download_media(image_url, str(local_path))
                 if success:
                     logging.info(f"图片下载完成: {local_path}")
-                    return True, "", str(local_path)
+                    return True, "", str(local_path), None
                 else:
-                    return False, error_msg, None
+                    return False, error_msg, None, None
 
             elif media_type == "image":
                 # 下载单张图片
                 if not media_url:
-                    return False, "图片URL为空", None
+                    return False, "图片URL为空", None, None
 
                 file_ext = ".jpg"  # 默认为jpg
                 local_path = media_dir / f"{content_id}{file_ext}"
@@ -522,15 +532,15 @@ class DouyinManager:
                 success, error_msg = self.fetcher.download_media(media_url, str(local_path))
                 if success:
                     logging.info(f"图片下载完成: {local_path}")
-                    return True, "", str(local_path)
+                    return True, "", str(local_path), None
                 else:
-                    return False, error_msg, None
+                    return False, error_msg, None, None
             else:
-                return False, f"不支持的媒体类型: {media_type}", None
+                return False, f"不支持的媒体类型: {media_type}", None, None
 
         except Exception as e:
             logging.error(f"下载媒体文件失败: {content_info.get('aweme_id', 'unknown')}", exc_info=True)
-            return False, f"下载失败: {str(e)}", None
+            return False, f"下载失败: {str(e)}", None, None
 
     def get_subscription_chat_id(self, douyin_url: str) -> Optional[str]:
         """
