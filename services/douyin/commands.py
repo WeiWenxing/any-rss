@@ -313,33 +313,68 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not subscriptions:
         logging.info("抖音订阅列表为空")
         await update.message.reply_text(
-            "📋 当前没有抖音订阅\n\n"
-            "💡 使用 /douyin_add <抖音链接> <频道ID> 添加订阅"
+            "*抖音订阅列表*\n\n"
+            "当前没有抖音订阅\n\n"
+            "使用 `/douyin_add <抖音链接> <频道ID>` 添加订阅",
+            parse_mode='Markdown'
         )
         return
 
-    # 构建订阅列表
-    subscription_list = []
+    # 构建订阅列表内容
+    subscription_lines = []
+    delete_commands = []
+
     for douyin_url, target_channels in subscriptions.items():
-        # 处理多频道显示
+        # 处理频道列表
         if isinstance(target_channels, list):
-            if len(target_channels) == 1:
-                subscription_list.append(f"🎬 抖音用户\n🔗 {douyin_url}\n📺 {target_channels[0]}")
-            else:
-                channels_text = ', '.join(target_channels)
-                subscription_list.append(f"🎬 抖音用户\n🔗 {douyin_url}\n📺 {channels_text}")
+            channels_display = ' | '.join(target_channels)
+            channels_for_delete = ' '.join(target_channels)
         else:
             # 兼容旧格式
-            subscription_list.append(f"🎬 抖音用户\n🔗 {douyin_url}\n📺 {target_channels}")
+            channels_display = target_channels
+            channels_for_delete = target_channels
 
-    subscription_text = "\n\n".join(subscription_list)
-    total_channels = sum(len(channels) if isinstance(channels, list) else 1 for channels in subscriptions.values())
+        # 添加到订阅列表
+        subscription_lines.append(f"{douyin_url}")
+        subscription_lines.append(f"{channels_display}")
+        subscription_lines.append("")  # 空行分隔
+
+        # 生成删除命令
+        delete_commands.append(f"/douyin_del {douyin_url} {channels_for_delete}")
+
+    # 移除最后一个空行
+    if subscription_lines and subscription_lines[-1] == "":
+        subscription_lines.pop()
+
+    # 构建完整消息
+    message_lines = ["*抖音订阅列表*\n"]
+
+    # 添加订阅列表代码块
+    subscription_text = "\n".join(subscription_lines)
+    message_lines.append(f"```\n{subscription_text}\n```\n")
+
+    # 添加取消订阅方式
+    message_lines.append("*取消订阅方式：*\n")
+    for delete_cmd in delete_commands:
+        message_lines.append(f"```\n{delete_cmd}\n```\n")
+
+    # 添加基础命令
+    from services.common.help_manager import get_help_manager
+    help_manager = get_help_manager()
+    provider = help_manager.providers["douyin"]
+    basic_commands = provider.get_basic_commands()
+
+    message_lines.append("*基础命令：*")
+    # 格式化命令，将下划线命令用代码块包围
+    import re
+    formatted_commands = re.sub(r'/douyin_(\w+)', r'`/douyin_\1`', basic_commands)
+    message_lines.append(formatted_commands)
+
+    # 合并所有内容并发送
+    full_message = "\n".join(message_lines)
 
     logging.info(f"显示抖音订阅列表，共 {len(subscriptions)} 个")
-    await update.message.reply_text(
-        f"📋 当前抖音订阅列表：\n\n{subscription_text}\n\n"
-        f"📊 总计：{len(subscriptions)}个抖音用户，{total_channels}个频道订阅"
-    )
+    await update.message.reply_text(full_message, parse_mode='Markdown')
 
 
 def register_douyin_commands(application: Application) -> None:
