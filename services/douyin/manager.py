@@ -454,25 +454,30 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"保存全部内容数据失败: {douyin_url}", exc_info=True)
 
-    def download_and_save_media(self, content_info: Dict, douyin_url: str) -> Tuple[bool, str, Optional[str]]:
+    def download_and_save_media(self, content_info: Dict, media_url: str) -> Tuple[bool, str, Optional[str]]:
         """
         下载并保存媒体文件
 
         Args:
             content_info: 内容信息
-            douyin_url: 抖音用户主页链接
+            media_url: 要下载的媒体URL
 
         Returns:
             Tuple[bool, str, Optional[str]]: (是否成功, 错误信息, 本地文件路径)
         """
         try:
+            # 从content_info中提取douyin_url
+            douyin_url = content_info.get("share_url", "")
+            if not douyin_url:
+                # 如果没有share_url，尝试构造一个基础路径
+                douyin_url = "unknown_user"
+
             media_dir = self._get_media_dir(douyin_url)
             content_id = content_info.get("aweme_id", "unknown")
             media_type = content_info.get("media_type", "")
 
             if media_type == "video":
                 # 下载视频文件
-                media_url = content_info.get("media_url", "")
                 if not media_url:
                     return False, "视频URL为空", None
 
@@ -508,7 +513,6 @@ class DouyinManager:
 
             elif media_type == "image":
                 # 下载单张图片
-                media_url = content_info.get("media_url", "")
                 if not media_url:
                     return False, "图片URL为空", None
 
@@ -525,7 +529,7 @@ class DouyinManager:
                 return False, f"不支持的媒体类型: {media_type}", None
 
         except Exception as e:
-            logging.error(f"下载媒体文件失败: {douyin_url}", exc_info=True)
+            logging.error(f"下载媒体文件失败: {content_info.get('aweme_id', 'unknown')}", exc_info=True)
             return False, f"下载失败: {str(e)}", None
 
     def get_subscription_chat_id(self, douyin_url: str) -> Optional[str]:
@@ -683,8 +687,6 @@ class DouyinManager:
         except Exception as e:
             logging.error(f"获取MediaGroup消息ID失败: {str(e)}", exc_info=True)
             return []
-
-
 
     def get_all_available_message_sources(self, douyin_url: str, item_id: str) -> List[Tuple[str, List[int]]]:
         """
