@@ -139,7 +139,7 @@ class DouyinSender:
 
                 # 下载视频文件
                 success, error_msg, local_path = self.manager.download_and_save_media(
-                    content_info, video_url, "video"
+                    content_info, video_url
                 )
 
                 if not success:
