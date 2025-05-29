@@ -321,42 +321,53 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # 构建订阅列表内容
-    subscription_lines = []
-    delete_commands = []
+    message_lines = ["*抖音订阅列表*\n"]
+
+    first_subscription = True
+    first_delete_command = None
 
     for douyin_url, target_channels in subscriptions.items():
         # 处理频道列表
         if isinstance(target_channels, list):
             channels_display = ' | '.join(target_channels)
-            channels_for_delete = ' '.join(target_channels)
+            first_channel = target_channels[0] if target_channels else ""
         else:
             # 兼容旧格式
             channels_display = target_channels
-            channels_for_delete = target_channels
+            first_channel = target_channels
 
-        # 添加到订阅列表
-        subscription_lines.append(f"{douyin_url}")
-        subscription_lines.append(f"{channels_display}")
-        subscription_lines.append("")  # 空行分隔
+        # 获取作者信息用于锚文本
+        try:
+            # 尝试从latest.json获取作者信息
+            from pathlib import Path
+            user_dir = douyin_manager._get_user_dir(douyin_url)
+            latest_file = user_dir / "latest.json"
 
-        # 生成删除命令
-        delete_commands.append(f"/douyin_del {douyin_url} {channels_for_delete}")
+            author_name = "抖音链接"  # 默认显示文本
+            if latest_file.exists():
+                import json
+                latest_data = json.loads(latest_file.read_text(encoding='utf-8'))
+                # 优先使用昵称，其次使用author
+                if latest_data.get("nickname"):
+                    author_name = latest_data["nickname"]
+                elif latest_data.get("author"):
+                    author_name = latest_data["author"]
+        except Exception as e:
+            logging.warning(f"获取作者信息失败: {e}")
+            author_name = "抖音链接"
 
-    # 移除最后一个空行
-    if subscription_lines and subscription_lines[-1] == "":
-        subscription_lines.pop()
+        # 添加订阅项：使用锚文本格式
+        message_lines.append(f"[{author_name}]({douyin_url}) → {channels_display}")
 
-    # 构建完整消息
-    message_lines = ["*抖音订阅列表*\n"]
+        # 记录第一个订阅的删除命令
+        if first_subscription and first_channel:
+            first_delete_command = f"/douyin_del {douyin_url} {first_channel}"
+            first_subscription = False
 
-    # 添加订阅列表代码块
-    subscription_text = "\n".join(subscription_lines)
-    message_lines.append(f"`{subscription_text}`\n")
-
-    # 添加取消订阅方式
-    message_lines.append("*取消订阅方式：*\n")
-    for delete_cmd in delete_commands:
-        message_lines.append(f"`{delete_cmd}`\n")
+    # 添加取消订阅示例（只显示第一个）
+    if first_delete_command:
+        message_lines.append("\n*取消订阅：*")
+        message_lines.append(f"`{first_delete_command}`")
 
     # 添加基础命令
     from services.common.help_manager import get_help_manager
@@ -364,17 +375,16 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     provider = help_manager.providers["douyin"]
     basic_commands = provider.get_basic_commands()
 
-    message_lines.append("*基础命令：*")
+    message_lines.append("\n*基础命令：*")
     # 格式化命令，将下划线命令用代码块包围
     import re
     formatted_commands = re.sub(r'/douyin_(\w+)', r'`/douyin_\1`', basic_commands)
     message_lines.append(formatted_commands)
 
-    # 合并所有内容并发送
-    full_message = "\n".join(message_lines)
-
-    logging.info(f"显示抖音订阅列表，共 {len(subscriptions)} 个")
-    await update.message.reply_text(full_message, parse_mode='Markdown')
+    # 发送消息
+    message_text = '\n'.join(message_lines)
+    logging.info(f"发送抖音订阅列表，共{len(subscriptions)}个订阅")
+    await update.message.reply_text(message_text, parse_mode='Markdown')
 
 
 def register_douyin_commands(application: Application) -> None:
