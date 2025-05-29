@@ -102,15 +102,9 @@ class RSSEntry:
         """数据验证和标准化处理"""
         self.logger = logging.getLogger(__name__)
 
-        # 验证必填字段
-        if not self.title:
-            raise ValueError("RSS条目标题不能为空")
-        if not self.link:
-            raise ValueError("RSS条目链接不能为空")
-
-        # 标准化字符串字段
-        self.title = self.title.strip()
-        self.link = self.link.strip()
+        # 标准化字符串字段，允许标题和链接都为空
+        self.title = (self.title or "").strip()
+        self.link = (self.link or "").strip()
         self.description = (self.description or "").strip()
 
         # 处理作者信息

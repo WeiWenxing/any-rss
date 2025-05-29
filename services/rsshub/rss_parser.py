@@ -253,9 +253,8 @@ class RSSParser:
             title = getattr(entry_data, 'title', '').strip()
             link = getattr(entry_data, 'link', '').strip()
 
-            if not title or not link:
-                self.logger.warning(f"条目缺少必要信息: title='{title}', link='{link}'")
-                return None
+            # 允许标题和链接都为空，不进行验证和自动生成
+            self.logger.debug(f"解析条目: title='{title}', link='{link}'")
 
             # 提取描述
             description = self._extract_description(entry_data)
