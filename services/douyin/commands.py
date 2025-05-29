@@ -351,12 +351,12 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 添加订阅列表代码块
     subscription_text = "\n".join(subscription_lines)
-    message_lines.append(f"```\n{subscription_text}\n```\n")
+    message_lines.append(f"`{subscription_text}`\n")
 
     # 添加取消订阅方式
     message_lines.append("*取消订阅方式：*\n")
     for delete_cmd in delete_commands:
-        message_lines.append(f"```\n{delete_cmd}\n```\n")
+        message_lines.append(f"`{delete_cmd}`\n")
 
     # 添加基础命令
     from services.common.help_manager import get_help_manager
