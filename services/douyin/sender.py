@@ -174,7 +174,7 @@ class DouyinSender:
                     self._cleanup_temp_file(local_path)
 
             except Exception as e:
-                logging.warning(f"处理下载URL失败 ({url_type}): {str(e)}")
+                logging.warning(f"处理下载URL失败 ({url_type}): {str(e)}", exc_info=True)
                 continue
 
         # 两个阶段都失败了
