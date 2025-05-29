@@ -91,7 +91,7 @@ class DouyinSender:
         logging.info(f"第一阶段：尝试直接发送URL链接，共 {len(video_urls)} 个URL")
         for url_type, video_url in video_urls:
             try:
-                logging.info(f"尝试直接发送视频URL ({url_type}): {video_url[:100]}...")
+                logging.info(f"尝试直接发送视频URL ({url_type}): {video_url}")
 
                 # 创建媒体组（直接使用URL）
                 media_group = [
@@ -135,7 +135,7 @@ class DouyinSender:
         logging.info(f"第二阶段：尝试下载文件发送，共 {len(download_urls)} 个下载URL")
         for url_type, video_url in download_urls:
             try:
-                logging.info(f"尝试下载并发送视频 ({url_type}): {video_url[:100]}...")
+                logging.info(f"尝试下载并发送视频 ({url_type}): {video_url}")
 
                 # 下载视频文件
                 success, error_msg, local_path = self.manager.download_and_save_media(
