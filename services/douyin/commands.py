@@ -329,11 +329,11 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     for douyin_url, target_channels in subscriptions.items():
         # 处理频道列表
         if isinstance(target_channels, list):
-            channels_display = ' | '.join(target_channels)
+            channels_display = ' | '.join([f'`{channel}`' for channel in target_channels])
             first_channel = target_channels[0] if target_channels else ""
         else:
             # 兼容旧格式
-            channels_display = target_channels
+            channels_display = f'`{target_channels}`'
             first_channel = target_channels
 
         # 获取作者信息用于锚文本
@@ -357,7 +357,7 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             author_name = "抖音链接"
 
         # 添加订阅项：使用锚文本格式
-        message_lines.append(f"[{author_name}]({douyin_url}) → `{channels_display}`")
+        message_lines.append(f"[{author_name}]({douyin_url}) → {channels_display}")
 
         # 记录第一个订阅的删除命令
         if first_subscription and first_channel:
