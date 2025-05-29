@@ -134,7 +134,7 @@ def close_all():
 
 async def scheduled_task(token):
     """定时任务"""
-    await asyncio.sleep(5)
+    await asyncio.sleep(600)  # 等待10分钟后开始定时任务
 
     bot = tel_bots.get(token)
     if not bot:
