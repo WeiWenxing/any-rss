@@ -496,9 +496,13 @@ class DouyinManager:
                 if thumbnail_url:
                     thumbnail_filename = f"{content_id}_thumbnail.jpg"
                     thumbnail_local_path = media_dir / thumbnail_filename
+                    logging.info(f"开始下载视频封面: {thumbnail_url}")
                     thumb_success, thumb_error = self.fetcher.download_media(thumbnail_url, str(thumbnail_local_path))
                     if thumb_success:
+                        logging.info(f"视频封面下载成功: {thumbnail_local_path}")
                         thumbnail_path = str(thumbnail_local_path)
+                    else:
+                        logging.warning(f"视频封面下载失败: {thumb_error}")
 
                 logging.info(f"视频下载完成: {local_path}")
                 return True, "", str(local_path), thumbnail_path
