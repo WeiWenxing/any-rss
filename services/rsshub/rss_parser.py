@@ -282,14 +282,10 @@ class RSSParser:
 
         # 1. 正确提取完整的HTML内容，而不是纯文本
         description = self._extract_description_with_soup(item_soup)
-        content_tag = item_soup.find('content:encoded')
-
-        description_html = description_tag.decode_contents(formatter="html") if description_tag else ""
-        content_html = content_tag.decode_contents(formatter="html") if content_tag else ""
-        main_content_html = content_html or description_html
-
         author = self._extract_author_with_soup(item_soup)
         category = self._extract_category_with_soup(item_soup)
+        content = self._extract_content_with_soup(item_soup)
+        summary = self._extract_summary_with_soup(item_soup)
 
         pub_date_tag = item_soup.find('pubDate')
         pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
@@ -322,8 +318,8 @@ class RSSParser:
             category=category,
             published=published_time,
             updated=updated_time,
-            content=main_content_html,
-            summary=description,
+            content=content,
+            summary=summary,
             raw_data=raw_data,
             source_url=rss_url,
             source_title=source_title
@@ -348,6 +344,22 @@ class RSSParser:
         entry.summary = entry.description
 
         return entry
+
+    def _extract_content_with_soup(self, item_soup: BeautifulSoup) -> str:
+        """使用BeautifulSoup提取完整内容的HTML"""
+        # 尝试多个字段，返回第一个找到的完整HTML内容
+        for field in ['content', 'content:encoded']:
+            tag = item_soup.find(field)
+            if tag:
+                return tag.decode_contents(formatter="html")
+        return ""
+
+    def _extract_summary_with_soup(self, item_soup: BeautifulSoup) -> str:
+        """使用BeautifulSoup提取摘要的HTML"""
+        tag = item_soup.find('summary')
+        if tag:
+            return tag.decode_contents(formatter="html")
+        return ""
 
     def _extract_category_with_soup(self, item_soup: BeautifulSoup) -> Optional[str]:
         """使用BeautifulSoup提取分类信息"""
@@ -399,12 +411,13 @@ class RSSParser:
         return link
 
     def _extract_description_with_soup(self, item_soup: BeautifulSoup) -> str:
-        """使用BeautifulSoup提取条目描述的完整HTML内容"""
+        """使用BeautifulSoup提取条目描述的完整HTML内容并转换为Markdown格式"""
         # 尝试多个字段，返回第一个找到的完整HTML内容
         for field in ['description', 'summary', 'subtitle']:
             tag = item_soup.find(field)
             if tag:
-                return tag.decode_contents(formatter="html")
+                html_content = tag.decode_contents(formatter="html")
+                return self._html_to_markdown(html_content).strip()
         return ""
 
     def _extract_media_from_content_with_soup(self, description_soup: BeautifulSoup, entry: RSSEntry):
