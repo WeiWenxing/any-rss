@@ -289,9 +289,7 @@ class RSSParser:
         main_content_html = content_html or description_html
 
         author = self._extract_author_with_soup(item_soup)
-
-        category_tag = item_soup.find('category')
-        category = category_tag.get_text(strip=True) if category_tag else None
+        category = self._extract_category_with_soup(item_soup)
 
         pub_date_tag = item_soup.find('pubDate')
         pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
@@ -350,6 +348,21 @@ class RSSParser:
         entry.summary = entry.description
 
         return entry
+
+    def _extract_category_with_soup(self, item_soup: BeautifulSoup) -> Optional[str]:
+        """使用BeautifulSoup提取分类信息"""
+        # 优先查找category标签
+        category_tag = item_soup.find('category')
+        if category_tag:
+            # 优先使用term属性
+            term = category_tag.get('term')
+            if term:
+                return term.strip()
+            # 否则使用标签文本
+            text = category_tag.get_text(strip=True)
+            if text:
+                return text
+        return None
 
     def _extract_author_with_soup(self, item_soup: BeautifulSoup) -> Optional[str]:
         """使用BeautifulSoup提取作者信息"""
