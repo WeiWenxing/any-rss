@@ -322,8 +322,8 @@ class RSSParser:
                 entry.add_enclosure(url=url, mime_type=mime_type, length=length)
 
         # 3b. 然后从description中提取媒体内容作为补充
-        self._extract_media_from_content(entry)
-        # self._extract_media_from_content_with_soup(item_soup, entry)
+        # self._extract_media_from_content(entry)
+        self._extract_media_from_content_with_soup(item_soup, entry)
         return entry
 
     def _extract_published_time_with_soup(self, item_soup: BeautifulSoup) -> Optional[datetime]:
@@ -425,34 +425,72 @@ class RSSParser:
                 return self._html_to_markdown(html_content).strip()
         return ""
 
-    def _extract_media_from_content_with_soup(self, description_soup: BeautifulSoup, entry: RSSEntry):
-        """从BeautifulSoup解析的description中提取媒体附件，并从HTML中移除它们"""
-        if not description_soup:
+    def _extract_media_from_content_with_soup(self, item_soup: BeautifulSoup, entry: RSSEntry):
+        """从BeautifulSoup解析的item中提取媒体附件，并从HTML中移除它们"""
+        if not item_soup:
             return
 
-        # 提取图片
-        img_tags = description_soup.find_all('img')
-        if img_tags:
-            self.logger.debug(f"在 {entry.item_id} 中找到 {len(img_tags)} 个<img>标签")
-            for img in img_tags:
-                img_url = img.get('src')
-                if img_url:
-                    # 将相对URL转换为绝对URL
-                    full_img_url = urljoin(entry.link or entry.rss_url, img_url)
-                    enclosure = RSSEnclosure(url=full_img_url, type='image', length=0)
-                    if enclosure not in entry.enclosures:
-                        entry.enclosures.append(enclosure)
+        self.logger.debug(f"从BeautifulSoup对象中提取媒体，条目ID: {entry.item_id}")
 
-            # 从description中移除已经提取的img标签
-            for img in img_tags:
-                img.decompose()
+        try:
+            # 1. 提取图片
+            img_tags = item_soup.find_all('img', src=True)
+            self.logger.debug(f"使用BeautifulSoup找到 {len(img_tags)} 个img标签")
 
-            # 更新入口的description和content为清理后的HTML
-            cleaned_html = description_soup.decode_contents(formatter="html")
-            entry.description = cleaned_html
-            if entry.content == entry.summary: # 如果content和description相同，一起更新
-                entry.content = cleaned_html
-            entry.summary = cleaned_html
+            for img_tag in img_tags:
+                try:
+                    img_url = img_tag.get('src', '').strip()
+                    if not img_url or not img_url.startswith(('http://', 'https://')):
+                        continue
+
+                    # 过滤装饰图片（与_extract_media_from_content保持一致）
+                    if any(keyword in img_url.lower() for keyword in ['icon', 'logo', 'avatar', 'emoji', 'button']):
+                        self.logger.debug(f"过滤装饰图片: {img_url}")
+                        continue
+
+                    # 转换为绝对URL
+                    absolute_url = entry.get_absolute_url(img_url)
+
+                    # 添加为图片附件
+                    entry.add_enclosure(absolute_url, 'image/jpeg')
+                    self.logger.debug(f"从内容中添加图片附件: {absolute_url}")
+
+                except Exception as e:
+                    self.logger.debug(f"处理内容图片失败: {img_url}, 错误: {str(e)}")
+                    continue
+
+            # 2. 提取视频（与_extract_media_from_content保持一致）
+            video_tags = item_soup.find_all('video', src=True)
+            self.logger.debug(f"使用BeautifulSoup找到 {len(video_tags)} 个video标签")
+
+            for video_tag in video_tags:
+                try:
+                    video_url = video_tag.get('src', '').strip()
+                    if not video_url or not video_url.startswith(('http://', 'https://')):
+                        continue
+
+                    # 提取poster封面图URL
+                    poster_url = video_tag.get('poster', '').strip()
+                    if poster_url and not poster_url.startswith(('http://', 'https://')):
+                        # 转换相对URL为绝对URL
+                        poster_url = entry.get_absolute_url(poster_url)
+
+                    # 转换视频URL为绝对URL
+                    absolute_url = entry.get_absolute_url(video_url)
+
+                    # 添加为视频附件，包含poster信息
+                    entry.add_enclosure(absolute_url, 'video/mp4', poster=poster_url if poster_url else None)
+
+                    poster_info = f" (封面: {poster_url})" if poster_url else ""
+                    self.logger.debug(f"从内容中添加视频附件: {absolute_url}{poster_info}")
+
+                except Exception as e:
+                    self.logger.debug(f"处理内容视频失败: {video_url}, 错误: {str(e)}")
+                    continue
+
+        except Exception as e:
+            self.logger.warning(f"从BeautifulSoup提取媒体失败: {str(e)}")
+            return
 
     def _parse_rss_content_with_feedparser(self, rss_content: str, rss_url: str) -> List[RSSEntry]:
         """
