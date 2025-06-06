@@ -288,8 +288,7 @@ class RSSParser:
         content_html = content_tag.decode_contents(formatter="html") if content_tag else ""
         main_content_html = content_html or description_html
 
-        author_tag = item_soup.find('author') or item_soup.find('dc:creator')
-        author = author_tag.get_text(strip=True) if author_tag else None
+        author = self._extract_author_with_soup(item_soup)
 
         category_tag = item_soup.find('category')
         category = category_tag.get_text(strip=True) if category_tag else None
@@ -351,6 +350,30 @@ class RSSParser:
         entry.summary = entry.description
 
         return entry
+
+    def _extract_author_with_soup(self, item_soup: BeautifulSoup) -> Optional[str]:
+        """使用BeautifulSoup提取作者信息"""
+        # 尝试 author -> name 结构
+        author_tag = item_soup.find('author')
+        if author_tag and author_tag.find('name'):
+            name_text = author_tag.find('name').get_text(strip=True)
+            if name_text:
+                return name_text
+
+        # 如果没有 name 子标签，直接尝试 author 标签的文本
+        if author_tag:
+            author_text = author_tag.get_text(strip=True)
+            if author_text:
+                return author_text
+
+        # 尝试 dc:creator 标签
+        creator_tag = item_soup.find('dc:creator')
+        if creator_tag:
+            creator_text = creator_tag.get_text(strip=True)
+            if creator_text:
+                return creator_text
+
+        return None
 
     def _extract_guid_with_soup(self, item_soup: BeautifulSoup, link: str) -> str:
         """使用BeautifulSoup提取GUID，优先使用id，然后是guid，最后回退到link"""
