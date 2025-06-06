@@ -28,7 +28,10 @@ class RSSHubHelpProvider(ModuleHelpProvider):
 
     def get_debug_commands(self) -> str:
         """获取调试命令帮助信息"""
-        return "• /rsshub_debug_show <XML数据> - 调试RSS内容格式化"
+        return (
+            "• /rsshub_debug_show <XML数据> - 通过文本调试RSS内容\n"
+            "• /rss_debug_show_file - 上传包含XML的txt文件进行调试"
+        )
 
     def get_examples(self) -> str:
         """获取使用示例"""
