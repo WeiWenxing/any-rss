@@ -364,11 +364,6 @@ async def douyin_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             first_delete_command = f"/douyin_del {douyin_url} {first_channel}"
             first_subscription = False
 
-    # 添加取消订阅示例（只显示第一个）
-    if first_delete_command:
-        message_lines.append("\n*取消订阅：*")
-        message_lines.append(f"`{first_delete_command}`")
-
     # 添加基础命令
     from services.common.help_manager import get_help_manager
     help_manager = get_help_manager()
