@@ -287,22 +287,8 @@ class RSSParser:
         content = self._extract_content_with_soup(item_soup)
         summary = self._extract_summary_with_soup(item_soup)
 
-        pub_date_tag = item_soup.find('pubDate')
-        pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
-
-        published_time = None
-        if pub_date_str:
-            parsed_date = feedparser.parse(f'<rss><channel><item><pubDate>{pub_date_str}</pubDate></item></channel></rss>')
-            if parsed_date.entries and 'published_parsed' in parsed_date.entries[0]:
-                published_time = self._parse_datetime(parsed_date.entries[0].published_parsed)
-
-        updated_tag = item_soup.find('updated')
-        updated_str = updated_tag.get_text(strip=True) if updated_tag else None
-        updated_time = None
-        if updated_str:
-            parsed_date = feedparser.parse(f'<rss><channel><item><updated>{updated_str}</updated></item></channel></rss>')
-            if parsed_date.entries and 'updated_parsed' in parsed_date.entries[0]:
-                updated_time = self._parse_datetime(parsed_date.entries[0].updated_parsed)
+        published = self._extract_published_time_with_soup(item_soup)
+        updated = self._extract_updated_time_with_soup(item_soup)
 
         guid = self._extract_guid_with_soup(item_soup, link)
 
@@ -316,8 +302,8 @@ class RSSParser:
             description=description,
             author=author,
             category=category,
-            published=published_time,
-            updated=updated_time,
+            published=published,
+            updated=updated,
             content=content,
             summary=summary,
             raw_data=raw_data,
@@ -345,20 +331,44 @@ class RSSParser:
 
         return entry
 
+    def _extract_published_time_with_soup(self, item_soup: BeautifulSoup) -> Optional[datetime]:
+        """使用BeautifulSoup提取发布时间"""
+        pub_date_tag = item_soup.find('pubDate')
+        pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
+
+        if pub_date_str:
+            parsed_date = feedparser.parse(f'<rss><channel><item><pubDate>{pub_date_str}</pubDate></item></channel></rss>')
+            if parsed_date.entries and 'published_parsed' in parsed_date.entries[0]:
+                return self._parse_datetime(parsed_date.entries[0].published_parsed)
+        return None
+
+    def _extract_updated_time_with_soup(self, item_soup: BeautifulSoup) -> Optional[datetime]:
+        """使用BeautifulSoup提取更新时间"""
+        updated_tag = item_soup.find('updated')
+        updated_str = updated_tag.get_text(strip=True) if updated_tag else None
+
+        if updated_str:
+            parsed_date = feedparser.parse(f'<rss><channel><item><updated>{updated_str}</updated></item></channel></rss>')
+            if parsed_date.entries and 'updated_parsed' in parsed_date.entries[0]:
+                return self._parse_datetime(parsed_date.entries[0].updated_parsed)
+        return None
+
     def _extract_content_with_soup(self, item_soup: BeautifulSoup) -> str:
-        """使用BeautifulSoup提取完整内容的HTML"""
+        """使用BeautifulSoup提取完整内容的HTML并转换为Markdown格式"""
         # 尝试多个字段，返回第一个找到的完整HTML内容
         for field in ['content', 'content:encoded']:
             tag = item_soup.find(field)
             if tag:
-                return tag.decode_contents(formatter="html")
+                html_content = tag.decode_contents(formatter="html")
+                return self._html_to_markdown(html_content).strip()
         return ""
 
     def _extract_summary_with_soup(self, item_soup: BeautifulSoup) -> str:
-        """使用BeautifulSoup提取摘要的HTML"""
+        """使用BeautifulSoup提取摘要的HTML并转换为Markdown格式"""
         tag = item_soup.find('summary')
         if tag:
-            return tag.decode_contents(formatter="html")
+            html_content = tag.decode_contents(formatter="html")
+            return self._html_to_markdown(html_content).strip()
         return ""
 
     def _extract_category_with_soup(self, item_soup: BeautifulSoup) -> Optional[str]:
