@@ -26,6 +26,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import hashlib
+from bs4 import BeautifulSoup
+from email.utils import parsedate_to_datetime
 
 from .rss_entry import RSSEntry, RSSEnclosure, create_rss_entry
 from services.common.cache import get_cache
@@ -200,7 +202,7 @@ class RSSParser:
 
     def _parse_rss_content(self, rss_content: str, rss_url: str) -> List[RSSEntry]:
         """
-        解析RSS内容
+        解析RSS内容，优先使用BeautifulSoup，失败则回退到feedparser
 
         Args:
             rss_content: RSS XML内容
@@ -210,11 +212,177 @@ class RSSParser:
             List[RSSEntry]: RSS条目列表
         """
         try:
+            self.logger.info(f"🚀 尝试使用主解析器(BeautifulSoup)解析RSS内容, URL: {rss_url}")
+            return self._parse_rss_content_with_soup(rss_content, rss_url)
+        except Exception as e:
+            self.logger.error(f"主解析器(BeautifulSoup)解析失败: {e}", exc_info=True)
+            self.logger.warning(f"正在尝试回退到备用解析器(feedparser)...")
+            try:
+                return self._parse_rss_content_with_feedparser(rss_content, rss_url)
+            except Exception as fp_e:
+                self.logger.error(f"备用解析器(feedparser)也失败了: {fp_e}", exc_info=True)
+                raise fp_e
+
+    def _parse_rss_content_with_soup(self, rss_content: str, rss_url: str) -> List[RSSEntry]:
+        """
+        使用BeautifulSoup解析RSS内容
+
+        Args:
+            rss_content: RSS XML内容
+            rss_url: RSS源URL
+
+        Returns:
+            List[RSSEntry]: RSS条目列表
+        """
+        soup = BeautifulSoup(rss_content, 'xml')
+
+        # 获取源信息
+        source_title = soup.find('channel').find('title').get_text(strip=True) if soup.find('channel') and soup.find('channel').find('title') else '未知来源'
+
+        entries = []
+        # feedparser有时会把item放在entries里，bs4是直接找item
+        items = soup.find_all('item')
+        if not items:
+            self.logger.warning(f"在 {rss_url} 中未找到<item>标签，尝试在'entries'中查找")
+            items = soup.find_all('entry')
+
+        if not items:
+            self.logger.error(f"在 {rss_url} 中未找到任何<item>或<entry>标签")
+            return []
+
+        self.logger.info(f"🔍 在 {rss_url} 中找到 {len(items)} 个条目")
+
+        for item_soup in items:
+            try:
+                entry = self._parse_single_entry_with_soup(item_soup, rss_url, source_title)
+                if entry:
+                    entries.append(entry)
+            except Exception as e:
+                self.logger.warning(f"使用BeautifulSoup解析单个条目失败: {e}", exc_info=True)
+                continue
+
+        self.logger.info(f"✅ 使用BeautifulSoup成功解析 {len(entries)} 个RSS条目")
+        return entries
+
+    def _parse_single_entry_with_soup(self, item_soup: BeautifulSoup, rss_url: str, source_title: Optional[str]) -> Optional[RSSEntry]:
+        """
+        使用BeautifulSoup解析单个RSS条目
+
+        Args:
+            item_soup: 单个<item>的BeautifulSoup对象
+            rss_url: RSS源URL
+            source_title: RSS源标题
+
+        Returns:
+            Optional[RSSEntry]: RSS条目对象，解析失败返回None
+        """
+        # 提取各个字段
+        title = item_soup.find('title').get_text(strip=True) if item_soup.find('title') else ""
+        link = item_soup.find('link').get_text(strip=True) if item_soup.find('link') else ""
+
+        # 1. 正确提取完整的HTML内容，而不是纯文本
+        description_tag = item_soup.find('description')
+        content_tag = item_soup.find('content:encoded')
+
+        description_html = description_tag.decode_contents(formatter="html") if description_tag else ""
+        content_html = content_tag.decode_contents(formatter="html") if content_tag else ""
+        main_content_html = content_html or description_html
+
+        author_tag = item_soup.find('author') or item_soup.find('dc:creator')
+        author = author_tag.get_text(strip=True) if author_tag else None
+
+        category_tag = item_soup.find('category')
+        category = category_tag.get_text(strip=True) if category_tag else None
+
+        pub_date_tag = item_soup.find('pubDate')
+        pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
+
+        published_time = None
+        if pub_date_str:
+            parsed_date = feedparser.parse(f'<rss><channel><item><pubDate>{pub_date_str}</pubDate></item></channel></rss>')
+            if parsed_date.entries and 'published_parsed' in parsed_date.entries[0]:
+                published_time = self._parse_datetime(parsed_date.entries[0].published_parsed)
+
+        guid_tag = item_soup.find('guid')
+        guid = guid_tag.get_text(strip=True) if guid_tag else link
+
+        raw_data = {'soup_str': str(item_soup)}
+
+        # 2. 创建RSSEntry对象，此时传入的是原始HTML
+        entry = create_rss_entry(
+            guid=guid,
+            title=title,
+            link=link,
+            description=description_html,
+            author=author,
+            category=category,
+            published=published_time,
+            content=main_content_html,
+            summary=description_html,
+            raw_data=raw_data,
+            source_url=rss_url,
+            source_title=source_title
+        )
+
+        # 3. 提取媒体附件（此过程会清理HTML）
+        # 3a. 优先解析标准的enclosure标签
+        for enclosure in item_soup.find_all('enclosure'):
+            url = enclosure.get('url')
+            mime_type = enclosure.get('type')
+            length_str = enclosure.get('length')
+            if url and mime_type:
+                length = int(length_str) if length_str and length_str.isdigit() else 0
+                entry.add_enclosure(url=url, mime_type=mime_type, length=length)
+
+        # 3b. 然后从description中提取媒体内容作为补充
+        self._extract_media_from_content_with_soup(description_tag, entry)
+
+        # 4. 最后，对清理后的HTML进行Markdown转换
+        entry.description = self._html_to_markdown(entry.description)
+        entry.content = self._html_to_markdown(entry.content)
+        entry.summary = entry.description
+
+        return entry
+
+    def _extract_media_from_content_with_soup(self, description_soup: BeautifulSoup, entry: RSSEntry):
+        """从BeautifulSoup解析的description中提取媒体附件，并从HTML中移除它们"""
+        if not description_soup:
+            return
+
+        # 提取图片
+        img_tags = description_soup.find_all('img')
+        if img_tags:
+            self.logger.debug(f"在 {entry.item_id} 中找到 {len(img_tags)} 个<img>标签")
+            for img in img_tags:
+                img_url = img.get('src')
+                if img_url:
+                    # 将相对URL转换为绝对URL
+                    full_img_url = urljoin(entry.link or entry.rss_url, img_url)
+                    enclosure = RSSEnclosure(url=full_img_url, type='image', length=0)
+                    if enclosure not in entry.enclosures:
+                        entry.enclosures.append(enclosure)
+
+            # 从description中移除已经提取的img标签
+            for img in img_tags:
+                img.decompose()
+
+            # 更新入口的description和content为清理后的HTML
+            cleaned_html = description_soup.decode_contents(formatter="html")
+            entry.description = cleaned_html
+            if entry.content == entry.summary: # 如果content和description相同，一起更新
+                entry.content = cleaned_html
+            entry.summary = cleaned_html
+
+    def _parse_rss_content_with_feedparser(self, rss_content: str, rss_url: str) -> List[RSSEntry]:
+        """
+        (备用) 使用feedparser解析RSS内容
+        """
+        try:
             # 使用feedparser解析RSS
             feed = feedparser.parse(rss_content)
 
             if feed.bozo and feed.bozo_exception:
-                self.logger.warning(f"RSS格式警告: {feed.bozo_exception}")
+                self.logger.warning(f"Feedparser RSS格式警告: {feed.bozo_exception}")
 
             # 获取源信息
             source_title = getattr(feed.feed, 'title', None)
@@ -226,19 +394,19 @@ class RSSParser:
                     if entry:
                         entries.append(entry)
                 except Exception as e:
-                    self.logger.warning(f"解析单个条目失败: {str(e)}")
+                    self.logger.warning(f"Feedparser解析单个条目失败: {str(e)}")
                     continue
 
-            self.logger.debug(f"成功解析 {len(entries)} 个RSS条目")
+            self.logger.debug(f"Feedparser成功解析 {len(entries)} 个RSS条目")
             return entries
 
         except Exception as e:
-            self.logger.error(f"解析RSS内容失败: {str(e)}", exc_info=True)
+            self.logger.error(f"Feedparser解析RSS内容失败: {str(e)}", exc_info=True)
             raise
 
     def _parse_single_entry(self, entry_data: Any, rss_url: str, source_title: Optional[str]) -> Optional[RSSEntry]:
         """
-        解析单个RSS条目
+        (备用) 解析单个RSS条目
 
         Args:
             entry_data: feedparser解析的条目数据
@@ -415,8 +583,6 @@ class RSSParser:
 
         # 使用BeautifulSoup解析HTML（参考普通RSS模块的策略）
         try:
-            from bs4 import BeautifulSoup
-
             # 解析HTML内容
             soup = BeautifulSoup(raw_content, 'html.parser')
 
@@ -544,8 +710,6 @@ class RSSParser:
         self.logger.debug(f"HTML转Markdown - 原始内容长度: {len(html_content)}")
 
         try:
-            from bs4 import BeautifulSoup
-
             # 解析HTML
             soup = BeautifulSoup(html_content, 'html.parser')
 
@@ -672,8 +836,6 @@ class RSSParser:
             final_text = soup.get_text()
 
             # 11. 清理空白字符，保留段落结构
-            import re
-
             # 处理HTML实体
             final_text = final_text.replace('&nbsp;', ' ')
             final_text = final_text.replace('&amp;', '&')
@@ -718,7 +880,6 @@ class RSSParser:
         except ImportError:
             self.logger.warning("BeautifulSoup不可用，回退到简单HTML清理")
             # 回退到简单的HTML标签清理
-            import re
             clean_text = re.sub(r'<[^>]+>', '', html_content)
             clean_text = re.sub(r'\s+', ' ', clean_text)
             return clean_text.strip()
@@ -726,7 +887,6 @@ class RSSParser:
         except Exception as e:
             self.logger.error(f"HTML转Markdown失败: {str(e)}", exc_info=True)
             # 出错时回退到简单清理
-            import re
             clean_text = re.sub(r'<[^>]+>', '', html_content)
             clean_text = re.sub(r'\s+', ' ', clean_text)
             return clean_text.strip()
