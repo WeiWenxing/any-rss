@@ -281,7 +281,7 @@ class RSSParser:
         link = item_soup.find('link').get_text(strip=True) if item_soup.find('link') else ""
 
         # 1. 正确提取完整的HTML内容，而不是纯文本
-        description_tag = item_soup.find('description')
+        description = self._extract_description_with_soup(item_soup)
         content_tag = item_soup.find('content:encoded')
 
         description_html = description_tag.decode_contents(formatter="html") if description_tag else ""
@@ -303,8 +303,15 @@ class RSSParser:
             if parsed_date.entries and 'published_parsed' in parsed_date.entries[0]:
                 published_time = self._parse_datetime(parsed_date.entries[0].published_parsed)
 
-        guid_tag = item_soup.find('guid')
-        guid = guid_tag.get_text(strip=True) if guid_tag else link
+        updated_tag = item_soup.find('updated')
+        updated_str = updated_tag.get_text(strip=True) if updated_tag else None
+        updated_time = None
+        if updated_str:
+            parsed_date = feedparser.parse(f'<rss><channel><item><updated>{updated_str}</updated></item></channel></rss>')
+            if parsed_date.entries and 'updated_parsed' in parsed_date.entries[0]:
+                updated_time = self._parse_datetime(parsed_date.entries[0].updated_parsed)
+
+        guid = self._extract_guid_with_soup(item_soup, link)
 
         raw_data = {'soup_str': str(item_soup)}
 
@@ -313,12 +320,13 @@ class RSSParser:
             guid=guid,
             title=title,
             link=link,
-            description=description_html,
+            description=description,
             author=author,
             category=category,
             published=published_time,
+            updated=updated_time,
             content=main_content_html,
-            summary=description_html,
+            summary=description,
             raw_data=raw_data,
             source_url=rss_url,
             source_title=source_title
@@ -335,7 +343,7 @@ class RSSParser:
                 entry.add_enclosure(url=url, mime_type=mime_type, length=length)
 
         # 3b. 然后从description中提取媒体内容作为补充
-        self._extract_media_from_content_with_soup(description_tag, entry)
+        self._extract_media_from_content_with_soup(item_soup, entry)
 
         # 4. 最后，对清理后的HTML进行Markdown转换
         entry.description = self._html_to_markdown(entry.description)
@@ -343,6 +351,25 @@ class RSSParser:
         entry.summary = entry.description
 
         return entry
+
+    def _extract_guid_with_soup(self, item_soup: BeautifulSoup, link: str) -> str:
+        """使用BeautifulSoup提取GUID，优先使用id，然后是guid，最后回退到link"""
+        # 尝试多个字段，返回第一个找到的
+        for field in ['id', 'guid']:
+            tag = item_soup.find(field)
+            if tag and tag.get_text(strip=True):
+                return tag.get_text(strip=True)
+        # 如果都没有，回退到link
+        return link
+
+    def _extract_description_with_soup(self, item_soup: BeautifulSoup) -> str:
+        """使用BeautifulSoup提取条目描述的完整HTML内容"""
+        # 尝试多个字段，返回第一个找到的完整HTML内容
+        for field in ['description', 'summary', 'subtitle']:
+            tag = item_soup.find(field)
+            if tag:
+                return tag.decode_contents(formatter="html")
+        return ""
 
     def _extract_media_from_content_with_soup(self, description_soup: BeautifulSoup, entry: RSSEntry):
         """从BeautifulSoup解析的description中提取媒体附件，并从HTML中移除它们"""
