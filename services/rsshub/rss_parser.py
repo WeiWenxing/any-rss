@@ -322,13 +322,8 @@ class RSSParser:
                 entry.add_enclosure(url=url, mime_type=mime_type, length=length)
 
         # 3b. 然后从description中提取媒体内容作为补充
-        self._extract_media_from_content_with_soup(item_soup, entry)
-
-        # 4. 最后，对清理后的HTML进行Markdown转换
-        entry.description = self._html_to_markdown(entry.description)
-        entry.content = self._html_to_markdown(entry.content)
-        entry.summary = entry.description
-
+        self._extract_media_from_content(entry)
+        # self._extract_media_from_content_with_soup(item_soup, entry)
         return entry
 
     def _extract_published_time_with_soup(self, item_soup: BeautifulSoup) -> Optional[datetime]:
