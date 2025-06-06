@@ -505,10 +505,10 @@ class UnifiedContentManager(ABC):
         """
         try:
             self.logger.info(f"🧹 开始清理{self.module_name}孤立数据")
-            
+
             # 获取当前所有订阅的URL
             current_urls = set(self.get_subscriptions().keys())
-            
+
             # 扫描data目录
             cleaned_count = 0
             if hasattr(self, 'data_storage_dir') and self.data_storage_dir.exists():
@@ -533,10 +533,10 @@ class UnifiedContentManager(ABC):
                             shutil.rmtree(url_dir)
                             cleaned_count += 1
                             self.logger.info(f"🗑️ 删除无效数据目录: {url_dir.name}")
-            
+
             self.logger.info(f"✅ {self.module_name}数据清理完成，清理了 {cleaned_count} 个孤立目录")
             return cleaned_count
-            
+
         except Exception as e:
             self.logger.error(f"💥 清理{self.module_name}数据失败: {str(e)}", exc_info=True)
             return 0
@@ -685,6 +685,9 @@ class UnifiedContentManager(ABC):
                         self.logger.info(f"🆕 还有更多新内容...")
 
             if new_items:
+                # 保存最新内容引用
+                self._save_latest_content(source_url, all_content_data)
+
                 self.logger.info(f"🎉 发现 {len(new_items)} 个新内容，将发送到 {len(subscribed_channels)} 个频道")
                 return True, f"发现 {len(new_items)} 个新内容", new_items
             else:
@@ -958,6 +961,35 @@ class UnifiedContentManager(ABC):
         except Exception as e:
             self.logger.error(f"获取统计信息失败: {str(e)}", exc_info=True)
             return {}
+
+    # ==================== 通用内容存储实现 ====================
+
+    def _save_latest_content(self, source_url: str, all_content_data: List[Dict]):
+        """
+        保存最新内容引用（复用douyin模块的存储逻辑）
+
+        Args:
+            source_url: 数据源URL
+            all_content_data: 全部内容数据列表
+        """
+        try:
+            if not all_content_data:
+                return
+
+            # 保存最新内容引用（第一个）
+            latest_content_info = all_content_data[0]  # 第一个是最新的
+            url_hash = self._safe_filename(source_url)
+            url_dir = self.data_storage_dir / url_hash
+            url_dir.mkdir(parents=True, exist_ok=True)
+
+            latest_file = url_dir / "latest.json"
+            latest_file.write_text(
+                json.dumps(latest_content_info, indent=2, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            self.logger.debug(f"✅ 保存最新内容引用成功: {latest_file}")
+        except Exception as e:
+            self.logger.error(f"💥 保存最新内容引用失败: {source_url}, 错误: {str(e)}", exc_info=True)
 
 
 # 便捷函数：创建统一管理器的工厂方法
