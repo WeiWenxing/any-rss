@@ -7,3 +7,4 @@ feedparser
 beautifulsoup4
 lxml
 redis>=4.0.0
+telegraph>=2.0.0
