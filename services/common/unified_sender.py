@@ -11,6 +11,7 @@
 4. 媒体组和文本消息的智能处理
 5. 完整的容错和降级机制
 6. 跨模块消息复制功能
+7. Telegraph大量媒体处理策略
 
 作者: Assistant
 创建时间: 2024年
@@ -25,6 +26,9 @@ from telegram.error import TelegramError
 from .telegram_message import TelegramMessage, MediaItem, MediaType
 from .unified_interval_manager import UnifiedIntervalManager, create_unified_interval_manager
 from .media_strategy import create_media_strategy_manager
+
+# Telegraph策略阈值：超过20个媒体项时使用Telegraph
+TELEGRAPH_MEDIA_THRESHOLD = 20
 
 
 class UnifiedTelegramSender:
@@ -68,9 +72,14 @@ class UnifiedTelegramSender:
             self.logger.info(f"开始发送统一消息到频道: {chat_id}")
 
             if message.media_group and len(message.media_group) > 0:
-                # 媒体组发送：使用RSS媒体策略
-                self.logger.info(f"检测到媒体组，包含 {len(message.media_group)} 个媒体项")
-                return await self._send_media_group(bot, chat_id, message)
+                # 判断媒体数量是否超过阈值
+                if len(message.media_group) > TELEGRAPH_MEDIA_THRESHOLD:
+                    self.logger.info(f"检测到大量媒体（{len(message.media_group)}个），使用Telegraph策略")
+                    return await self._send_via_telegraph(bot, chat_id, message)
+                else:
+                    # 正常媒体组发送
+                    self.logger.info(f"检测到媒体组，包含 {len(message.media_group)} 个媒体项")
+                    return await self._send_media_group(bot, chat_id, message)
             else:
                 # 文本消息发送
                 self.logger.info("发送纯文本消息")
@@ -189,6 +198,79 @@ class UnifiedTelegramSender:
         except Exception as e:
             self.logger.error(f"批量复制消息失败: {str(e)}", exc_info=True)
             raise TelegramError(f"批量复制消息失败: {str(e)}")
+
+    async def _send_via_telegraph(self, bot: Bot, chat_id: str, message: TelegramMessage) -> List[Message]:
+        """
+        通过Telegraph发送大量媒体
+
+        1. 创建Telegraph页面包含所有媒体
+        2. 发送一条包含预览图和链接的消息
+
+        Args:
+            bot: Telegram Bot实例
+            chat_id: 目标频道ID
+            message: 包含大量媒体的消息对象
+
+        Returns:
+            List[Message]: 发送的消息列表（只有一条）
+        """
+        try:
+            from .telegraph_handler import get_telegraph_handler
+
+            self.logger.info(f"开始通过Telegraph发送 {len(message.media_group)} 个媒体项")
+
+            # 1. 提取媒体URL列表
+            media_urls = [item.url for item in message.media_group]
+
+            # 2. 准备Telegraph页面标题和描述
+            title = message.caption or "媒体集合"
+            description = message.text
+
+            # 3. 创建Telegraph页面
+            telegraph = get_telegraph_handler()
+            page_url, page_path = await telegraph.create_media_page(
+                title=title,
+                media_urls=media_urls,
+                description=description
+            )
+
+            self.logger.info(f"Telegraph页面创建成功: {page_url}")
+
+            # 4. 构建发送消息
+            # 使用第一张图片作为预览
+            preview_image = message.media_group[0]
+
+            # 构建消息文本
+            message_text = f"{description or ''}\n\n" \
+                          f"📷 该内容包含大量图片 (共{len(media_urls)}张)\n\n" \
+                          f"🔗 完整查看: {page_url}"
+
+            # 5. 发送带预览图的消息
+            if preview_image.type == MediaType.PHOTO:
+                # 发送带图片的消息
+                sent_message = await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=preview_image.url,
+                    caption=message_text,
+                    parse_mode=message.parse_mode
+                )
+                return [sent_message]
+            else:
+                # 如果第一个不是图片，则发送文本消息（带链接预览）
+                text_message = await bot.send_message(
+                    chat_id=chat_id,
+                    text=message_text,
+                    parse_mode=message.parse_mode,
+                    disable_web_page_preview=False  # 启用预览
+                )
+                return [text_message]
+
+        except Exception as e:
+            self.logger.error(f"Telegraph发送失败: {str(e)}", exc_info=True)
+
+            # 降级: 尝试使用传统方式发送
+            self.logger.info("降级: 尝试使用传统媒体组方式发送")
+            return await self._send_media_group(bot, chat_id, message)
 
     async def _send_media_group(self, bot: Bot, chat_id: str, message: TelegramMessage) -> List[Message]:
         """
