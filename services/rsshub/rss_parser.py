@@ -234,7 +234,7 @@ class RSSParser:
         Returns:
             List[RSSEntry]: RSS条目列表
         """
-        soup = BeautifulSoup(rss_content, 'xml')
+        soup = BeautifulSoup(rss_content, 'html.parser')
 
         # 获取源信息
         source_title = soup.find('channel').find('title').get_text(strip=True) if soup.find('channel') and soup.find('channel').find('title') else '未知来源'
@@ -256,12 +256,23 @@ class RSSParser:
             try:
                 entry = self._parse_single_entry_with_soup(item_soup, rss_url, source_title)
                 if entry:
+                    # 简洁的去重判断
+                    if entry.guid and any(e.guid == entry.guid for e in entries):
+                        self.logger.debug(f"跳过重复条目 (GUID: {entry.guid})")
+                        continue
+
+                    # 如果没有GUID，尝试用链接去重
+                    if not entry.guid and entry.link and any(e.link == entry.link for e in entries):
+                        self.logger.debug(f"跳过重复条目 (Link: {entry.link})")
+                        continue
+
                     entries.append(entry)
+
             except Exception as e:
                 self.logger.warning(f"使用BeautifulSoup解析单个条目失败: {e}", exc_info=True)
                 continue
 
-        self.logger.info(f"✅ 使用BeautifulSoup成功解析 {len(entries)} 个RSS条目")
+        self.logger.info(f"✅ 使用BeautifulSoup成功解析 {len(entries)} 个RSS条目 (去重后)")
         return entries
 
     def _parse_single_entry_with_soup(self, item_soup: BeautifulSoup, rss_url: str, source_title: Optional[str]) -> Optional[RSSEntry]:
