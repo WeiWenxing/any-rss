@@ -342,10 +342,47 @@ class RSSParser:
         pub_date_tag = item_soup.find('pubDate')
         pub_date_str = pub_date_tag.get_text(strip=True) if pub_date_tag else None
 
+        self.logger.debug(f"尝试解析发布时间 - 发现标签: {pub_date_tag is not None}, 标签内容: {pub_date_str}")
+
         if pub_date_str:
-            parsed_date = feedparser.parse(f'<rss><channel><item><pubDate>{pub_date_str}</pubDate></item></channel></rss>')
-            if parsed_date.entries and 'published_parsed' in parsed_date.entries[0]:
-                return self._parse_datetime(parsed_date.entries[0].published_parsed)
+            try:
+                self.logger.debug(f"尝试使用feedparser解析发布时间: {pub_date_str}")
+                parsed_date = feedparser.parse(f'<rss><channel><item><pubDate>{pub_date_str}</pubDate></item></channel></rss>')
+
+                has_entry = len(parsed_date.entries) > 0
+                has_published = has_entry and 'published_parsed' in parsed_date.entries[0]
+
+                self.logger.debug(f"Feedparser解析结果 - 条目存在: {has_entry}, 包含published_parsed: {has_published}")
+
+                if has_published:
+                    parsed_time = parsed_date.entries[0].published_parsed
+                    self.logger.debug(f"解析得到时间结构: {parsed_time}")
+                    dt = self._parse_datetime(parsed_time)
+                    self.logger.debug(f"最终解析结果: {dt}")
+                    return dt
+                else:
+                    self.logger.warning(f"Feedparser未能解析发布时间: {pub_date_str}")
+            except Exception as e:
+                self.logger.error(f"解析发布时间时发生异常: {str(e)}", exc_info=True)
+        else:
+            self.logger.debug("未找到pubDate标签或标签内容为空")
+
+        # 如果上面的方法失败，尝试使用email.utils解析
+        if pub_date_str:
+            try:
+                self.logger.debug(f"尝试使用email.utils解析发布时间: {pub_date_str}")
+                email_dt = None
+                try:
+                    email_dt = parsedate_to_datetime(pub_date_str)
+                except Exception as e:
+                    self.logger.debug(f"email.utils解析失败: {str(e)}")
+
+                if email_dt:
+                    self.logger.debug(f"email.utils解析成功: {email_dt}")
+                    return email_dt
+            except Exception as e:
+                self.logger.error(f"使用email.utils解析时间时发生异常: {str(e)}")
+
         return None
 
     def _extract_updated_time_with_soup(self, item_soup: BeautifulSoup) -> Optional[datetime]:
@@ -353,10 +390,48 @@ class RSSParser:
         updated_tag = item_soup.find('updated')
         updated_str = updated_tag.get_text(strip=True) if updated_tag else None
 
+        self.logger.debug(f"尝试解析更新时间 - 发现标签: {updated_tag is not None}, 标签内容: {updated_str}")
+
         if updated_str:
-            parsed_date = feedparser.parse(f'<rss><channel><item><updated>{updated_str}</updated></item></channel></rss>')
-            if parsed_date.entries and 'updated_parsed' in parsed_date.entries[0]:
-                return self._parse_datetime(parsed_date.entries[0].updated_parsed)
+            try:
+                self.logger.debug(f"尝试使用feedparser解析更新时间: {updated_str}")
+                parsed_date = feedparser.parse(f'<rss><channel><item><updated>{updated_str}</updated></item></channel></rss>')
+
+                has_entry = len(parsed_date.entries) > 0
+                has_updated = has_entry and 'updated_parsed' in parsed_date.entries[0]
+
+                self.logger.debug(f"Feedparser解析结果 - 条目存在: {has_entry}, 包含updated_parsed: {has_updated}")
+
+                if has_updated:
+                    parsed_time = parsed_date.entries[0].updated_parsed
+                    self.logger.debug(f"解析得到时间结构: {parsed_time}")
+                    dt = self._parse_datetime(parsed_time)
+                    self.logger.debug(f"最终解析结果: {dt}")
+                    return dt
+                else:
+                    self.logger.warning(f"Feedparser未能解析更新时间: {updated_str}")
+            except Exception as e:
+                self.logger.error(f"解析更新时间时发生异常: {str(e)}", exc_info=True)
+        else:
+            self.logger.debug("未找到updated标签或标签内容为空")
+
+            # 尝试寻找其他可能的更新时间标签
+            other_tags = ['lastBuildDate', 'modified']
+            for tag_name in other_tags:
+                tag = item_soup.find(tag_name)
+                if tag:
+                    tag_str = tag.get_text(strip=True)
+                    self.logger.debug(f"找到替代时间标签 {tag_name}: {tag_str}")
+                    try:
+                        parsed_date = feedparser.parse(f'<rss><channel><item><{tag_name}>{tag_str}</{tag_name}></item></channel></rss>')
+                        if parsed_date.entries and hasattr(parsed_date.entries[0], 'updated_parsed'):
+                            parsed_time = parsed_date.entries[0].updated_parsed
+                            dt = self._parse_datetime(parsed_time)
+                            self.logger.debug(f"{tag_name}解析结果: {dt}")
+                            return dt
+                    except Exception as e:
+                        self.logger.debug(f"解析{tag_name}标签失败: {str(e)}")
+
         return None
 
     def _extract_content_with_soup(self, item_soup: BeautifulSoup) -> str:
