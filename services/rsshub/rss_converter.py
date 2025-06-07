@@ -32,7 +32,7 @@ class RSSMessageConverter(MessageConverter):
     将RSSEntry转换为统一的TelegramMessage格式，实现统一消息架构
     """
 
-    def __init__(self, max_text_length: int = 4000, max_media_items: int = 10):
+    def __init__(self, max_text_length: int = 4000, max_media_items: int = 200):
         """
         初始化RSS消息转换器
 
@@ -208,11 +208,6 @@ class RSSMessageConverter(MessageConverter):
                 media_item = self._convert_enclosure_to_media_item(enclosure, rss_entry)
                 if media_item:
                     media_items.append(media_item)
-
-                    # 限制媒体数量
-                    if len(media_items) >= self.max_media_items:
-                        self.logger.debug(f"达到最大媒体数量限制: {self.max_media_items}")
-                        break
 
             self.logger.debug(f"提取到 {len(media_items)} 个媒体项")
             return media_items
