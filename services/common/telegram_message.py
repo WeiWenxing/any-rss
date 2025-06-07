@@ -135,9 +135,6 @@ class TelegramMessage:
 
         # 验证媒体组
         if self.media_group:
-            if len(self.media_group) > 10:
-                raise ValueError("Telegram MediaGroup最多支持10个媒体项")
-
             # 检查caption分布（通常只有第一个媒体项有caption）
             caption_count = sum(1 for item in self.media_group if item.caption)
             if caption_count > 1:
