@@ -25,8 +25,8 @@ from telegraph import Telegraph
 from telegraph.exceptions import TelegraphException
 
 # 配置
-DEFAULT_AUTHOR_NAME = "AnyRSS Bot"
-DEFAULT_AUTHOR_URL = "https://t.me/AnyRSSBot"  # 替换为实际机器人用户名
+DEFAULT_AUTHOR_NAME = "RSS Bot"
+DEFAULT_AUTHOR_URL = "https://t.me/RSSBot"  # 替换为实际机器人用户名
 MAX_RETRIES = 5
 
 

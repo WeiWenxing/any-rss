@@ -223,7 +223,7 @@ class UnifiedTelegramSender:
             media_urls = [item.url for item in message.media_group]
 
             # 2. 准备Telegraph页面标题和描述
-            title = message.caption or "媒体集合"
+            title = message.text
             description = message.text
 
             # 3. 创建Telegraph页面
