@@ -213,7 +213,8 @@ class RSSParser:
         """
         try:
             self.logger.info(f"🚀 尝试使用主解析器(BeautifulSoup)解析RSS内容, URL: {rss_url}")
-            return self._parse_rss_content_with_soup(rss_content, rss_url)
+            #return self._parse_rss_content_with_soup(rss_content, rss_url)
+            return self._parse_rss_content_with_feedparser(rss_content, rss_url)
         except Exception as e:
             self.logger.error(f"主解析器(BeautifulSoup)解析失败: {e}", exc_info=True)
             self.logger.warning(f"正在尝试回退到备用解析器(feedparser)...")
@@ -256,6 +257,10 @@ class RSSParser:
             try:
                 entry = self._parse_single_entry_with_soup(item_soup, rss_url, source_title)
                 if entry:
+                    if not entry.guid and not entry.link:
+                        self.logger.warning(f"跳过条目 (GUID: {entry.guid}, Link: {entry.link})")
+                        continue
+
                     # 简洁的去重判断
                     if entry.guid and any(e.guid == entry.guid for e in entries):
                         self.logger.debug(f"跳过重复条目 (GUID: {entry.guid})")
@@ -597,6 +602,19 @@ class RSSParser:
                 try:
                     entry = self._parse_single_entry(entry_data, rss_url, source_title)
                     if entry:
+                        if not entry.guid and not entry.link:
+                            self.logger.warning(f"跳过条目 (GUID: {entry.guid}, Link: {entry.link})")
+                            continue
+
+                        # 简洁的去重判断
+                        if entry.guid and any(e.guid == entry.guid for e in entries):
+                            self.logger.debug(f"跳过重复条目 (GUID: {entry.guid})")
+                            continue
+
+                        # 如果没有GUID，尝试用链接去重
+                        if not entry.guid and entry.link and any(e.link == entry.link for e in entries):
+                            self.logger.debug(f"跳过重复条目 (Link: {entry.link})")
+                            continue
                         entries.append(entry)
                 except Exception as e:
                     self.logger.warning(f"Feedparser解析单个条目失败: {str(e)}")
