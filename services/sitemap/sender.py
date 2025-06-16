@@ -15,9 +15,10 @@ Sitemap消息发送器模块
 
 import logging
 from typing import List, Optional
-from telegram import Bot
+from telegram import Bot, Message
 
 from services.common.unified_sender import UnifiedTelegramSender
+from services.common.telegram_message import TelegramMessage
 
 
 class SitemapSender(UnifiedTelegramSender):
@@ -34,39 +35,34 @@ class SitemapSender(UnifiedTelegramSender):
         super().__init__(interval_scenario="default")
         self.logger = logging.getLogger(__name__)
 
-    async def send_message(self, bot: Bot, chat_id: str, content: dict) -> List[int]:
+    async def send_message(self, bot: Bot, chat_id: str, message: TelegramMessage) -> List[Message]:
         """
         发送Sitemap消息
 
         Args:
             bot: Telegram Bot实例
             chat_id: 目标聊天ID
-            content: 消息内容，包含url和last_modified字段
+            message: TelegramMessage对象
 
         Returns:
-            List[int]: 发送的消息ID列表
+            List[Message]: 发送的消息列表
         """
         try:
-            self.logger.info(f"开始发送Sitemap消息: {content.get('url')}")
-
-            # 构建消息文本
-            message_text = f"🔗 {content['url']}"
-            if content.get('last_modified'):
-                message_text += f"\n\n📅 更新时间: {content['last_modified']}"
+            self.logger.info(f"开始发送Sitemap消息: {message.text}")
 
             # 直接使用bot发送消息
-            message = await bot.send_message(
+            sent_message = await bot.send_message(
                 chat_id=chat_id,
-                text=message_text,
-                parse_mode="Markdown",
-                disable_web_page_preview=False
+                text=message.text,
+                parse_mode=message.parse_mode,
+                disable_web_page_preview=message.disable_web_page_preview
             )
 
-            self.logger.info(f"✅ Sitemap消息发送成功: {content.get('url')}")
-            return [message.message_id]
+            self.logger.info(f"✅ Sitemap消息发送成功: {message.text}")
+            return [sent_message]
 
         except Exception as e:
-            self.logger.error(f"❌ 发送Sitemap消息失败: {content.get('url')}, 错误: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ 发送Sitemap消息失败: {message.text}, 错误: {str(e)}", exc_info=True)
             raise
 
 

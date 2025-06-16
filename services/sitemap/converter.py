@@ -21,7 +21,7 @@ class SitemapConverter(MessageConverter):
 
     def __init__(self):
         """初始化转换器"""
-        super().__init__(ConverterType.SITEMAP)
+        super().__init__(ConverterType.GENERIC)
         self.logger = logging.getLogger("sitemap.converter")
         self.logger.info("Sitemap消息转换器初始化完成")
 
@@ -53,7 +53,7 @@ class SitemapConverter(MessageConverter):
             # 创建消息
             return TelegramMessage.create_text_message(
                 text=message_text,
-                parse_mode="HTML",
+                parse_mode="Markdown",
                 disable_web_page_preview=False
             )
 

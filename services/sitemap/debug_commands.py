@@ -18,8 +18,8 @@ from telegram import Update, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, Application
 from telegram.error import TelegramError
 
-from .manager import create_sitemap_manager
 from .sitemap_parser import create_sitemap_parser
+from .converter import create_sitemap_converter
 from .sender import create_sitemap_sender
 
 # 配置日志记录器
@@ -85,19 +85,30 @@ async def sitemap_debug_show_command(update: Update, context: ContextTypes.DEFAU
             logger.info("发送解析结果")
             await update.message.reply_text(response)
 
-            # 使用正常的发送流程发送每个URL
+            # 创建转换器
+            converter = create_sitemap_converter()
+            logger.info("创建Sitemap转换器")
+
+            # 创建发送器
             sender = create_sitemap_sender()
             logger.info("创建Sitemap发送器")
 
+            # 使用正常的发送流程发送每个URL
             for i, entry in enumerate(entries, 1):
                 try:
                     logger.info(f"开始发送第 {i}/{len(entries)} 个URL: {entry.url}")
+
+                    # 转换内容
+                    content = converter.convert({
+                        'url': entry.url,
+                        'last_modified': entry.last_modified
+                    })
+
                     # 使用正常的发送流程
-                    message_ids = await sender.send_entry(
+                    message_ids = await sender.send_message(
                         bot=context.bot,
                         chat_id=update.effective_chat.id,
-                        url=entry.url,
-                        last_modified=entry.last_modified
+                        message=content
                     )
                     logger.info(f"✅ 发送URL成功: {entry.url}, 消息ID: {message_ids}")
                 except Exception as e:
