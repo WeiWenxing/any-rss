@@ -1,13 +1,13 @@
 """
 Sitemap命令处理器模块
 
-该模块负责处理所有Sitemap相关的Telegram命令，完全复用RSSHub模块的命令处理逻辑。
+该模块负责处理所有Sitemap相关的Telegram命令，完全复用rsshub模块的命令处理逻辑。
 支持Sitemap订阅的添加、删除和查看功能，提供统一的用户反馈体验。
 
 主要功能：
-1. /sitemap-add - 添加Sitemap订阅
-2. /sitemap-del - 删除Sitemap订阅
-3. /sitemap-list - 查看订阅列表
+1. /sitemap_add - 添加Sitemap订阅（包含完整的反馈流程）
+2. /sitemap_del - 删除Sitemap订阅
+3. /sitemap_list - 查看订阅列表
 4. Sitemap URL验证和格式化
 5. 统一的错误处理和用户反馈
 
@@ -23,7 +23,7 @@ from telegram import Update, Bot
 from telegram.ext import ContextTypes, CommandHandler, Application
 
 from .manager import SitemapManager, create_sitemap_manager
-# from .sitemap_parser import SitemapParser, create_sitemap_parser
+from .sitemap_parser import SitemapParser, create_sitemap_parser
 from services.common.unified_commands import UnifiedCommandHandler
 
 
@@ -31,7 +31,7 @@ class SitemapCommandHandler(UnifiedCommandHandler):
     """
     Sitemap命令处理器
 
-    继承统一命令处理器基类，完全复用RSSHub模块的命令处理逻辑
+    继承统一命令处理器基类，完全复用rsshub模块的命令处理逻辑
     """
 
     def __init__(self, data_dir: str = "storage/sitemap"):
@@ -48,9 +48,15 @@ class SitemapCommandHandler(UnifiedCommandHandler):
         super().__init__(module_name="sitemap", manager=sitemap_manager)
 
         # 初始化Sitemap特定组件
-        # self.sitemap_parser = create_sitemap_parser()
+        self.sitemap_parser = create_sitemap_parser()
 
         self.logger.info("Sitemap命令处理器初始化完成")
+
+    # ==================== 实现UnifiedCommandHandler抽象接口 ====================
+
+    # 注意：get_source_display_name 现在使用基类默认实现，直接返回URL
+
+    # ==================== 重写UnifiedCommandHandler的可选方法 ====================
 
     def get_module_display_name(self) -> str:
         """
@@ -86,7 +92,7 @@ def get_sitemap_command_handler(data_dir: str = "storage/sitemap") -> SitemapCom
 
 async def sitemap_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理 /sitemap-add 命令
+    处理 /sitemap_add 命令
 
     Args:
         update: Telegram更新对象
@@ -98,7 +104,7 @@ async def sitemap_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def sitemap_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理 /sitemap-del 命令
+    处理 /sitemap_del 命令
 
     Args:
         update: Telegram更新对象
@@ -110,7 +116,7 @@ async def sitemap_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def sitemap_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理 /sitemap-list 命令
+    处理 /sitemap_list 命令
 
     Args:
         update: Telegram更新对象

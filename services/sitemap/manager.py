@@ -23,8 +23,9 @@ from pathlib import Path
 from telegram import Bot
 
 from services.common.unified_manager import UnifiedContentManager
-# from .sitemap_parser import SitemapParser, create_sitemap_parser
+from .sitemap_parser import SitemapParser, create_sitemap_parser
 from services.common.message_converter import get_converter, ConverterType
+from .converter import create_sitemap_converter
 
 
 class SitemapManager(UnifiedContentManager):
@@ -45,6 +46,9 @@ class SitemapManager(UnifiedContentManager):
         # self.parser = create_sitemap_parser()
         self.logger.info("Sitemap管理器初始化完成")
 
+        # 初始化并注册Sitemap转换器（确保转换器可用）
+        self.sitemap_converter = create_sitemap_converter()
+
     async def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
         获取最新内容
@@ -55,28 +59,28 @@ class SitemapManager(UnifiedContentManager):
         Returns:
             Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 消息, 内容列表)
         """
-        # try:
-        #     # 解析Sitemap
-        #     entries = await self.parser.parse_sitemap(source_url)
+        try:
+            # 解析Sitemap
+            entries = await self.parser.parse_sitemap(source_url)
             
-        #     # 过滤已知内容
-        #     new_entries = []
-        #     for entry in entries:
-        #         if not self.is_known_item(source_url, entry['url']):
-        #             new_entries.append(entry)
+            # 过滤已知内容
+            new_entries = []
+            for entry in entries:
+                if not self.is_known_item(source_url, entry['url']):
+                    new_entries.append(entry)
             
-        #     if not new_entries:
-        #         return True, "没有新内容", None
+            if not new_entries:
+                return True, "没有新内容", None
                 
-        #     # 按时间排序
-        #     new_entries = self._sort_content_by_time(new_entries)
+            # 按时间排序
+            new_entries = self._sort_content_by_time(new_entries)
             
-        #     return True, "success", new_entries
+            return True, "success", new_entries
             
-        # except Exception as e:
-        #     self.logger.error(f"获取最新内容失败: {str(e)}", exc_info=True)
-        #     return False, str(e), None
-        return True, "success", None
+        except Exception as e:
+            self.logger.error(f"获取最新内容失败: {str(e)}", exc_info=True)
+            return False, str(e), None
+        # return True, "success", None
 
     def generate_content_id(self, content_data: Dict) -> str:
         """
@@ -98,7 +102,7 @@ class SitemapManager(UnifiedContentManager):
         Returns:
             MessageConverter: 消息转换器
         """
-        return get_converter(ConverterType.SITEMAP)
+        return self.sitemap_converter
 
     def _sort_content_by_time(self, content_items: List[Dict]) -> List[Dict]:
         """
@@ -130,26 +134,6 @@ class SitemapManager(UnifiedContentManager):
             'description': 'Sitemap订阅统计'
         })
         return stats
-
-
-# 全局实例
-_sitemap_manager = None
-
-
-def get_sitemap_manager(data_dir: str = "storage/sitemap") -> SitemapManager:
-    """
-    获取Sitemap管理器实例（单例模式）
-
-    Args:
-        data_dir: 数据存储目录
-
-    Returns:
-        SitemapManager: 管理器实例
-    """
-    global _sitemap_manager
-    if _sitemap_manager is None:
-        _sitemap_manager = SitemapManager(data_dir)
-    return _sitemap_manager
 
 
 def create_sitemap_manager(data_dir: str = "storage/sitemap") -> SitemapManager:
