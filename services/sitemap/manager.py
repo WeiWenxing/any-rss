@@ -26,6 +26,7 @@ from services.common.unified_manager import UnifiedContentManager
 from .sitemap_parser import SitemapParser, create_sitemap_parser
 from services.common.message_converter import get_converter, ConverterType
 from .converter import create_sitemap_converter
+from .sender import create_sitemap_sender
 
 
 class SitemapManager(UnifiedContentManager):
@@ -43,11 +44,13 @@ class SitemapManager(UnifiedContentManager):
             data_dir: 数据存储目录
         """
         super().__init__("sitemap", data_dir)
-        # self.parser = create_sitemap_parser()
-        self.logger.info("Sitemap管理器初始化完成")
 
-        # 初始化并注册Sitemap转换器（确保转换器可用）
+        # 初始化Sitemap特定组件
+        self.parser = create_sitemap_parser()
+        self.sender = create_sitemap_sender()
         self.sitemap_converter = create_sitemap_converter()
+
+        self.logger.info("Sitemap管理器初始化完成")
 
     async def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
@@ -62,25 +65,27 @@ class SitemapManager(UnifiedContentManager):
         try:
             # 解析Sitemap
             entries = await self.parser.parse_sitemap(source_url)
-            
+
             # 过滤已知内容
             new_entries = []
             for entry in entries:
                 if not self.is_known_item(source_url, entry['url']):
                     new_entries.append(entry)
-            
+
             if not new_entries:
                 return True, "没有新内容", None
-                
+
             # 按时间排序
             new_entries = self._sort_content_by_time(new_entries)
-            
+
+            # 只返回最近的10个内容
+            new_entries = new_entries[:10]
+
             return True, "success", new_entries
-            
+
         except Exception as e:
             self.logger.error(f"获取最新内容失败: {str(e)}", exc_info=True)
             return False, str(e), None
-        # return True, "success", None
 
     def generate_content_id(self, content_data: Dict) -> str:
         """
