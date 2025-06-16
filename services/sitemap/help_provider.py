@@ -21,22 +21,22 @@ class SitemapHelpProvider(ModuleHelpProvider):
     def get_basic_commands(self) -> str:
         """获取基础命令帮助信息"""
         return (
-            "• /sitemap-add <Sitemap链接> <频道ID> - 添加Sitemap订阅\n"
-            "• /sitemap-del <Sitemap链接> <频道ID> - 删除Sitemap订阅\n"
-            "• /sitemap-list [频道ID] - 查看订阅列表"
+            "• /sitemap_add <Sitemap链接> <频道ID> - 添加Sitemap订阅\n"
+            "• /sitemap_del <Sitemap链接> <频道ID> - 删除Sitemap订阅\n"
+            "• /sitemap_list [频道ID] - 查看订阅列表"
         )
 
     def get_debug_commands(self) -> str:
         """获取调试命令帮助信息"""
         return (
-            "• /sitemap-debug-show <XML数据> - 通过文本调试Sitemap内容"
+            "• /sitemap_debug_show <XML数据> - 通过文本调试Sitemap内容"
         )
 
     def get_examples(self) -> str:
         """获取使用示例"""
         return (
-            "• /sitemap-add https://example.com/sitemap.xml @channel\n"
-            "• /sitemap-list"
+            "• /sitemap_add https://example.com/sitemap.xml @channel\n"
+            "• /sitemap_list"
         )
 
     def get_description(self) -> str:

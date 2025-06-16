@@ -131,9 +131,9 @@ def register_sitemap_commands(application: Application) -> None:
     from core.config import debug_config
 
     # 注册基础命令
-    application.add_handler(CommandHandler("sitemap-add", sitemap_add_command))
-    application.add_handler(CommandHandler("sitemap-del", sitemap_del_command))
-    application.add_handler(CommandHandler("sitemap-list", sitemap_list_command))
+    application.add_handler(CommandHandler("sitemap_add", sitemap_add_command))
+    application.add_handler(CommandHandler("sitemap_del", sitemap_del_command))
+    application.add_handler(CommandHandler("sitemap_list", sitemap_list_command))
 
     # 根据debug模式决定是否注册调试命令
     if debug_config["enabled"]:

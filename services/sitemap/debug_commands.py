@@ -113,6 +113,6 @@ def register_sitemap_debug_commands(application: Application) -> None:
         application: Telegram应用实例
     """
     # 注册调试命令
-    application.add_handler(CommandHandler("sitemap-debug-show", sitemap_debug_show_command))
+    application.add_handler(CommandHandler("sitemap_debug_show", sitemap_debug_show_command))
     
  
