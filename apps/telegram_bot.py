@@ -109,10 +109,12 @@ async def run(token):
     from services.rss.commands import register_commands
     from services.douyin.commands import register_douyin_commands
     from services.rsshub.commands import register_rsshub_commands
+    from services.sitemap.commands import register_sitemap_commands
 
     register_commands(application)
     register_douyin_commands(application)
     register_rsshub_commands(application)
+    register_sitemap_commands(application)
 
     await application.initialize()
     await application.start()
