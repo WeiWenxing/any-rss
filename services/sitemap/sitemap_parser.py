@@ -13,7 +13,7 @@ import gzip
 import xml.etree.ElementTree as ET
 from typing import List, Optional, Union, Dict, Any
 from datetime import datetime
-import aiohttp
+import requests
 from urllib.parse import urlparse
 import hashlib
 import lxml.etree as etree
@@ -35,7 +35,7 @@ class SitemapParser:
             max_retries: 最大重试次数
             cache_ttl: 缓存过期时间（秒），默认6小时
         """
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Optional[requests.Session] = None
         self.timeout = timeout
         self.max_retries = max_retries
 
@@ -58,18 +58,7 @@ class SitemapParser:
         cache_key = hashlib.md5(url.encode('utf-8')).hexdigest()
         return f"sitemap_feed:{cache_key}"
 
-    async def __aenter__(self):
-        """异步上下文管理器入口"""
-        self.session = aiohttp.ClientSession()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器退出"""
-        if self.session:
-            await self.session.close()
-            self.session = None
-
-    async def parse(self, url: str) -> List[SitemapEntry]:
+    def parse(self, url: str) -> List[SitemapEntry]:
         """
         解析Sitemap
 
@@ -81,12 +70,9 @@ class SitemapParser:
 
         Raises:
             ValueError: URL格式错误
-            aiohttp.ClientError: 网络请求错误
+            requests.RequestException: 网络请求错误
             ET.ParseError: XML解析错误
         """
-        if not self.session:
-            raise RuntimeError("Parser must be used as async context manager")
-
         # 验证URL
         if not url.startswith(('http://', 'https://')):
             raise ValueError(f"Invalid URL: {url}")
@@ -113,14 +99,22 @@ class SitemapParser:
 
             logger.info(f"🌐 开始解析Sitemap: {url}")
 
-            # 获取内容
-            content = await self._fetch_content(url)
+            # 获取内容（同步requests实现）
+            response = requests.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            content = response.content
+
+            # 检查是否是gzip压缩
+            if url.endswith('.gz') or response.headers.get('content-encoding') == 'gzip':
+                content = gzip.decompress(content)
+
+            content = content.decode('utf-8')
 
             # 根据URL后缀判断格式
             if url.endswith('.txt'):
                 entries = self._parse_txt(content)
             else:
-                entries = await self._parse_xml(content, url)
+                entries = self._parse_xml(content, url)
 
             # 缓存解析结果（转换为字典格式）
             if entries:
@@ -142,34 +136,6 @@ class SitemapParser:
             logger.error(f"解析Sitemap失败: {url}, 错误: {str(e)}", exc_info=True)
             raise
 
-    async def _fetch_content(self, url: str) -> str:
-        """
-        获取Sitemap内容
-
-        Args:
-            url: Sitemap URL
-
-        Returns:
-            str: 内容文本
-
-        Raises:
-            aiohttp.ClientError: 网络请求错误
-        """
-        try:
-            async with self.session.get(url) as response:
-                response.raise_for_status()
-                content = await response.read()
-
-                # 检查是否是gzip压缩
-                if url.endswith('.gz') or response.headers.get('content-encoding') == 'gzip':
-                    content = gzip.decompress(content)
-
-                return content.decode('utf-8')
-
-        except aiohttp.ClientError as e:
-            logger.error(f"获取Sitemap失败: {url}", exc_info=True)
-            raise
-
     def _parse_txt(self, content: str) -> List[SitemapEntry]:
         """
         解析TXT格式
@@ -187,7 +153,7 @@ class SitemapParser:
                 entries.append(SitemapEntry(url=line))
         return entries
 
-    async def _parse_xml(self, content: str, base_url: str) -> List[SitemapEntry]:
+    def _parse_xml(self, content: str, base_url: str) -> List[SitemapEntry]:
         """
         解析XML格式
 
@@ -206,7 +172,7 @@ class SitemapParser:
 
             # 检查是否是sitemap索引
             if root.tag.endswith('sitemapindex'):
-                return await self._parse_sitemap_index(root, base_url)
+                return self._parse_sitemap_index(root, base_url)
 
             # 解析普通sitemap
             entries = []
@@ -299,7 +265,7 @@ class SitemapParser:
             logger.error(f"解析XML失败: {str(e)}", exc_info=True)
             raise
 
-    async def _parse_sitemap_index(self, root: ET.Element, base_url: str) -> List[SitemapEntry]:
+    def _parse_sitemap_index(self, root: ET.Element, base_url: str) -> List[SitemapEntry]:
         """
         解析Sitemap索引
 
@@ -323,7 +289,7 @@ class SitemapParser:
 
                 try:
                     # 递归解析每个sitemap
-                    entries = await self.parse(url)
+                    entries = self.parse(url)
                     all_entries.extend(entries)
                 except Exception as e:
                     logger.error(f"解析子sitemap失败: {url}", exc_info=True)

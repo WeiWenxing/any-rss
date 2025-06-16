@@ -52,7 +52,7 @@ class SitemapManager(UnifiedContentManager):
 
         self.logger.info("Sitemap管理器初始化完成")
 
-    async def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
+    def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
         获取最新内容
 
@@ -63,13 +63,13 @@ class SitemapManager(UnifiedContentManager):
             Tuple[bool, str, Optional[List[Dict]]]: (是否成功, 消息, 内容列表)
         """
         try:
-            # 解析Sitemap
-            entries = await self.parser.parse_sitemap(source_url)
+            # 直接调用同步的 parse 方法
+            entries = self.parser.parse(source_url)
 
             # 过滤已知内容
             new_entries = []
             for entry in entries:
-                if not self.is_known_item(source_url, entry['url']):
+                if not self.is_known_item(source_url, entry.url):
                     new_entries.append(entry)
 
             if not new_entries:
