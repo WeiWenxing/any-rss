@@ -1,0 +1,453 @@
+"""
+Sitemap解析器模块
+
+提供Sitemap解析功能，支持XML和TXT格式，以及压缩格式。
+支持解析Sitemap索引文件。
+
+作者: Assistant
+创建时间: 2024年
+"""
+
+import logging
+import gzip
+import xml.etree.ElementTree as ET
+from typing import List, Optional, Union, Dict, Any
+from datetime import datetime
+import aiohttp
+from urllib.parse import urlparse
+import hashlib
+
+from .sitemap_entry import SitemapEntry
+from services.common.cache import get_cache
+
+logger = logging.getLogger(__name__)
+
+class SitemapParser:
+    """Sitemap解析器"""
+    
+    def __init__(self, timeout: int = 30, max_retries: int = 3, cache_ttl: int = 21600):
+        """
+        初始化解析器
+
+        Args:
+            timeout: 请求超时时间（秒）
+            max_retries: 最大重试次数
+            cache_ttl: 缓存过期时间（秒），默认6小时
+        """
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.timeout = timeout
+        self.max_retries = max_retries
+        
+        # 初始化缓存
+        self.cache = get_cache("sitemap_parser", ttl=cache_ttl)
+        
+        logger.info(f"Sitemap解析器初始化完成，超时: {timeout}s, 重试: {max_retries}次, 缓存TTL: {cache_ttl}s")
+        
+    def _generate_cache_key(self, url: str) -> str:
+        """
+        生成缓存键
+
+        Args:
+            url: Sitemap URL
+
+        Returns:
+            str: 缓存键
+        """
+        # 使用URL生成唯一的缓存键
+        cache_key = hashlib.md5(url.encode('utf-8')).hexdigest()
+        return f"sitemap_feed:{cache_key}"
+        
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        self.session = aiohttp.ClientSession()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器退出"""
+        if self.session:
+            await self.session.close()
+            self.session = None
+            
+    async def parse(self, url: str) -> List[SitemapEntry]:
+        """
+        解析Sitemap
+        
+        Args:
+            url: Sitemap URL
+            
+        Returns:
+            List[SitemapEntry]: 解析结果列表
+            
+        Raises:
+            ValueError: URL格式错误
+            aiohttp.ClientError: 网络请求错误
+            ET.ParseError: XML解析错误
+        """
+        if not self.session:
+            raise RuntimeError("Parser must be used as async context manager")
+            
+        # 验证URL
+        if not url.startswith(('http://', 'https://')):
+            raise ValueError(f"Invalid URL: {url}")
+            
+        try:
+            # 生成缓存键
+            cache_key = self._generate_cache_key(url)
+
+            # 尝试从缓存获取数据
+            cached_data = self.cache.get(cache_key)
+            if cached_data is not None:
+                logger.info(f"📦 从缓存获取Sitemap内容: {url}, 条目数: {len(cached_data)}")
+                # 将缓存的字典数据转换回SitemapEntry对象
+                entries = []
+                for entry_dict in cached_data:
+                    try:
+                        entry = self._dict_to_sitemap_entry(entry_dict)
+                        if entry:
+                            entries.append(entry)
+                    except Exception as e:
+                        logger.warning(f"缓存条目转换失败: {str(e)}")
+                        continue
+                return entries
+
+            logger.info(f"🌐 开始解析Sitemap: {url}")
+            
+            # 获取内容
+            content = await self._fetch_content(url)
+            
+            # 根据URL后缀判断格式
+            if url.endswith('.txt'):
+                entries = self._parse_txt(content)
+            else:
+                entries = await self._parse_xml(content, url)
+
+            # 缓存解析结果（转换为字典格式）
+            if entries:
+                cache_data = []
+                for entry in entries:
+                    try:
+                        entry_dict = self._sitemap_entry_to_dict(entry)
+                        cache_data.append(entry_dict)
+                    except Exception as e:
+                        logger.warning(f"条目序列化失败: {str(e)}")
+                        continue
+
+                self.cache.set(cache_key, cache_data)
+                logger.info(f"💾 Sitemap内容已缓存: {url}, 条目数: {len(cache_data)}")
+
+            return entries
+            
+        except Exception as e:
+            logger.error(f"解析Sitemap失败: {url}, 错误: {str(e)}", exc_info=True)
+            raise
+            
+    async def _fetch_content(self, url: str) -> str:
+        """
+        获取Sitemap内容
+        
+        Args:
+            url: Sitemap URL
+            
+        Returns:
+            str: 内容文本
+            
+        Raises:
+            aiohttp.ClientError: 网络请求错误
+        """
+        try:
+            async with self.session.get(url) as response:
+                response.raise_for_status()
+                content = await response.read()
+                
+                # 检查是否是gzip压缩
+                if url.endswith('.gz') or response.headers.get('content-encoding') == 'gzip':
+                    content = gzip.decompress(content)
+                    
+                return content.decode('utf-8')
+                
+        except aiohttp.ClientError as e:
+            logger.error(f"获取Sitemap失败: {url}", exc_info=True)
+            raise
+            
+    def _parse_txt(self, content: str) -> List[SitemapEntry]:
+        """
+        解析TXT格式
+        
+        Args:
+            content: 文件内容
+            
+        Returns:
+            List[SitemapEntry]: 解析结果列表
+        """
+        entries = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line and line.startswith(('http://', 'https://')):
+                entries.append(SitemapEntry(url=line))
+        return entries
+        
+    async def _parse_xml(self, content: str, base_url: str) -> List[SitemapEntry]:
+        """
+        解析XML格式
+        
+        Args:
+            content: XML内容
+            base_url: 基础URL，用于解析相对路径
+            
+        Returns:
+            List[SitemapEntry]: 解析结果列表
+            
+        Raises:
+            ET.ParseError: XML解析错误
+        """
+        try:
+            root = ET.fromstring(content)
+            
+            # 检查是否是sitemap索引
+            if root.tag.endswith('sitemapindex'):
+                return await self._parse_sitemap_index(root, base_url)
+                
+            # 解析普通sitemap
+            entries = []
+            for url in root.findall('.//{*}url'):
+                loc = url.find('{*}loc')
+                lastmod = url.find('{*}lastmod')
+                
+                if loc is not None and loc.text:
+                    # 处理相对URL
+                    url_text = loc.text
+                    if not urlparse(url_text).netloc:
+                        url_text = urlparse(base_url)._replace(path=url_text).geturl()
+                        
+                    # 解析最后修改时间
+                    last_modified = None
+                    if lastmod is not None and lastmod.text:
+                        try:
+                            last_modified = datetime.fromisoformat(lastmod.text.replace('Z', '+00:00'))
+                        except ValueError as e:
+                            logger.warning(f"解析时间失败: {lastmod.text}", exc_info=True)
+                            
+                    entries.append(SitemapEntry(
+                        url=url_text,
+                        last_modified=last_modified
+                    ))
+                    
+            return entries
+            
+        except ET.ParseError as e:
+            logger.error(f"解析XML失败: {str(e)}", exc_info=True)
+            raise
+            
+    async def _parse_sitemap_index(self, root: ET.Element, base_url: str) -> List[SitemapEntry]:
+        """
+        解析Sitemap索引
+        
+        Args:
+            root: XML根元素
+            base_url: 基础URL
+            
+        Returns:
+            List[SitemapEntry]: 所有sitemap的条目列表
+        """
+        all_entries = []
+        
+        # 获取所有sitemap URL
+        for sitemap in root.findall('.//{*}sitemap'):
+            loc = sitemap.find('{*}loc')
+            if loc is not None and loc.text:
+                # 处理相对URL
+                url = loc.text
+                if not urlparse(url).netloc:
+                    url = urlparse(base_url)._replace(path=url).geturl()
+                    
+                try:
+                    # 递归解析每个sitemap
+                    entries = await self.parse(url)
+                    all_entries.extend(entries)
+                except Exception as e:
+                    logger.error(f"解析子sitemap失败: {url}", exc_info=True)
+                    
+        return all_entries
+
+    def _sitemap_entry_to_dict(self, entry: SitemapEntry) -> Dict[str, Any]:
+        """
+        将SitemapEntry对象转换为字典格式（用于缓存）
+
+        Args:
+            entry: SitemapEntry对象
+
+        Returns:
+            Dict[str, Any]: 字典格式的条目数据
+        """
+        try:
+            return {
+                'url': entry.url,
+                'last_modified': entry.last_modified.isoformat() if entry.last_modified else None
+            }
+        except Exception as e:
+            logger.error(f"SitemapEntry序列化失败: {str(e)}", exc_info=True)
+            raise
+
+    def _dict_to_sitemap_entry(self, entry_dict: Dict[str, Any]) -> Optional[SitemapEntry]:
+        """
+        将字典格式转换为SitemapEntry对象（从缓存恢复）
+
+        Args:
+            entry_dict: 字典格式的条目数据
+
+        Returns:
+            Optional[SitemapEntry]: SitemapEntry对象
+        """
+        try:
+            # 解析时间
+            last_modified = None
+            if entry_dict.get('last_modified'):
+                try:
+                    last_modified = datetime.fromisoformat(entry_dict['last_modified'])
+                except ValueError:
+                    pass
+
+            return SitemapEntry(
+                url=entry_dict['url'],
+                last_modified=last_modified
+            )
+
+        except Exception as e:
+            logger.error(f"字典转SitemapEntry失败: {str(e)}", exc_info=True)
+            return None
+
+    def clear_cache(self, url: str = None) -> bool:
+        """
+        清除缓存
+
+        Args:
+            url: 指定URL的缓存，如果为None则清除所有缓存
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if url:
+                # 清除指定URL的缓存
+                cache_key = self._generate_cache_key(url)
+                success = self.cache.delete(cache_key)
+                logger.info(f"清除指定URL缓存: {url}, 成功: {success}")
+                return success
+            else:
+                # 清除所有缓存
+                success = self.cache.clear()
+                logger.info(f"清除所有Sitemap解析器缓存, 成功: {success}")
+                return success
+        except Exception as e:
+            logger.error(f"清除缓存失败: {str(e)}", exc_info=True)
+            return False
+
+    def get_cache_info(self) -> Dict:
+        """
+        获取缓存信息
+
+        Returns:
+            Dict: 缓存统计信息
+        """
+        try:
+            return self.cache.get_info()
+        except Exception as e:
+            logger.error(f"获取缓存信息失败: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+
+    def is_cache_hit(self, url: str) -> bool:
+        """
+        检查指定URL是否有缓存
+
+        Args:
+            url: Sitemap URL
+
+        Returns:
+            bool: 是否有缓存
+        """
+        try:
+            cache_key = self._generate_cache_key(url)
+            return self.cache.exists(cache_key)
+        except Exception as e:
+            logger.error(f"检查缓存失败: {str(e)}", exc_info=True)
+            return False
+
+    async def parse_sitemap_content(self, content: str) -> List[SitemapEntry]:
+        """
+        解析Sitemap内容
+
+        Args:
+            content: XML或TXT格式的内容
+
+        Returns:
+            List[SitemapEntry]: 解析结果列表
+
+        Raises:
+            ET.ParseError: XML解析错误
+            ValueError: 内容格式错误
+        """
+        try:
+            # 尝试解析为XML
+            try:
+                root = ET.fromstring(content)
+                
+                # 检查是否是sitemap索引
+                if root.tag.endswith('sitemapindex'):
+                    # 对于索引文件，我们只返回索引URL
+                    entries = []
+                    for sitemap in root.findall('.//{*}sitemap'):
+                        loc = sitemap.find('{*}loc')
+                        if loc is not None and loc.text:
+                            entries.append(SitemapEntry(url=loc.text))
+                    return entries
+                    
+                # 解析普通sitemap
+                entries = []
+                for url in root.findall('.//{*}url'):
+                    loc = url.find('{*}loc')
+                    lastmod = url.find('{*}lastmod')
+                    
+                    if loc is not None and loc.text:
+                        # 解析最后修改时间
+                        last_modified = None
+                        if lastmod is not None and lastmod.text:
+                            try:
+                                last_modified = datetime.fromisoformat(lastmod.text.replace('Z', '+00:00'))
+                            except ValueError as e:
+                                logger.warning(f"解析时间失败: {lastmod.text}", exc_info=True)
+                                
+                        entries.append(SitemapEntry(
+                            url=loc.text,
+                            last_modified=last_modified
+                        ))
+                        
+                return entries
+                
+            except ET.ParseError:
+                # 如果不是XML，尝试解析为TXT
+                entries = []
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and line.startswith(('http://', 'https://')):
+                        entries.append(SitemapEntry(url=line))
+                return entries
+                
+        except Exception as e:
+            logger.error(f"解析Sitemap内容失败: {str(e)}", exc_info=True)
+            raise
+
+
+# 便捷函数：创建Sitemap解析器实例
+def create_sitemap_parser(timeout: int = 30, max_retries: int = 3, cache_ttl: int = 21600) -> SitemapParser:
+    """
+    创建Sitemap解析器实例
+
+    Args:
+        timeout: 请求超时时间
+        max_retries: 最大重试次数
+        cache_ttl: 缓存过期时间（秒），默认6小时
+
+    Returns:
+        SitemapParser: Sitemap解析器实例
+    """
+    return SitemapParser(timeout, max_retries, cache_ttl) 
