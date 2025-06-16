@@ -18,7 +18,7 @@ from telegram import Update, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, Application
 from telegram.error import TelegramError
 
-from .manager import get_sitemap_manager
+from .manager import create_sitemap_manager
 from .sitemap_parser import create_sitemap_parser
 from .sender import create_sitemap_sender
 
