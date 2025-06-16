@@ -430,3 +430,38 @@ def create_sitemap_parser(timeout: int = 30, max_retries: int = 3, cache_ttl: in
         SitemapParser: 解析器实例
     """
     return SitemapParser(timeout=timeout, max_retries=max_retries, cache_ttl=cache_ttl)
+
+if __name__ == '__main__':
+    import sys
+    import json
+    from datetime import datetime
+
+    def datetime_handler(x):
+        if isinstance(x, datetime):
+            return x.isoformat()
+        raise TypeError(f"Object of type {type(x)} is not JSON serializable")
+
+    if len(sys.argv) != 2:
+        print("Usage: python sitemap_parser.py <sitemap_url>")
+        print("Example: python sitemap_parser.py https://example.com/sitemap.xml")
+        sys.exit(1)
+
+    url = sys.argv[1]
+    print(f"正在解析Sitemap: {url}")
+
+    parser = create_sitemap_parser()
+    entries = parser.parse(url)
+
+    print(f"\n找到 {len(entries)} 个条目:")
+    for i, entry in enumerate(entries, 1):
+        print(f"\n条目 {i}:")
+        print(f"URL: {entry.url}")
+        if entry.last_modified:
+            print(f"最后修改时间: {entry.last_modified.isoformat()}")
+
+    # 输出JSON格式的完整结果
+    print("\n完整JSON结果:")
+    print(json.dumps([{
+        'url': entry.url,
+        'last_modified': entry.last_modified.isoformat() if entry.last_modified else None
+    } for entry in entries], indent=2, ensure_ascii=False, default=datetime_handler))
