@@ -105,8 +105,19 @@ class SitemapParser:
             content = response.content
 
             # 检查是否是gzip压缩
-            if url.endswith('.gz') or response.headers.get('content-encoding') == 'gzip':
-                content = gzip.decompress(content)
+            is_gzip = False
+            if url.endswith('.gz'):
+                is_gzip = True
+            elif response.headers.get('content-encoding') == 'gzip':
+                is_gzip = True
+            elif content.startswith(b'\x1f\x8b'):  # gzip 魔数
+                is_gzip = True
+
+            if is_gzip:
+                try:
+                    content = gzip.decompress(content)
+                except Exception as e:
+                    logger.warning(f"gzip解压失败，尝试使用原始内容: {str(e)}")
 
             content = content.decode('utf-8')
 
