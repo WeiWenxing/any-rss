@@ -16,6 +16,7 @@ import requests
 from urllib.parse import urlparse
 import hashlib
 import lxml.etree as etree
+from dotenv import load_dotenv
 
 from .sitemap_entry import SitemapEntry
 from services.common.cache import get_cache
@@ -367,6 +368,9 @@ if __name__ == '__main__':
     import sys
     import json
     from datetime import datetime
+
+    # 加载环境变量
+    load_dotenv()
 
     # 配置日志
     logging.basicConfig(
