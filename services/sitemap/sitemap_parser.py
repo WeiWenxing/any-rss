@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 import hashlib
 import lxml.etree as etree
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .sitemap_entry import SitemapEntry
 from services.common.cache import get_cache
@@ -28,20 +30,42 @@ class SitemapParser:
 
     def __init__(self, timeout: int = 30, max_retries: int = 3, cache_ttl: int = 21600):
         """
-        初始化解析器
+        初始化Sitemap解析器
 
         Args:
             timeout: 请求超时时间（秒）
             max_retries: 最大重试次数
             cache_ttl: 缓存过期时间（秒），默认6小时
         """
+        self.logger = logging.getLogger(__name__)
         self.timeout = timeout
         self.max_retries = max_retries
 
-        # 初始化缓存
-        self.cache = get_cache("sitemap_parser", ttl=cache_ttl)
+        # 初始化缓存（使用二进制模式）
+        self.cache = get_cache("sitemap_parser", ttl=cache_ttl, use_json=False, decode_responses=False)
 
-        logger.info(f"Sitemap解析器初始化完成，超时: {timeout}s, 重试: {max_retries}次, 缓存TTL: {cache_ttl}s")
+        # 配置HTTP会话
+        self.session = requests.Session()
+
+        # 配置重试策略
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
+        # 设置完善的请求头
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'application/xml, text/xml, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Cache-Control': 'no-cache'
+        })
+
+        self.logger.info(f"Sitemap解析器初始化完成，超时: {timeout}s, 重试: {max_retries}次, 缓存TTL: {cache_ttl}s")
 
     def _generate_cache_key(self, url: str) -> str:
         """

@@ -198,6 +198,9 @@ def _get_redis_config(**kwargs) -> Dict[str, Any]:
             "password": kwargs.get("password") or os.getenv("REDIS_PASSWORD"),
         })
 
+    config["use_json"] = kwargs.get("use_json", True)
+    config["decode_responses"] = kwargs.get("decode_responses", True)
+
     # 其他配置（总是添加，但避免重复）
     additional_config = {
         "decode_responses": kwargs.get("decode_responses", True),

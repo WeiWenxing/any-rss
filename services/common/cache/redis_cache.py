@@ -24,7 +24,7 @@ class RedisCache(CacheInterface):
     def __init__(self, name: str, ttl: int = 3600,
                  host: str = "localhost", port: int = 6379,
                  db: int = 0, password: Optional[str] = None,
-                 decode_responses: bool = True, **kwargs):
+                 decode_responses: bool = True, use_json: bool = True, **kwargs):
         """
         初始化Redis缓存
 
@@ -36,6 +36,7 @@ class RedisCache(CacheInterface):
             db: Redis数据库编号
             password: Redis密码
             decode_responses: 是否自动解码响应
+            use_json: 是否使用JSON序列化
             **kwargs: 其他Redis连接参数
         """
         if not REDIS_AVAILABLE:
@@ -48,6 +49,7 @@ class RedisCache(CacheInterface):
         self.port = port
         self.db = db
         self.password = password
+        self.use_json = use_json
 
         # 缓存键前缀，避免不同实例冲突
         self.key_prefix = f"cache:{name}:"
@@ -138,10 +140,12 @@ class RedisCache(CacheInterface):
                 self.logger.debug(f"缓存未命中: {key}")
                 return None
 
-            # 反序列化
-            result = self._deserialize_value(value)
+            # 根据配置决定是否反序列化
+            if self.use_json:
+                value = self._deserialize_value(value)
+
             self.logger.debug(f"缓存命中: {key}")
-            return result
+            return value
 
         except redis.ConnectionError as e:
             self.logger.error(f"Redis连接错误: {key}, 错误: {str(e)}")
@@ -156,11 +160,15 @@ class RedisCache(CacheInterface):
             full_key = self._get_full_key(key)
             effective_ttl = self._get_effective_ttl(ttl)
 
-            # 序列化值
-            serialized_value = self._serialize_value(value)
+            # 打印use_json的值
+            self.logger.info(f"use_json的值: {self.use_json}")
+
+            # 根据配置决定是否序列化
+            if self.use_json:
+                value = self._serialize_value(value)
 
             # 设置缓存（带过期时间）
-            result = self.redis_client.setex(full_key, effective_ttl, serialized_value)
+            result = self.redis_client.setex(full_key, effective_ttl, value)
 
             if result:
                 self.logger.debug(f"缓存设置成功: {key}, TTL: {effective_ttl}秒")
