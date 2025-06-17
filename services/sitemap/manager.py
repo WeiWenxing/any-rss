@@ -70,7 +70,12 @@ class SitemapManager(UnifiedContentManager):
             new_entries = []
             for entry in entries:
                 if not self.is_known_item(source_url, entry.url):
-                    new_entries.append(entry)
+                    # 只返回sitemap的两个元素
+                    content_data = {
+                        "url": entry.url,
+                        "last_modified": entry.last_modified
+                    }
+                    new_entries.append(content_data)
 
             if not new_entries:
                 return True, "没有新内容", None

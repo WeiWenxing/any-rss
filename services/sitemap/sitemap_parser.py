@@ -131,11 +131,8 @@ class SitemapParser:
 
             content = content.decode('utf-8')
 
-            # 根据URL后缀判断格式
-            if url.endswith('.txt'):
-                entries = self._parse_txt(content)
-            else:
-                entries = self._parse_xml(content, url)
+            # 解析内容
+            entries = self._parse_content(content, url)
 
             # 限制数量
             entries = entries[:10]
@@ -146,6 +143,27 @@ class SitemapParser:
         except Exception as e:
             logger.error(f"解析Sitemap失败: {url}, 错误: {str(e)}", exc_info=True)
             raise
+
+    def _parse_content(self, content: str, base_url: str) -> List[SitemapEntry]:
+        """
+        解析Sitemap内容
+
+        Args:
+            content: 文件内容
+            base_url: 基础URL，用于解析相对路径
+
+        Returns:
+            List[SitemapEntry]: 解析结果列表
+
+        Raises:
+            etree.ParseError: XML解析错误
+        """
+        # 根据URL后缀判断格式
+        if base_url.endswith('.txt'):
+            entries = self._parse_txt(content)
+        else:
+            entries = self._parse_xml(content, base_url)
+        return entries
 
     def _parse_txt(self, content: str) -> List[SitemapEntry]:
         """

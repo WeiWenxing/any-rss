@@ -53,6 +53,17 @@ async def sitemap_debug_show_command(update: Update, context: ContextTypes.DEFAU
         xml_content = " ".join(context.args)
         logger.info(f"收到XML内容，长度: {len(xml_content)} 字符")
 
+        # 补全XML头部信息
+        xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1"
+        xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+{xml_content}
+</urlset>"""
+        logger.info("补全XML头部信息")
+
         # 创建解析器
         parser = create_sitemap_parser()
         logger.info("创建Sitemap解析器")
@@ -60,7 +71,7 @@ async def sitemap_debug_show_command(update: Update, context: ContextTypes.DEFAU
         # 解析XML内容
         try:
             logger.info("开始解析XML内容")
-            entries = await parser.parse_sitemap_content(xml_content)
+            entries = parser._parse_content(xml_content, "")
 
             if not entries:
                 logger.warning("未找到任何URL")
