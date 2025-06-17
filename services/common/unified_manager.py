@@ -26,6 +26,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any, Tuple, Union
 from pathlib import Path
 from telegram import Bot, Message
+from datetime import datetime
 
 from .unified_interval_manager import UnifiedIntervalManager
 from .unified_sender import UnifiedTelegramSender
@@ -964,6 +965,12 @@ class UnifiedContentManager(ABC):
 
     # ==================== 通用内容存储实现 ====================
 
+    @staticmethod
+    def datetime_handler(x):
+        if isinstance(x, datetime):
+            return x.isoformat()
+        raise TypeError(f"Object of type {type(x)} is not JSON serializable")
+
     def _save_latest_content(self, source_url: str, all_content_data: List[Dict]):
         """
         保存最新内容引用（复用douyin模块的存储逻辑）
@@ -984,7 +991,7 @@ class UnifiedContentManager(ABC):
 
             latest_file = url_dir / "latest.json"
             latest_file.write_text(
-                json.dumps(latest_content_info, indent=2, ensure_ascii=False),
+                json.dumps(latest_content_info, indent=2, ensure_ascii=False, default=self.datetime_handler),
                 encoding='utf-8'
             )
             self.logger.debug(f"✅ 保存最新内容引用成功: {latest_file}")
