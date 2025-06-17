@@ -67,48 +67,35 @@ class SitemapParser:
             List[SitemapEntry]: 解析结果列表
 
         Raises:
-            ValueError: URL格式错误
             requests.RequestException: 网络请求错误
             etree.ParseError: XML解析错误
         """
-        # 验证URL
-        if not url.startswith(('http://', 'https://')):
-            raise ValueError(f"Invalid URL: {url}")
-
         try:
             # 生成缓存键
             cache_key = self._generate_cache_key(url)
 
             # 尝试从缓存获取数据
-            cached_data = self.cache.get(cache_key)
-            if cached_data is not None:
-                logger.info(f"📦 从缓存获取Sitemap内容: {url}, 条目数: {len(cached_data)}")
-                # 将缓存的字典数据转换回SitemapEntry对象
-                entries = []
-                for entry_dict in cached_data:
-                    try:
-                        entry = self._dict_to_sitemap_entry(entry_dict)
-                        if entry:
-                            entries.append(entry)
-                    except Exception as e:
-                        logger.warning(f"缓存条目转换失败: {str(e)}")
-                        continue
-                return entries
+            cached_content = self.cache.get(cache_key)
+            if cached_content is not None:
+                logger.info(f"📦 从缓存获取Sitemap内容: {url}")
+                content = cached_content
+            else:
+                logger.info(f"🌐 开始解析Sitemap: {url}")
 
-            logger.info(f"🌐 开始解析Sitemap: {url}")
+                # 获取内容（同步requests实现）
+                response = requests.get(url, timeout=self.timeout)
+                response.raise_for_status()
+                content = response.content
 
-            # 获取内容（同步requests实现）
-            response = requests.get(url, timeout=self.timeout)
-            response.raise_for_status()
-            content = response.content
+                # 缓存原始内容
+                self.cache.set(cache_key, content)
+                logger.info(f"💾 Sitemap内容已缓存: {url}")
 
             # 检查是否是gzip压缩
             is_gzip = False
             if url.endswith('.gz'):
                 is_gzip = True
-            elif response.headers.get('content-encoding') == 'gzip':
-                is_gzip = True
-            elif content.startswith(b'\x1f\x8b'):  # gzip 魔数
+            elif isinstance(content, bytes) and content.startswith(b'\x1f\x8b'):  # gzip 魔数
                 is_gzip = True
 
             if is_gzip:
@@ -125,19 +112,9 @@ class SitemapParser:
             else:
                 entries = self._parse_xml(content, url)
 
-            # 缓存解析结果（转换为字典格式）
-            if entries:
-                cache_data = []
-                for entry in entries:
-                    try:
-                        entry_dict = self._sitemap_entry_to_dict(entry)
-                        cache_data.append(entry_dict)
-                    except Exception as e:
-                        logger.warning(f"条目序列化失败: {str(e)}")
-                        continue
-
-                self.cache.set(cache_key, cache_data)
-                logger.info(f"💾 Sitemap内容已缓存: {url}, 条目数: {len(cache_data)}")
+            # 限制数量
+            entries = entries[:10]
+            logger.info(f"📦 限制处理最近的{len(entries)}个条目")
 
             return entries
 
@@ -314,51 +291,6 @@ class SitemapParser:
             logger.error(f"解析sitemap索引失败: {str(e)}", exc_info=True)
             raise
 
-    def _sitemap_entry_to_dict(self, entry: SitemapEntry) -> Dict[str, Any]:
-        """
-        将SitemapEntry转换为字典
-
-        Args:
-            entry: SitemapEntry对象
-
-        Returns:
-            Dict[str, Any]: 字典格式的数据
-        """
-        return {
-            'url': entry.url,
-            'last_modified': entry.last_modified.isoformat() if entry.last_modified else None
-        }
-
-    def _dict_to_sitemap_entry(self, entry_dict: Dict[str, Any]) -> Optional[SitemapEntry]:
-        """
-        将字典转换为SitemapEntry
-
-        Args:
-            entry_dict: 字典格式的数据
-
-        Returns:
-            Optional[SitemapEntry]: SitemapEntry对象，转换失败返回None
-        """
-        try:
-            url = entry_dict.get('url')
-            if not url:
-                return None
-
-            last_modified = None
-            if entry_dict.get('last_modified'):
-                try:
-                    last_modified = datetime.fromisoformat(entry_dict['last_modified'])
-                except ValueError:
-                    pass
-
-            return SitemapEntry(
-                url=url,
-                last_modified=last_modified
-            )
-        except Exception as e:
-            logger.warning(f"转换字典到SitemapEntry失败: {str(e)}", exc_info=True)
-            return None
-
     def clear_cache(self, url: str = None) -> bool:
         """
         清除缓存
@@ -436,32 +368,38 @@ if __name__ == '__main__':
     import json
     from datetime import datetime
 
+    # 配置日志
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(funcName)s:%(lineno)d] - %(message)s',
+        level=logging.INFO
+    )
+
     def datetime_handler(x):
         if isinstance(x, datetime):
             return x.isoformat()
         raise TypeError(f"Object of type {type(x)} is not JSON serializable")
 
     if len(sys.argv) != 2:
-        print("Usage: python sitemap_parser.py <sitemap_url>")
-        print("Example: python sitemap_parser.py https://example.com/sitemap.xml")
+        logger.error("Usage: python sitemap_parser.py <sitemap_url>")
+        logger.error("Example: python sitemap_parser.py https://example.com/sitemap.xml")
         sys.exit(1)
 
     url = sys.argv[1]
-    print(f"正在解析Sitemap: {url}")
+    logger.info(f"正在解析Sitemap: {url}")
 
     parser = create_sitemap_parser()
     entries = parser.parse(url)
 
-    print(f"\n找到 {len(entries)} 个条目:")
+    logger.info(f"\n返回 {len(entries)} 个条目 (已限制为最近的10个):")
     for i, entry in enumerate(entries, 1):
-        print(f"\n条目 {i}:")
-        print(f"URL: {entry.url}")
+        logger.info(f"\n条目 {i}:")
+        logger.info(f"URL: {entry.url}")
         if entry.last_modified:
-            print(f"最后修改时间: {entry.last_modified.isoformat()}")
+            logger.info(f"最后修改时间: {entry.last_modified.isoformat()}")
 
     # 输出JSON格式的完整结果
-    print("\n完整JSON结果:")
-    print(json.dumps([{
+    logger.info("\n完整JSON结果:")
+    logger.info(json.dumps([{
         'url': entry.url,
         'last_modified': entry.last_modified.isoformat() if entry.last_modified else None
     } for entry in entries], indent=2, ensure_ascii=False, default=datetime_handler))
