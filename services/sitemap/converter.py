@@ -54,7 +54,7 @@ class SitemapConverter(MessageConverter):
             return TelegramMessage.create_text_message(
                 text=message_text,
                 parse_mode="Markdown",
-                disable_web_page_preview=False
+                disable_web_page_preview=True
             )
 
         except Exception as e:
