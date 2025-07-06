@@ -326,6 +326,12 @@ class DouyinFetcher:
             cached_data = self.cache.get(cache_key)
             if cached_data is not None:
                 self.logger.info(f"📦 从缓存获取抖音内容: {douyin_url}")
+                # 将缓存的bytes数据转换回dict
+                import json
+                if isinstance(cached_data, bytes):
+                    cached_data = json.loads(cached_data.decode('utf-8'))
+                elif isinstance(cached_data, str):
+                    cached_data = json.loads(cached_data)
                 # 从缓存的原始API数据中提取视频列表
                 return self._process_api_data(cached_data)
 
@@ -339,8 +345,10 @@ class DouyinFetcher:
             if not success:
                 return False, message, None
 
-            # 缓存原始API数据
-            self.cache.set(cache_key, api_data)
+            # 缓存原始API数据（转换为JSON字符串）
+            import json
+            api_data_json = json.dumps(api_data, ensure_ascii=False)
+            self.cache.set(cache_key, api_data_json.encode('utf-8'))
             self.logger.info(f"💾 抖音API数据已缓存: {douyin_url}")
 
             # 步骤3: 处理API数据并返回视频列表
