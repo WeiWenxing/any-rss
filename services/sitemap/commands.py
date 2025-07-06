@@ -126,7 +126,7 @@ async def sitemap_list_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await handler.handle_list_command(update, context)
 
 
-def register_sitemap_commands(application: Application) -> None:
+def register_commands(application: Application) -> None:
     """
     注册Sitemap相关的命令处理器
 

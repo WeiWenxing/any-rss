@@ -17,7 +17,7 @@ Sitemap订阅服务模块
 from .manager import SitemapManager, create_sitemap_manager
 from .sitemap_parser import SitemapParser, create_sitemap_parser
 from .sender import SitemapSender, create_sitemap_sender
-from .commands import register_sitemap_commands
+from .commands import register_commands
 
 # 自动注册帮助信息提供者
 from .help_provider import register_help_provider
@@ -37,5 +37,5 @@ __all__ = [
     'create_sitemap_sender',
 
     # 命令注册
-    'register_sitemap_commands'
+    'register_commands'
 ] 

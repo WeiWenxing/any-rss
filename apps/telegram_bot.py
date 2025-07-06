@@ -4,6 +4,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Appli
 import logging
 import asyncio
 from telegram.request import HTTPXRequest
+import services
 
 tel_bots = {}
 commands = [
@@ -105,20 +106,12 @@ async def run(token):
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help))
 
-    # 从services加载其他命令
-    from services.rss.commands import register_commands
-    from services.douyin.commands import register_douyin_commands
-    from services.sample.commands import register_sample_commands
-    from services.douyin1.commands import register_douyin1_commands
-    from services.rsshub.commands import register_rsshub_commands
-    from services.sitemap.commands import register_sitemap_commands
-
-    register_commands(application)
-    # register_douyin_commands(application)
-    register_douyin1_commands(application)
-    register_rsshub_commands(application)
-    register_sitemap_commands(application)
-    register_sample_commands(application)
+    # 从services加载其他命令 - 极简方案
+    for module in ['douyin1', 'rsshub', 'sitemap', 'sample']:
+        try:
+            exec(f"from services.{module}.commands import register_commands; register_commands(application)")
+        except Exception as e:
+            logging.error(f"❌ {module}命令注册失败: {e}")
 
     await application.initialize()
     await application.start()

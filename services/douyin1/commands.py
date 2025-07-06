@@ -135,7 +135,7 @@ async def douyin1_list_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await handler.handle_list_command(update, context)
 
 
-def register_douyin1_commands(application: Application) -> None:
+def register_commands(application: Application) -> None:
     """
     注册Douyin1相关的命令处理器
 

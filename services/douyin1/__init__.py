@@ -99,7 +99,7 @@ def is_module_initialized() -> bool:
 
 # 导入主要组件
 from .manager import Douyin1Manager, create_douyin1_manager
-from .commands import register_douyin1_commands
+from .commands import register_commands
 
 # 导出主要组件
 __all__ = [
@@ -114,5 +114,5 @@ __all__ = [
     # 核心组件
     "Douyin1Manager",
     "create_douyin1_manager",
-    "register_douyin1_commands"
+    "register_commands"
 ] 

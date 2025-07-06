@@ -20,7 +20,7 @@ from .rss_parser import RSSParser, create_rss_parser
 from .rss_converter import RSSMessageConverter, create_rss_converter
 from .rss_entry import RSSEntry, RSSEnclosure, create_rss_entry
 from .scheduler import RSSHubScheduler, create_rsshub_scheduler
-from .commands import register_rsshub_commands
+from .commands import register_commands
 
 # 自动注册RSS消息转换器到全局注册表
 from services.common.message_converter import register_converter
@@ -54,5 +54,5 @@ __all__ = [
     'create_rsshub_scheduler',
 
     # 命令注册
-    'register_rsshub_commands'
+    'register_commands'
 ]
