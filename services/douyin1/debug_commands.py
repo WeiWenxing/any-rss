@@ -1,30 +1,25 @@
 """
-Douyin1调试命令处理器
+Douyin1调试命令模块
 
-提供Douyin1模块的调试功能，包括账号状态检查、手动内容获取、统计信息查看等。
-这些命令仅在DEBUG模式下可用，用于开发和故障排除。
+该模块提供Douyin1模块的调试和管理命令，用于开发和维护。
 
 主要功能：
-1. /douyin1_debug_check - 检查抖音账号状态
-2. /douyin1_debug_fetch - 手动获取最新内容
-3. /douyin1_debug_stats - 查看模块统计信息
-4. /douyin1_debug_test - 测试模块功能
+1. 显示单个抖音内容项
 
 作者: Assistant
 创建时间: 2024年
 """
 
 import logging
-from typing import Dict, List, Optional
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, Application
+from telegram.ext import ContextTypes, Application, CommandHandler
 
 from .commands import get_douyin1_command_handler
 
 
-async def douyin1_debug_check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def douyin1_debug_show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理 /douyin1_debug_check 命令 - 检查抖音账号状态
+    处理 /douyin1_debug_show 命令 - 显示单个抖音内容项
 
     Args:
         update: Telegram更新对象
@@ -32,220 +27,91 @@ async def douyin1_debug_check_command(update: Update, context: ContextTypes.DEFA
     """
     try:
         user = update.message.from_user
-        logging.info(f"🔍 收到douyin1_debug_check命令 - 用户: {user.username}(ID:{user.id})")
+        logging.info(f"👁️ 收到douyin1_debug_show命令 - 用户: {user.username}(ID:{user.id})")
 
         # 参数验证
         if not context.args:
             await update.message.reply_text(
-                "🔍 抖音账号状态检查\n\n"
-                "用法: /douyin1_debug_check <抖音链接>\n\n"
+                "👁️ 显示抖音内容项\n\n"
+                "用法: /douyin1_debug_show <抖音链接>\n\n"
                 "示例:\n"
-                "/douyin1_debug_check https://www.douyin.com/user/MS4wLjABAAAA...\n"
-                "/douyin1_debug_check https://v.douyin.com/iM5g7LsM/"
+                "/douyin1_debug_show https://www.douyin.com/user/MS4wLjABAAAA...\n"
+                "/douyin1_debug_show https://v.douyin.com/iM5g7LsM/"
             )
             return
 
         douyin_url = context.args[0].strip()
-        logging.info(f"🔍 检查抖音账号状态: {douyin_url}")
-
-        # 发送处理中消息
-        processing_message = await update.message.reply_text(
-            f"🔍 正在检查抖音账号状态...\n"
-            f"🔗 链接: {douyin_url}\n"
-            f"⏳ 请稍候..."
-        )
-
-        # 模拟检查过程
-        try:
-            # 获取命令处理器
-            handler = get_douyin1_command_handler()
-            
-            # 模拟状态检查
-            await processing_message.edit_text(
-                f"✅ 抖音账号状态检查完成\n"
-                f"🔗 链接: {douyin_url}\n"
-                f"📊 状态: 正常（模拟结果）\n"
-                f"📝 备注: 当前为模拟实现，实际功能待开发"
-            )
-            
-        except Exception as e:
-            logging.error(f"❌ 检查抖音账号状态失败: {e}", exc_info=True)
-            await processing_message.edit_text(
-                f"❌ 检查抖音账号状态失败\n"
-                f"🔗 链接: {douyin_url}\n"
-                f"❌ 错误: {str(e)}"
-            )
-
-    except Exception as e:
-        logging.error(f"❌ 处理douyin1_debug_check命令时发生错误: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
-
-
-async def douyin1_debug_fetch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理 /douyin1_debug_fetch 命令 - 手动获取最新内容
-
-    Args:
-        update: Telegram更新对象
-        context: 命令上下文
-    """
-    try:
-        user = update.message.from_user
-        logging.info(f"📥 收到douyin1_debug_fetch命令 - 用户: {user.username}(ID:{user.id})")
-
-        # 参数验证
-        if not context.args:
-            await update.message.reply_text(
-                "📥 手动获取抖音最新内容\n\n"
-                "用法: /douyin1_debug_fetch <抖音链接>\n\n"
-                "示例:\n"
-                "/douyin1_debug_fetch https://www.douyin.com/user/MS4wLjABAAAA...\n"
-                "/douyin1_debug_fetch https://v.douyin.com/iM5g7LsM/"
-            )
-            return
-
-        douyin_url = context.args[0].strip()
-        logging.info(f"📥 手动获取内容: {douyin_url}")
-
-        # 发送处理中消息
-        processing_message = await update.message.reply_text(
-            f"📥 正在获取最新内容...\n"
-            f"🔗 链接: {douyin_url}\n"
-            f"⏳ 请稍候..."
-        )
-
-        # 模拟获取过程
-        try:
-            # 获取命令处理器
-            handler = get_douyin1_command_handler()
-            
-            # 模拟内容获取
-            await processing_message.edit_text(
-                f"✅ 最新内容获取完成\n"
-                f"🔗 链接: {douyin_url}\n"
-                f"📊 获取数量: 5 个（模拟结果）\n"
-                f"📝 备注: 当前为模拟实现，实际功能待开发"
-            )
-            
-        except Exception as e:
-            logging.error(f"❌ 获取最新内容失败: {e}", exc_info=True)
-            await processing_message.edit_text(
-                f"❌ 获取最新内容失败\n"
-                f"🔗 链接: {douyin_url}\n"
-                f"❌ 错误: {str(e)}"
-            )
-
-    except Exception as e:
-        logging.error(f"❌ 处理douyin1_debug_fetch命令时发生错误: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
-
-
-async def douyin1_debug_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理 /douyin1_debug_stats 命令 - 查看模块统计信息
-
-    Args:
-        update: Telegram更新对象
-        context: 命令上下文
-    """
-    try:
-        user = update.message.from_user
-        logging.info(f"📊 收到douyin1_debug_stats命令 - 用户: {user.username}(ID:{user.id})")
+        logging.info(f"👁️ 显示内容项: {douyin_url}")
 
         # 获取命令处理器
         handler = get_douyin1_command_handler()
         
-        # 获取统计信息
-        subscriptions = handler.manager.get_subscriptions()
-        
-        # 计算统计数据
-        total_sources = len(subscriptions)
-        total_channels = sum(len(channels) for channels in subscriptions.values())
-        
-        # 构建统计信息
-        stats_text = (
-            f"📊 Douyin1模块统计信息\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📈 订阅统计:\n"
-            f"  • 抖音账号数: {total_sources}\n"
-            f"  • 订阅频道数: {total_channels}\n"
-            f"  • 平均每账号订阅数: {total_channels / total_sources if total_sources > 0 else 0:.1f}\n\n"
-            f"🔧 模块状态:\n"
-            f"  • 模块名称: douyin1\n"
-            f"  • 命令处理器: 已初始化\n"
-            f"  • 管理器类型: MockDouyin1Manager（模拟）\n"
-            f"  • 数据目录: {handler.manager.data_dir}\n\n"
-            f"📝 备注: 当前使用模拟管理器，实际功能待开发"
-        )
-        
-        await update.message.reply_text(stats_text)
+        # 基本URL检查（简化版）
+        if not douyin_url or not douyin_url.startswith(('http://', 'https://')):
+            await update.message.reply_text("❌ 请提供有效的抖音链接")
+            return
 
-    except Exception as e:
-        logging.error(f"❌ 处理douyin1_debug_stats命令时发生错误: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
-
-
-async def douyin1_debug_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理 /douyin1_debug_test 命令 - 测试模块功能
-
-    Args:
-        update: Telegram更新对象
-        context: 命令上下文
-    """
-    try:
-        user = update.message.from_user
-        logging.info(f"🧪 收到douyin1_debug_test命令 - 用户: {user.username}(ID:{user.id})")
-
-        # 发送测试开始消息
-        test_message = await update.message.reply_text(
-            f"🧪 开始测试Douyin1模块功能...\n"
+        # 发送处理中消息
+        processing_message = await update.message.reply_text(
+            f"👁️ 正在获取内容信息...\n"
+            f"🔗 链接: {douyin_url}\n"
             f"⏳ 请稍候..."
         )
 
-        # 执行测试
         try:
-            # 获取命令处理器
-            handler = get_douyin1_command_handler()
+            # 获取最新内容
+            success, message, content_list = handler.manager.fetch_latest_content(douyin_url)
             
-            # 测试项目
-            test_results = []
+            if not success:
+                await processing_message.edit_text(
+                    f"❌ 获取内容失败\n"
+                    f"🔗 链接: {douyin_url}\n"
+                    f"❌ 错误: {message}"
+                )
+                return
             
-            # 测试1: 命令处理器初始化
-            test_results.append("✅ 命令处理器初始化: 正常")
+            if not content_list:
+                await processing_message.edit_text(
+                    f"📭 没有找到内容\n"
+                    f"🔗 链接: {douyin_url}\n"
+                    f"💡 该账号可能没有发布内容或链接无效"
+                )
+                return
             
-            # 测试2: 管理器功能
-            test_results.append("✅ 管理器功能: 正常（模拟）")
+            # 显示第一个内容项
+            first_item = content_list[0]
             
-            # 测试3: URL验证
-            test_url = "https://www.douyin.com/user/test"
-            url_valid, _ = handler._validate_source_url(test_url)
-            test_results.append(f"✅ URL验证: {'正常' if url_valid else '异常'}")
-            
-            # 测试4: 频道ID验证
-            chat_valid, _ = handler.validate_chat_id("@test_channel")
-            test_results.append(f"✅ 频道ID验证: {'正常' if chat_valid else '异常'}")
-            
-            # 构建测试结果
-            results_text = (
-                f"🧪 Douyin1模块功能测试完成\n"
+            # 构建显示信息
+            display_text = (
+                f"👁️ 抖音内容项详情\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📋 测试结果:\n"
-                + "\n".join(f"  {result}" for result in test_results) +
-                f"\n\n📝 备注: 当前为基础功能测试，实际业务逻辑待开发"
+                f"🎵 标题: {first_item.get('title', 'Unknown')}\n"
+                f"👤 作者: {first_item.get('author', 'Unknown')}\n"
+                f"🔗 链接: {first_item.get('url', douyin_url)}\n"
+                f"🆔 内容ID: {handler.manager.generate_content_id(first_item)}\n"
+                f"📅 发布时间: {first_item.get('publish_time', 'Unknown')}\n\n"
+                f"📝 描述:\n{first_item.get('description', '无描述')}\n\n"
+                f"🎬 媒体信息:\n"
+                f"  • 视频链接: {first_item.get('video_url', '无')}\n"
+                f"  • 封面链接: {first_item.get('cover_url', '无')}\n\n"
+                f"📊 统计信息:\n"
+                f"  • 总内容数: {len(content_list)}\n"
+                f"  • 显示: 第1个内容项\n\n"
+                f"💡 提示: 这是模拟数据，实际功能待开发"
             )
             
-            await test_message.edit_text(results_text)
+            await processing_message.edit_text(display_text)
             
         except Exception as e:
-            logging.error(f"❌ 模块功能测试失败: {e}", exc_info=True)
-            await test_message.edit_text(
-                f"❌ 模块功能测试失败\n"
+            logging.error(f"❌ 显示内容项失败: {e}", exc_info=True)
+            await processing_message.edit_text(
+                f"❌ 显示内容项失败\n"
+                f"🔗 链接: {douyin_url}\n"
                 f"❌ 错误: {str(e)}"
             )
 
     except Exception as e:
-        logging.error(f"❌ 处理douyin1_debug_test命令时发生错误: {e}", exc_info=True)
+        logging.error(f"❌ 处理douyin1_debug_show命令时发生错误: {e}", exc_info=True)
         await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
 
 
@@ -256,10 +122,7 @@ def register_douyin1_debug_commands(application: Application) -> None:
     Args:
         application: Telegram应用实例
     """
-    # 注册调试命令
-    application.add_handler(CommandHandler("douyin1_debug_check", douyin1_debug_check_command))
-    application.add_handler(CommandHandler("douyin1_debug_fetch", douyin1_debug_fetch_command))
-    application.add_handler(CommandHandler("douyin1_debug_stats", douyin1_debug_stats_command))
-    application.add_handler(CommandHandler("douyin1_debug_test", douyin1_debug_test_command))
+    # 注册debug show命令
+    application.add_handler(CommandHandler("douyin1_debug_show", douyin1_debug_show_command))
 
     logging.info("Douyin1调试命令处理器注册完成") 

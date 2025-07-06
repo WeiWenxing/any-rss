@@ -97,12 +97,22 @@ def is_module_initialized() -> bool:
     return _module_initialized
 
 
-# 导出主要组件（当前只有命令处理器可用）
+# 导入主要组件
+from .manager import Douyin1Manager, create_douyin1_manager
+from .commands import register_douyin1_commands
+
+# 导出主要组件
 __all__ = [
+    # 模块信息
     "get_module_info",
     "initialize_module", 
     "is_module_initialized",
     "__version__",
     "__author__",
-    "__description__"
+    "__description__",
+    
+    # 核心组件
+    "Douyin1Manager",
+    "create_douyin1_manager",
+    "register_douyin1_commands"
 ] 

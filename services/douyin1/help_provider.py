@@ -30,9 +30,7 @@ class Douyin1HelpProvider(ModuleHelpProvider):
     def get_debug_commands(self) -> str:
         """获取调试命令帮助信息"""
         return (
-            "• /douyin1_debug_check <抖音链接> - 检查抖音账号状态\n"
-            "• /douyin1_debug_fetch <抖音链接> - 手动获取最新内容\n"
-            "• /douyin1_debug_stats - 查看模块统计信息"
+            "• /douyin1_debug_show <抖音链接> - 显示单个抖音内容项"
         )
 
     def get_examples(self) -> str:
