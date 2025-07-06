@@ -25,58 +25,7 @@ from telegram import Bot
 from services.common.unified_manager import UnifiedContentManager
 from services.common.message_converter import get_converter, ConverterType
 from . import MODULE_NAME, MODULE_DISPLAY_NAME, MODULE_DESCRIPTION, DATA_DIR_PREFIX
-
-
-class MockContentFetcher:
-    """
-    内容获取器的模拟实现
-
-    暂时提供基本的接口实现，用于管理器的测试
-    实际的获取器将在后续步骤中实现
-    """
-
-    def __init__(self):
-        """初始化模拟获取器"""
-        self.logger = logging.getLogger(f"{MODULE_NAME}_mock_fetcher")
-        self.logger.info("内容获取器模拟实现初始化")
-
-    def fetch_user_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
-        """
-        获取用户内容
-
-        Args:
-            source_url: 用户链接
-
-        Returns:
-            Tuple[bool, str, Optional[List[Dict]]]: (成功标志, 消息, 内容列表)
-        """
-        self.logger.info(f"模拟获取内容: {source_url}")
-
-        # 模拟返回一些内容
-        mock_content = [
-            {
-                "id": f"mock_{datetime.now().timestamp():.0f}_1",
-                "title": "模拟内容标题1",
-                "description": "这是一个模拟的内容描述",
-                "url": f"{source_url}/content/1",
-                "author": "模拟用户",
-                "publish_time": datetime.now(),
-                "video_url": "https://mock.example.com/video1.mp4",
-                "cover_url": "https://mock.example.com/cover1.jpg"
-            },
-            {
-                "id": f"mock_{datetime.now().timestamp():.0f}_2",
-                "title": "模拟内容标题2",
-                "description": "这是另一个模拟的内容描述",
-                "url": f"{source_url}/content/2",
-                "author": "模拟用户",
-                "publish_time": datetime.now(),
-                "video_url": "https://mock.example.com/video2.mp4",
-                "cover_url": "https://mock.example.com/cover2.jpg"
-            }
-        ]
-
-        return True, "success", mock_content
+from .fetcher import DouyinFetcher
 
 
 class MockMessageConverter:
@@ -132,8 +81,8 @@ class ContentManager(UnifiedContentManager):
 
         super().__init__(MODULE_NAME, data_dir)
 
-        # 初始化特定组件（暂时使用模拟实现）
-        self.fetcher = MockContentFetcher()
+        # 初始化特定组件
+        self.fetcher = DouyinFetcher()
         self.message_converter = MockMessageConverter()
 
         self.logger.info(f"{MODULE_DISPLAY_NAME}管理器初始化完成")
@@ -150,6 +99,10 @@ class ContentManager(UnifiedContentManager):
         """
         try:
             self.logger.info(f"获取最新内容: {source_url}")
+
+            # 验证抖音URL格式
+            if not self.fetcher.validate_douyin_url(source_url):
+                return False, "无效的抖音URL格式", None
 
             # 使用获取器获取内容
             success, message, content_list = self.fetcher.fetch_user_content(source_url)
@@ -174,7 +127,7 @@ class ContentManager(UnifiedContentManager):
             new_content = self._sort_content_by_time(new_content)
 
             # 只返回最近的10个内容
-            new_content = new_content[:10]
+            # new_content = new_content[:10]
 
             self.logger.info(f"获取到 {len(new_content)} 个新内容")
             return True, "success", new_content
@@ -193,8 +146,29 @@ class ContentManager(UnifiedContentManager):
         Returns:
             str: 内容ID
         """
-        # 使用内容的唯一ID作为内容标识
-        return content_data.get('id', content_data.get('url', 'unknown'))
+        # 使用抖音视频的aweme_id作为内容标识
+        return content_data.get('aweme_id', content_data.get('id', 'unknown'))
+
+    def _sort_content_by_time(self, content_list: List[Dict]) -> List[Dict]:
+        """
+        按时间排序内容列表
+
+        Args:
+            content_list: 内容列表
+
+        Returns:
+            List[Dict]: 排序后的内容列表（最新的在前）
+        """
+        try:
+            # 按create_time字段排序（Unix时间戳）
+            return sorted(
+                content_list,
+                key=lambda x: x.get('create_time', 0),
+                reverse=True  # 最新的在前
+            )
+        except Exception as e:
+            self.logger.error(f"内容排序失败: {str(e)}", exc_info=True)
+            return content_list
 
     def _get_module_converter(self):
         """
