@@ -56,4 +56,4 @@ class DouyinHelpProvider(ModuleHelpProvider):
 def register_help_provider():
     """注册抖音帮助信息提供者"""
     provider = DouyinHelpProvider()
-    get_help_manager().register_provider("douyin", provider) 
+    # get_help_manager().register_provider("douyin", provider)
