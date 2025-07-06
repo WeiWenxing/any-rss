@@ -4,7 +4,8 @@ Sample调试命令模块
 该模块提供Sample模块的调试和管理命令，用于开发和维护。
 
 主要功能：
-1. 显示单个样本内容项
+1. 动态调试命令生成（基于模块名自动生成命令前缀）
+2. 显示单个样本内容项
 
 作者: Assistant
 创建时间: 2024年
@@ -14,12 +15,13 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes, Application, CommandHandler
 
-from .commands import get_sample_command_handler
+from .commands import get_command_handler
+from . import MODULE_NAME, MODULE_DISPLAY_NAME, get_command_names
 
 
-async def sample_debug_show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_debug_show_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理 /sample_debug_show 命令 - 显示单个样本内容项
+    处理调试显示命令（动态生成）- 显示单个样本内容项
 
     Args:
         update: Telegram更新对象
@@ -27,16 +29,19 @@ async def sample_debug_show_command(update: Update, context: ContextTypes.DEFAUL
     """
     try:
         user = update.message.from_user
-        logging.info(f"👁️ 收到sample_debug_show命令 - 用户: {user.username}(ID:{user.id})")
+        command_names = get_command_names()
+        debug_show_cmd = command_names["debug_show"]
+        
+        logging.info(f"👁️ 收到{debug_show_cmd}命令 - 用户: {user.username}(ID:{user.id})")
 
         # 参数验证
         if not context.args:
             await update.message.reply_text(
-                "👁️ 显示样本内容项\n\n"
-                "用法: /sample_debug_show <样本链接>\n\n"
-                "示例:\n"
-                "/sample_debug_show https://www.sample.com/user/MS4wLjABAAAA...\n"
-                "/sample_debug_show https://v.sample.com/iM5g7LsM/"
+                f"👁️ 显示样本内容项\n\n"
+                f"用法: /{debug_show_cmd} <样本链接>\n\n"
+                f"示例:\n"
+                f"/{debug_show_cmd} https://www.sample.com/user/MS4wLjABAAAA...\n"
+                f"/{debug_show_cmd} https://v.sample.com/iM5g7LsM/"
             )
             return
 
@@ -44,7 +49,7 @@ async def sample_debug_show_command(update: Update, context: ContextTypes.DEFAUL
         logging.info(f"👁️ 显示内容项: {sample_url}")
 
         # 获取命令处理器
-        handler = get_sample_command_handler()
+        handler = get_command_handler()
         
         # 基本URL检查（简化版）
         if not sample_url or not sample_url.startswith(('http://', 'https://')):
@@ -111,18 +116,22 @@ async def sample_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             )
 
     except Exception as e:
-        logging.error(f"❌ 处理sample_debug_show命令时发生错误: {e}", exc_info=True)
+        logging.error(f"❌ 处理调试显示命令时发生错误: {e}", exc_info=True)
         await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
 
 
-def register_sample_debug_commands(application: Application) -> None:
+def register_debug_commands(application: Application) -> None:
     """
-    注册Sample调试命令处理器
+    注册调试命令处理器（动态生成命令名称）
 
     Args:
         application: Telegram应用实例
     """
-    # 注册debug show命令
-    application.add_handler(CommandHandler("sample_debug_show", sample_debug_show_command))
+    # 获取动态生成的命令名称
+    command_names = get_command_names()
+    
+    # 注册debug show命令（使用动态生成的命令名称）
+    application.add_handler(CommandHandler(command_names["debug_show"], handle_debug_show_command))
 
-    logging.info("Sample调试命令处理器注册完成") 
+    logging.info(f"{MODULE_DISPLAY_NAME}调试命令处理器注册完成")
+    logging.info(f"📋 已注册调试命令: /{command_names['debug_show']}") 

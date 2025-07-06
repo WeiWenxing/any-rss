@@ -28,14 +28,24 @@ Sample模块 - 样本内容订阅服务
 import logging
 from typing import Dict, List, Optional
 
-# 模块信息
+# ==================== 模块配置（新模块只需修改这里）====================
+# 模块名称（用于命令前缀，如 sample_add, sample_del 等）
+MODULE_NAME = "sample"
+# 模块显示名称（用于用户界面显示）
+MODULE_DISPLAY_NAME = "样本订阅 (Sample)"
+# 模块描述
+MODULE_DESCRIPTION = "样本内容订阅服务"
+# 数据存储目录前缀
+DATA_DIR_PREFIX = "storage/sample"
+
+# ==================== 模块信息 ====================
 __version__ = "1.0.0"
 __author__ = "Assistant"
-__description__ = "样本内容订阅服务"
+__description__ = MODULE_DESCRIPTION
 
 # 初始化日志
 logger = logging.getLogger(__name__)
-logger.info(f"Sample模块初始化 - 版本: {__version__}")
+logger.info(f"{MODULE_DISPLAY_NAME}模块初始化 - 版本: {__version__}")
 
 # 模块状态
 _module_initialized = False
@@ -50,11 +60,27 @@ def get_module_info() -> Dict[str, str]:
         Dict[str, str]: 模块信息字典
     """
     return {
-        "name": "sample",
+        "name": MODULE_NAME,
+        "display_name": MODULE_DISPLAY_NAME,
         "version": __version__,
         "author": __author__,
         "description": __description__,
         "status": "initialized" if _module_initialized else "not_initialized"
+    }
+
+
+def get_command_names() -> Dict[str, str]:
+    """
+    获取动态生成的命令名称
+    
+    Returns:
+        Dict[str, str]: 命令名称字典
+    """
+    return {
+        "add": f"{MODULE_NAME}_add",
+        "del": f"{MODULE_NAME}_del", 
+        "list": f"{MODULE_NAME}_list",
+        "debug_show": f"{MODULE_NAME}_debug_show"
     }
 
 
@@ -63,27 +89,30 @@ from .help_provider import register_help_provider
 register_help_provider()
 
 
-def initialize_module(data_dir: str = "storage/sample") -> bool:
+def initialize_module(data_dir: str = None) -> bool:
     """
     初始化模块
     
     Args:
-        data_dir: 数据存储目录
+        data_dir: 数据存储目录（可选，默认使用模块配置）
         
     Returns:
         bool: 是否初始化成功
     """
     global _module_initialized
     
+    if data_dir is None:
+        data_dir = DATA_DIR_PREFIX
+    
     try:
-        logger.info(f"开始初始化Sample模块 - 数据目录: {data_dir}")
+        logger.info(f"开始初始化{MODULE_DISPLAY_NAME}模块 - 数据目录: {data_dir}")
         
         _module_initialized = True
-        logger.info("✅ Sample模块初始化完成")
+        logger.info(f"✅ {MODULE_DISPLAY_NAME}模块初始化完成")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Sample模块初始化失败: {e}", exc_info=True)
+        logger.error(f"❌ {MODULE_DISPLAY_NAME}模块初始化失败: {e}", exc_info=True)
         return False
 
 
@@ -99,12 +128,19 @@ def is_module_initialized() -> bool:
 
 # 导入主要组件
 from .manager import SampleManager, create_sample_manager
-from .commands import register_sample_commands
+from .commands import register_commands
 
 # 导出主要组件
 __all__ = [
+    # 模块配置
+    "MODULE_NAME",
+    "MODULE_DISPLAY_NAME", 
+    "MODULE_DESCRIPTION",
+    "DATA_DIR_PREFIX",
+    
     # 模块信息
     "get_module_info",
+    "get_command_names",
     "initialize_module", 
     "is_module_initialized",
     "__version__",
@@ -114,5 +150,5 @@ __all__ = [
     # 核心组件
     "SampleManager",
     "create_sample_manager",
-    "register_sample_commands"
+    "register_commands"
 ] 

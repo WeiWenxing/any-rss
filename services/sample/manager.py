@@ -24,6 +24,7 @@ from telegram import Bot
 
 from services.common.unified_manager import UnifiedContentManager
 from services.common.message_converter import get_converter, ConverterType
+from . import MODULE_NAME, MODULE_DISPLAY_NAME, DATA_DIR_PREFIX
 
 
 class MockSampleFetcher:
@@ -36,7 +37,7 @@ class MockSampleFetcher:
     
     def __init__(self):
         """初始化模拟获取器"""
-        self.logger = logging.getLogger("sample_mock_fetcher")
+        self.logger = logging.getLogger(f"{MODULE_NAME}_mock_fetcher")
         self.logger.info("样本内容获取器模拟实现初始化")
     
     def fetch_user_content(self, sample_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
@@ -88,7 +89,7 @@ class MockSampleConverter:
     
     def __init__(self):
         """初始化模拟转换器"""
-        self.logger = logging.getLogger("sample_mock_converter")
+        self.logger = logging.getLogger(f"{MODULE_NAME}_mock_converter")
         self.logger.info("样本消息转换器模拟实现初始化")
     
     def convert(self, content_data: Dict) -> Dict:
@@ -119,20 +120,23 @@ class SampleManager(UnifiedContentManager):
     继承统一内容管理器基类，实现样本特定的业务逻辑
     """
 
-    def __init__(self, data_dir: str = "storage/sample"):
+    def __init__(self, data_dir: str = None):
         """
         初始化Sample管理器
 
         Args:
-            data_dir: 数据存储目录
+            data_dir: 数据存储目录（可选，默认使用模块配置）
         """
-        super().__init__("sample", data_dir)
+        if data_dir is None:
+            data_dir = DATA_DIR_PREFIX
+            
+        super().__init__(MODULE_NAME, data_dir)
 
         # 初始化样本特定组件（暂时使用模拟实现）
         self.fetcher = MockSampleFetcher()
         self.sample_converter = MockSampleConverter()
 
-        self.logger.info("Sample管理器初始化完成")
+        self.logger.info(f"{MODULE_DISPLAY_NAME}管理器初始化完成")
 
     def fetch_latest_content(self, source_url: str) -> Tuple[bool, str, Optional[List[Dict]]]:
         """
@@ -201,14 +205,6 @@ class SampleManager(UnifiedContentManager):
         """
         return self.sample_converter
 
-
-
-
-
-
-
-
-
     def get_statistics(self) -> Dict[str, Any]:
         """
         获取统计信息
@@ -218,7 +214,8 @@ class SampleManager(UnifiedContentManager):
         """
         stats = super().get_statistics()
         stats.update({
-            'module': 'sample',
+            'module': MODULE_NAME,
+            'display_name': MODULE_DISPLAY_NAME,
             'description': '样本订阅统计',
             'features': [
                 '样本账号订阅',
@@ -230,12 +227,12 @@ class SampleManager(UnifiedContentManager):
         return stats
 
 
-def create_sample_manager(data_dir: str = "storage/sample") -> SampleManager:
+def create_sample_manager(data_dir: str = None) -> SampleManager:
     """
     创建Sample管理器实例
 
     Args:
-        data_dir: 数据存储目录
+        data_dir: 数据存储目录（可选，默认使用模块配置）
 
     Returns:
         SampleManager: 管理器实例
