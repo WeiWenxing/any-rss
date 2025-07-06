@@ -491,76 +491,95 @@ class DouyinFetcher:
 def test_douyin_fetcher(douyin_url: str = None):
     """
     测试抖音数据获取器功能
-    
+
     输入抖音URL，经过API解析后，输出每个视频的必要信息
-    
+
     Args:
         douyin_url: 抖音用户主页URL，如果为None则使用默认测试URL
     """
     import logging
-    
+
     # 配置日志
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # 默认测试URL
     if douyin_url is None:
         douyin_url = "https://www.douyin.com/user/MS4wLjABAAAA4dOPs2xB33L5Sc8YUO2gFq9U6x5LXFkJ8v15AqeIgc8"
-    
+
     print("=" * 80)
     print("抖音数据获取器测试")
     print("=" * 80)
+    print("📌 推荐测试方法：")
+    print("   从项目根目录运行：python -m services.douyin1.fetcher")
+    print("   自定义URL测试：python -m services.douyin1.fetcher 'https://www.douyin.com/user/YOUR_USER_ID'")
+    print("=" * 80)
     print(f"测试URL: {douyin_url}")
     print()
-    
+
     try:
         # 创建获取器实例
         fetcher = DouyinFetcher()
-        
+
         # 步骤1: 验证URL格式
         print("步骤1: 验证URL格式")
         is_valid = fetcher.validate_douyin_url(douyin_url)
         print(f"URL格式验证: {'✅ 有效' if is_valid else '❌ 无效'}")
-        
+
         if not is_valid:
             print("❌ URL格式无效，测试终止")
             return
-        
+
         print()
-        
+
         # 步骤2: 提取sec_user_id
         print("步骤2: 提取用户ID")
         success, message, sec_user_id = fetcher.extract_sec_user_id(douyin_url)
-        
+
         if success:
             print(f"✅ 成功提取用户ID: {sec_user_id}")
         else:
             print(f"❌ 提取用户ID失败: {message}")
             return
-        
+
         print()
-        
-        # 步骤3: 获取视频数据
+
+                # 步骤3: 获取视频数据
         print("步骤3: 获取视频数据")
+
+        # 检查缓存命中情况（获取前）
+        cache_hit_before = fetcher.is_cache_hit(douyin_url)
+        print(f"📦 获取前缓存状态: {'✅ 已缓存' if cache_hit_before else '❌ 未缓存'}")
+
         success, message, video_list = fetcher.fetch_user_content(douyin_url, count=10)
-        
+
+        # 检查缓存命中情况（获取后）
+        cache_hit_after = fetcher.is_cache_hit(douyin_url)
+        print(f"📦 获取后缓存状态: {'✅ 已缓存' if cache_hit_after else '❌ 未缓存'}")
+
+        # 显示数据来源
+        if cache_hit_before:
+            print("📂 数据来源: 缓存")
+        else:
+            print("🌐 数据来源: API请求")
+
         if not success:
             print(f"❌ 获取视频数据失败: {message}")
             return
-        
+
         if not video_list:
             print("⚠️ 没有获取到视频数据")
             return
-        
+
         print(f"✅ 成功获取 {len(video_list)} 个视频")
         print()
-        
+
         # 步骤4: 输出视频必要信息
         print("步骤4: 视频信息详情")
         print("=" * 80)
-        
+
         for i, video in enumerate(video_list, 1):
             print(f"视频 {i}:")
             print(f"  📹 视频ID: {video.get('aweme_id', 'N/A')}")
@@ -568,14 +587,14 @@ def test_douyin_fetcher(douyin_url: str = None):
             print(f"  📅 创建时间: {video.get('create_time', 'N/A')} ({_format_timestamp(video.get('create_time', 0))})")
             print(f"  ⏱️ 视频时长: {_format_duration(video.get('duration', 0))}")
             print(f"  📌 是否置顶: {'是' if video.get('is_top', 0) else '否'}")
-            
+
             # 作者信息
             author = video.get('author', {})
             if author:
                 print(f"  👤 作者昵称: {author.get('nickname', 'N/A')}")
                 print(f"  🆔 作者UID: {author.get('uid', 'N/A')}")
                 print(f"  ✍️ 作者签名: {author.get('signature', 'N/A')[:50]}{'...' if len(author.get('signature', '')) > 50 else ''}")
-            
+
             # 统计信息
             stats = video.get('statistics', {})
             if stats:
@@ -584,49 +603,63 @@ def test_douyin_fetcher(douyin_url: str = None):
                 print(f"  💬 评论量: {_format_number(stats.get('comment_count', 0))}")
                 print(f"  📤 分享量: {_format_number(stats.get('share_count', 0))}")
                 print(f"  ⭐ 收藏量: {_format_number(stats.get('collect_count', 0))}")
-            
+
             # 视频信息
             video_info = video.get('video', {})
             if video_info:
                 print(f"  🎬 视频尺寸: {video_info.get('width', 0)}x{video_info.get('height', 0)}")
                 print(f"  💾 文件大小: {_format_file_size(video_info.get('data_size', 0))}")
                 print(f"  🔗 视频URI: {video_info.get('uri', 'N/A')}")
-                
+
                 # 显示第一个播放URL
                 url_list = video_info.get('url_list', [])
                 if url_list:
                     print(f"  🎥 播放链接: {url_list[0][:60]}{'...' if len(url_list[0]) > 60 else ''}")
                     print(f"  📱 可用链接数: {len(url_list)}")
-            
+
             # 封面信息
             cover = video.get('cover', {})
             if cover and cover.get('url_list'):
                 cover_urls = cover.get('url_list', [])
                 print(f"  🖼️ 封面链接: {cover_urls[0][:60]}{'...' if len(cover_urls[0]) > 60 else ''}")
-            
+
             # 音乐信息
             music = video.get('music', {})
             if music:
                 print(f"  🎵 音乐标题: {music.get('title', 'N/A')}")
                 print(f"  🎤 音乐作者: {music.get('author', 'N/A')}")
-            
+
             # 分享链接
             share_url = video.get('share_url', '')
             if share_url:
                 print(f"  🔗 分享链接: {share_url}")
-            
+
             print("-" * 80)
-        
-        # 步骤5: 缓存信息
-        print("\n步骤5: 缓存信息")
+
+                # 步骤5: 缓存详细信息
+        print("\n步骤5: 缓存详细信息")
+        print("=" * 40)
+
+        # 缓存类型
+        cache_type = type(fetcher.cache).__name__
+        print(f"📋 缓存类型: {cache_type}")
+
+        # 缓存状态
         is_cached = fetcher.is_cache_hit(douyin_url)
-        print(f"缓存状态: {'✅ 已缓存' if is_cached else '❌ 未缓存'}")
-        
+        print(f"📦 缓存状态: {'✅ 已缓存' if is_cached else '❌ 未缓存'}")
+
+        # 缓存键
+        cache_key = fetcher._generate_cache_key(douyin_url)
+        print(f"🔑 缓存键: {cache_key}")
+
+        # 详细缓存信息
         cache_info = fetcher.get_cache_info()
-        print(f"缓存信息: {cache_info}")
-        
+        print(f"📊 缓存详情:")
+        for key, value in cache_info.items():
+            print(f"   {key}: {value}")
+
         print("\n✅ 测试完成！")
-        
+
     except Exception as e:
         print(f"\n❌ 测试过程中发生错误: {str(e)}")
         import traceback
@@ -636,17 +669,17 @@ def test_douyin_fetcher(douyin_url: str = None):
 def _format_timestamp(timestamp: int) -> str:
     """
     格式化时间戳为可读时间
-    
+
     Args:
         timestamp: Unix时间戳
-        
+
     Returns:
         str: 格式化的时间字符串
     """
     try:
         if timestamp <= 0:
             return "未知时间"
-        
+
         from datetime import datetime
         dt = datetime.fromtimestamp(timestamp)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -657,21 +690,21 @@ def _format_timestamp(timestamp: int) -> str:
 def _format_duration(duration_ms: int) -> str:
     """
     格式化视频时长
-    
+
     Args:
         duration_ms: 时长（毫秒）
-        
+
     Returns:
         str: 格式化的时长字符串
     """
     try:
         if duration_ms <= 0:
             return "未知时长"
-        
+
         seconds = duration_ms // 1000
         minutes = seconds // 60
         remaining_seconds = seconds % 60
-        
+
         if minutes > 0:
             return f"{minutes}分{remaining_seconds}秒"
         else:
@@ -683,10 +716,10 @@ def _format_duration(duration_ms: int) -> str:
 def _format_number(number: int) -> str:
     """
     格式化数字为可读格式
-    
+
     Args:
         number: 数字
-        
+
     Returns:
         str: 格式化的数字字符串
     """
@@ -704,17 +737,17 @@ def _format_number(number: int) -> str:
 def _format_file_size(size_bytes: int) -> str:
     """
     格式化文件大小
-    
+
     Args:
         size_bytes: 文件大小（字节）
-        
+
     Returns:
         str: 格式化的文件大小字符串
     """
     try:
         if size_bytes <= 0:
             return "未知大小"
-        
+
         if size_bytes >= 1024 * 1024 * 1024:  # GB
             return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
         elif size_bytes >= 1024 * 1024:  # MB
@@ -732,11 +765,19 @@ if __name__ == "__main__":
     import sys
     import os
     from pathlib import Path
-    
+    from dotenv import load_dotenv
+
+    # 加载环境变量
+    load_dotenv()
+
     # 添加项目根目录到Python路径
     project_root = Path(__file__).parent.parent.parent
     sys.path.insert(0, str(project_root))
-    
+
+    print("抖音数据获取器测试")
+    print("注意：建议从项目根目录运行: python -m services.douyin1.fetcher")
+    print()
+
     # 检查是否提供了URL参数
     if len(sys.argv) > 1:
         test_url = sys.argv[1]
@@ -744,4 +785,4 @@ if __name__ == "__main__":
         test_douyin_fetcher(test_url)
     else:
         print("使用默认测试URL")
-        test_douyin_fetcher() 
+        test_douyin_fetcher()
