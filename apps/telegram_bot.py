@@ -108,6 +108,7 @@ async def run(token):
     # 从services加载其他命令
     from services.rss.commands import register_commands
     from services.douyin.commands import register_douyin_commands
+    from services.sample.commands import register_sample_commands
     from services.douyin1.commands import register_douyin1_commands
     from services.rsshub.commands import register_rsshub_commands
     from services.sitemap.commands import register_sitemap_commands
@@ -117,6 +118,7 @@ async def run(token):
     register_douyin1_commands(application)
     register_rsshub_commands(application)
     register_sitemap_commands(application)
+    register_sample_commands(application)
 
     await application.initialize()
     await application.start()
