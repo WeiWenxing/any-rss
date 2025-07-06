@@ -58,6 +58,11 @@ def get_module_info() -> Dict[str, str]:
     }
 
 
+# 自动注册帮助信息提供者
+from .help_provider import register_help_provider
+register_help_provider()
+
+
 def initialize_module(data_dir: str = "storage/douyin1") -> bool:
     """
     初始化模块
@@ -72,11 +77,6 @@ def initialize_module(data_dir: str = "storage/douyin1") -> bool:
     
     try:
         logger.info(f"开始初始化Douyin1模块 - 数据目录: {data_dir}")
-        
-        # 注册帮助信息提供者
-        from .help_provider import register_help_provider
-        register_help_provider()
-        logger.info("✅ Douyin1帮助信息提供者已注册")
         
         _module_initialized = True
         logger.info("✅ Douyin1模块初始化完成")

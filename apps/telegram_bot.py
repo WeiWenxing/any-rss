@@ -108,11 +108,13 @@ async def run(token):
     # 从services加载其他命令
     from services.rss.commands import register_commands
     from services.douyin.commands import register_douyin_commands
+    from services.douyin1.commands import register_douyin1_commands
     from services.rsshub.commands import register_rsshub_commands
     from services.sitemap.commands import register_sitemap_commands
 
     register_commands(application)
-    register_douyin_commands(application)
+    # register_douyin_commands(application)
+    register_douyin1_commands(application)
     register_rsshub_commands(application)
     register_sitemap_commands(application)
 
