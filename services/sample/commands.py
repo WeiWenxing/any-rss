@@ -1,12 +1,12 @@
 """
-Sample命令处理器模块
+命令处理器模块
 
-该模块负责处理所有Sample相关的Telegram命令，继承统一命令处理器基类。
-支持样本账号订阅的添加、删除和查看功能，提供统一的用户反馈体验。
+该模块负责处理所有相关的Telegram命令，继承统一命令处理器基类。
+支持账号订阅的添加、删除和查看功能，提供统一的用户反馈体验。
 
 主要功能：
 1. 动态命令生成（基于模块名自动生成命令前缀）
-2. 样本URL验证和格式化
+2. URL验证和格式化
 3. 统一的错误处理和用户反馈
 
 作者: Assistant
@@ -21,32 +21,32 @@ from telegram import Update, Bot
 from telegram.ext import ContextTypes, CommandHandler, Application
 
 from services.common.unified_commands import UnifiedCommandHandler
-from .manager import create_sample_manager
+from .manager import create_content_manager
 from . import MODULE_NAME, MODULE_DISPLAY_NAME, DATA_DIR_PREFIX, get_command_names
 
 
-class SampleCommandHandler(UnifiedCommandHandler):
+class ModuleCommandHandler(UnifiedCommandHandler):
     """
-    Sample命令处理器
+    模块命令处理器
 
-    继承统一命令处理器基类，提供样本账号订阅管理功能
+    继承统一命令处理器基类，提供账号订阅管理功能
     """
 
     def __init__(self, data_dir: str = None):
         """
-        初始化Sample命令处理器
+        初始化模块命令处理器
 
         Args:
             data_dir: 数据存储目录（可选，默认使用模块配置）
         """
         if data_dir is None:
             data_dir = DATA_DIR_PREFIX
-            
-        # 创建Sample管理器
-        sample_manager = create_sample_manager(data_dir)
+
+        # 创建内容管理器
+        content_manager = create_content_manager(data_dir)
 
         # 调用父类构造函数
-        super().__init__(module_name=MODULE_NAME, manager=sample_manager)
+        super().__init__(module_name=MODULE_NAME, manager=content_manager)
 
         self.logger.info(f"{MODULE_DISPLAY_NAME}命令处理器初始化完成")
 
@@ -66,7 +66,7 @@ class SampleCommandHandler(UnifiedCommandHandler):
         获取数据源的显示名称
 
         Args:
-            source_url: 样本链接
+            source_url: 链接
 
         Returns:
             str: 显示名称
@@ -79,7 +79,7 @@ class SampleCommandHandler(UnifiedCommandHandler):
 _command_handler = None
 
 
-def get_command_handler(data_dir: str = None) -> SampleCommandHandler:
+def get_command_handler(data_dir: str = None) -> ModuleCommandHandler:
     """
     获取命令处理器实例（单例模式）
 
@@ -87,11 +87,11 @@ def get_command_handler(data_dir: str = None) -> SampleCommandHandler:
         data_dir: 数据存储目录（可选，默认使用模块配置）
 
     Returns:
-        SampleCommandHandler: 命令处理器实例
+        ModuleCommandHandler: 命令处理器实例
     """
     global _command_handler
     if _command_handler is None:
-        _command_handler = SampleCommandHandler(data_dir)
+        _command_handler = ModuleCommandHandler(data_dir)
     return _command_handler
 
 
@@ -142,7 +142,7 @@ def register_commands(application: Application) -> None:
     """
     # 获取动态生成的命令名称
     command_names = get_command_names()
-    
+
     # 导入debug配置
     from core.config import debug_config
 
@@ -161,4 +161,4 @@ def register_commands(application: Application) -> None:
         logging.info(f"ℹ️ {MODULE_DISPLAY_NAME}调试命令已跳过（DEBUG模式关闭）")
 
     logging.info(f"{MODULE_DISPLAY_NAME}命令处理器注册完成")
-    logging.info(f"📋 已注册命令: {', '.join([f'/{name}' for name in command_names.values()])}") 
+    logging.info(f"📋 已注册命令: {', '.join([f'/{name}' for name in command_names.values()])}")

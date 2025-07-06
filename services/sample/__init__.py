@@ -1,11 +1,11 @@
 """
-Sample模块 - 样本内容订阅服务
+模块 - 内容订阅服务
 
-该模块提供样本内容的订阅、管理和推送功能，支持用户订阅样本账号并自动推送最新内容到指定频道。
+该模块提供内容的订阅、管理和推送功能，支持用户订阅账号并自动推送最新内容到指定频道。
 本模块是作为新模块开发的模板，采用统一的架构设计。
 
 主要功能：
-1. 样本账号订阅管理
+1. 账号订阅管理
 2. 自动内容检测和推送
 3. 历史内容对齐
 4. 多频道订阅支持
@@ -55,7 +55,7 @@ _command_handlers_registered = False
 def get_module_info() -> Dict[str, str]:
     """
     获取模块信息
-    
+
     Returns:
         Dict[str, str]: 模块信息字典
     """
@@ -72,13 +72,13 @@ def get_module_info() -> Dict[str, str]:
 def get_command_names() -> Dict[str, str]:
     """
     获取动态生成的命令名称
-    
+
     Returns:
         Dict[str, str]: 命令名称字典
     """
     return {
         "add": f"{MODULE_NAME}_add",
-        "del": f"{MODULE_NAME}_del", 
+        "del": f"{MODULE_NAME}_del",
         "list": f"{MODULE_NAME}_list",
         "debug_show": f"{MODULE_NAME}_debug_show"
     }
@@ -92,25 +92,25 @@ register_help_provider()
 def initialize_module(data_dir: str = None) -> bool:
     """
     初始化模块
-    
+
     Args:
         data_dir: 数据存储目录（可选，默认使用模块配置）
-        
+
     Returns:
         bool: 是否初始化成功
     """
     global _module_initialized
-    
+
     if data_dir is None:
         data_dir = DATA_DIR_PREFIX
-    
+
     try:
         logger.info(f"开始初始化{MODULE_DISPLAY_NAME}模块 - 数据目录: {data_dir}")
-        
+
         _module_initialized = True
         logger.info(f"✅ {MODULE_DISPLAY_NAME}模块初始化完成")
         return True
-        
+
     except Exception as e:
         logger.error(f"❌ {MODULE_DISPLAY_NAME}模块初始化失败: {e}", exc_info=True)
         return False
@@ -119,7 +119,7 @@ def initialize_module(data_dir: str = None) -> bool:
 def is_module_initialized() -> bool:
     """
     检查模块是否已初始化
-    
+
     Returns:
         bool: 是否已初始化
     """
@@ -127,28 +127,28 @@ def is_module_initialized() -> bool:
 
 
 # 导入主要组件
-from .manager import SampleManager, create_sample_manager
+from .manager import ContentManager, create_content_manager
 from .commands import register_commands
 
 # 导出主要组件
 __all__ = [
     # 模块配置
     "MODULE_NAME",
-    "MODULE_DISPLAY_NAME", 
+    "MODULE_DISPLAY_NAME",
     "MODULE_DESCRIPTION",
     "DATA_DIR_PREFIX",
-    
+
     # 模块信息
     "get_module_info",
     "get_command_names",
-    "initialize_module", 
+    "initialize_module",
     "is_module_initialized",
     "__version__",
     "__author__",
     "__description__",
-    
+
     # 核心组件
-    "SampleManager",
-    "create_sample_manager",
+    "ContentManager",
+    "create_content_manager",
     "register_commands"
-] 
+]
