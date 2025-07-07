@@ -178,7 +178,7 @@ class DouyinConverter(MessageConverter):
                     music_text += f"` - {safe_music_author}`"
 
                 # 将音乐信息设置为斜体
-                music_text = f"_{music_text}_"
+                music_text = f"`{music_text}`"
                 caption_parts.append(music_text)
 
             # 第四行：标签
