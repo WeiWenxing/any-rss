@@ -39,13 +39,7 @@ async def handle_debug_show_command(update: Update, context: ContextTypes.DEFAUL
 
         # 参数验证
         if not context.args:
-            await update.message.reply_text(
-                f"👁️ 显示内容项\n\n"
-                f"用法: /{debug_show_cmd} <链接>\n\n"
-                f"示例:\n"
-                f"/{debug_show_cmd} https://www.example.com/user/MS4wLjABAAAA...\n"
-                f"/{debug_show_cmd} https://v.example.com/iM5g7LsM/"
-            )
+            await update.message.reply_text(f"用法: /{debug_show_cmd} <链接>")
             return
 
         source_url = context.args[0].strip()
@@ -60,63 +54,43 @@ async def handle_debug_show_command(update: Update, context: ContextTypes.DEFAUL
             return
 
         # 发送处理中消息
-        processing_message = await update.message.reply_text(
-            f"👁️ 正在获取内容信息...\n"
-            f"🔗 链接: {source_url}\n"
-            f"⏳ 请稍候..."
-        )
+        processing_message = await update.message.reply_text("⏳ 获取内容中...")
 
         try:
             # 获取最新内容
             success, message, content_list = handler.manager.fetch_latest_content(source_url)
 
             if not success:
-                await processing_message.edit_text(
-                    f"❌ 获取内容失败\n"
-                    f"🔗 链接: {source_url}\n"
-                    f"❌ 错误: {message}"
-                )
+                logging.error(f"❌ 获取内容失败: {message}")
+                await processing_message.edit_text(f"❌ 获取失败: {message}")
                 return
 
             if not content_list:
-                await processing_message.edit_text(
-                    f"📭 没有找到内容\n"
-                    f"🔗 链接: {source_url}\n"
-                    f"💡 该账号可能没有发布内容或链接无效"
-                )
+                logging.info(f"📭 没有找到内容: {source_url}")
+                await processing_message.edit_text("📭 没有找到内容")
                 return
 
             # 显示第一个内容项
             first_item = content_list[0]
 
-            # 构建显示信息
-            display_text = (
-                f"👁️ 内容项详情\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎵 标题: {first_item.get('title', 'Unknown')}\n"
-                f"👤 作者: {first_item.get('author', 'Unknown')}\n"
-                f"🔗 链接: {first_item.get('url', source_url)}\n"
-                f"🆔 内容ID: {handler.manager.generate_content_id(first_item)}\n"
-                f"📅 发布时间: {first_item.get('publish_time', 'Unknown')}\n\n"
-                f"📝 描述:\n{first_item.get('description', '无描述')}\n\n"
-                f"🎬 媒体信息:\n"
-                f"  • 视频链接: {first_item.get('video_url', '无')}\n"
-                f"  • 封面链接: {first_item.get('cover_url', '无')}\n\n"
-                f"📊 统计信息:\n"
-                f"  • 总内容数: {len(content_list)}\n"
-                f"  • 显示: 第1个内容项\n\n"
-                f"💡 提示: 这是模拟数据，实际功能待开发"
-            )
+            # 记录详细信息到日志
+            logging.info(f"👁️ 内容项详情:")
+            logging.info(f"  标题: {first_item.get('title', 'Unknown')}")
+            logging.info(f"  作者: {first_item.get('author', 'Unknown')}")
+            logging.info(f"  链接: {first_item.get('url', source_url)}")
+            logging.info(f"  内容ID: {handler.manager.generate_content_id(first_item)}")
+            logging.info(f"  发布时间: {first_item.get('publish_time', 'Unknown')}")
+            logging.info(f"  总内容数: {len(content_list)}")
 
-            await processing_message.edit_text(display_text)
+            # 简化的消息显示
+            await processing_message.edit_text(
+                f"✅ 找到 {len(content_list)} 个内容\n"
+                f"标题: {first_item.get('title', 'Unknown')[:50]}{'...' if len(first_item.get('title', '')) > 50 else ''}"
+            )
 
         except Exception as e:
             logging.error(f"❌ 显示内容项失败: {e}", exc_info=True)
-            await processing_message.edit_text(
-                f"❌ 显示内容项失败\n"
-                f"🔗 链接: {source_url}\n"
-                f"❌ 错误: {str(e)}"
-            )
+            await processing_message.edit_text(f"❌ 显示失败: {str(e)}")
 
     except Exception as e:
         logging.error(f"❌ 处理调试显示命令时发生错误: {e}", exc_info=True)
@@ -147,11 +121,8 @@ async def handle_debug_file_message(update: Update, context: ContextTypes.DEFAUL
 
         # 文档已经在上面检查过了，直接处理
 
-        # 发送处理中消息
-        processing_message = await update.message.reply_text(
-            f"📄 正在处理JSON文件...\n"
-            f"⏳ 请稍候..."
-        )
+        # 发送简单的处理中消息
+        processing_message = await update.message.reply_text("⏳ 处理中...")
 
         try:
             # 下载文件
@@ -163,38 +134,24 @@ async def handle_debug_file_message(update: Update, context: ContextTypes.DEFAUL
                 video_data = json.loads(file_content.decode('utf-8'))
                 logging.info(f"📄 成功解析JSON文件，aweme_id: {video_data.get('aweme_id', 'unknown')}")
             except json.JSONDecodeError as e:
-                await processing_message.edit_text(
-                    f"❌ JSON文件格式错误\n"
-                    f"错误: {str(e)}\n"
-                    f"请检查文件格式是否正确"
-                )
+                logging.error(f"❌ JSON文件格式错误: {e}")
+                await processing_message.edit_text(f"❌ JSON格式错误: {str(e)}")
                 return
 
             # 创建converter并转换
             converter = create_douyin_converter()
             try:
                 telegram_message = converter.convert(video_data)
-                logging.info(f"✅ converter转换成功，文本长度: {len(telegram_message.text)}")
-
-                await processing_message.edit_text(
-                    f"✅ converter转换成功\n"
-                    f"📝 文本长度: {len(telegram_message.text)} 字符\n"
-                    f"🎬 媒体数量: {telegram_message.media_count}\n"
-                    f"📱 消息类型: {'媒体消息' if telegram_message.has_media else '纯文本消息'}\n\n"
-                    f"正在使用统一发送器发送消息..."
-                )
+                logging.info(f"✅ converter转换成功，文本长度: {len(telegram_message.text)}, 媒体数量: {telegram_message.media_count}")
 
             except Exception as e:
-                await processing_message.edit_text(
-                    f"❌ converter转换失败\n"
-                    f"错误: {str(e)}\n"
-                    f"请检查JSON数据格式"
-                )
+                logging.error(f"❌ converter转换失败: {e}", exc_info=True)
+                await processing_message.edit_text(f"❌ 转换失败: {str(e)}")
                 return
 
             # 获取目标频道
             # 直接使用当前聊天作为目标频道
-            target_channels = [update.effective_chat.id]
+            target_channels = [str(update.effective_chat.id)]
             if not target_channels:
                 await processing_message.edit_text(
                     f"❌ JSON文件中缺少target_channels字段\n"
@@ -226,33 +183,16 @@ async def handle_debug_file_message(update: Update, context: ContextTypes.DEFAUL
 
                 # 更新结果
                 await processing_message.edit_text(
-                    f"🎉 测试完成!\n\n"
-                    f"📄 文件处理: ✅ 成功\n"
-                    f"🔄 converter转换: ✅ 成功\n"
-                    f"📤 统一发送器: {success_count}/{total_channels} 成功\n\n"
-                    f"📊 消息详情:\n"
-                    f"  • 视频ID: {video_data.get('aweme_id', 'unknown')}\n"
-                    f"  • 文本长度: {len(telegram_message.text)} 字符\n"
-                    f"  • 媒体数量: {telegram_message.media_count}\n"
-                    f"  • 目标频道: {', '.join(target_channels)}\n\n"
-                    f"💡 converter和统一发送器测试完成"
+                    f"✅ 测试完成: {success_count}/{total_channels} 成功"
                 )
 
             except Exception as e:
                 logging.error(f"❌ 统一发送器发送失败: {e}", exc_info=True)
-                await processing_message.edit_text(
-                    f"❌ 统一发送器发送失败\n"
-                    f"🔄 converter转换: ✅ 成功\n"
-                    f"📤 统一发送器: ❌ 失败\n"
-                    f"错误: {str(e)}"
-                )
+                await processing_message.edit_text(f"❌ 发送失败: {str(e)}")
 
         except Exception as e:
             logging.error(f"❌ 处理文件失败: {e}", exc_info=True)
-            await processing_message.edit_text(
-                f"❌ 处理文件失败\n"
-                f"错误: {str(e)}"
-            )
+            await processing_message.edit_text(f"❌ 处理失败: {str(e)}")
 
     except Exception as e:
         logging.error(f"❌ 处理调试文件消息时发生错误: {e}", exc_info=True)
