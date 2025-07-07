@@ -193,8 +193,8 @@ class DouyinFormatter:
 
             # 第四行：标签
             if author:
-                clean_author = author.replace(' ', '_').replace('@', '').replace('#', '')
-                caption_parts.append(f"#{clean_author}")
+                clean_author = author.replace('@', '').replace('#', '')
+                caption_parts.append(f"`#{clean_author}`")
 
             # 最后一行：抖音原链接 + 日期（将日期拼接到查看原视频后面）
             aweme_id = content_info.get("aweme_id", "").strip()
