@@ -222,8 +222,8 @@ class DouyinConverter(MessageConverter):
             if not url_list:
                 return None
 
-            # 选择第一个可用的URL
-            video_url = url_list[0]
+            # 选择最后一个可用的URL
+            video_url = url_list[-1]
             if not video_url:
                 return None
 

@@ -12,10 +12,13 @@
 """
 
 import logging
+import json
 from telegram import Update
-from telegram.ext import ContextTypes, Application, CommandHandler
+from telegram.ext import ContextTypes, Application, CommandHandler, MessageHandler, filters
 
 from .commands import get_command_handler
+from .converter import create_douyin_converter
+from services.common.unified_sender import UnifiedTelegramSender
 from . import MODULE_NAME, MODULE_DISPLAY_NAME, get_command_names
 
 
@@ -120,6 +123,142 @@ async def handle_debug_show_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"❌ 处理命令时发生错误: {str(e)}")
 
 
+async def handle_debug_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理带有debug_file标题的文档消息 - 测试converter和统一发送器
+
+    Args:
+        update: Telegram更新对象
+        context: 命令上下文
+    """
+    try:
+        # 检查是否是文档消息且caption包含debug_file命令
+        if not update.message.document:
+            return
+
+        caption = update.message.caption or ""
+        debug_file_cmd = f"{MODULE_NAME}_debug_file"
+
+        if debug_file_cmd not in caption:
+            return
+
+        user = update.message.from_user
+        logging.info(f"📄 收到{debug_file_cmd}文件消息 - 用户: {user.username}(ID:{user.id})")
+
+        # 文档已经在上面检查过了，直接处理
+
+        # 发送处理中消息
+        processing_message = await update.message.reply_text(
+            f"📄 正在处理JSON文件...\n"
+            f"⏳ 请稍候..."
+        )
+
+        try:
+            # 下载文件
+            file = await context.bot.get_file(update.message.document.file_id)
+            file_content = await file.download_as_bytearray()
+
+            # 解析JSON
+            try:
+                video_data = json.loads(file_content.decode('utf-8'))
+                logging.info(f"📄 成功解析JSON文件，aweme_id: {video_data.get('aweme_id', 'unknown')}")
+            except json.JSONDecodeError as e:
+                await processing_message.edit_text(
+                    f"❌ JSON文件格式错误\n"
+                    f"错误: {str(e)}\n"
+                    f"请检查文件格式是否正确"
+                )
+                return
+
+            # 创建converter并转换
+            converter = create_douyin_converter()
+            try:
+                telegram_message = converter.convert(video_data)
+                logging.info(f"✅ converter转换成功，文本长度: {len(telegram_message.text)}")
+
+                await processing_message.edit_text(
+                    f"✅ converter转换成功\n"
+                    f"📝 文本长度: {len(telegram_message.text)} 字符\n"
+                    f"🎬 媒体数量: {telegram_message.media_count}\n"
+                    f"📱 消息类型: {'媒体消息' if telegram_message.has_media else '纯文本消息'}\n\n"
+                    f"正在使用统一发送器发送消息..."
+                )
+
+            except Exception as e:
+                await processing_message.edit_text(
+                    f"❌ converter转换失败\n"
+                    f"错误: {str(e)}\n"
+                    f"请检查JSON数据格式"
+                )
+                return
+
+            # 获取目标频道
+            # 直接使用当前聊天作为目标频道
+            target_channels = [update.effective_chat.id]
+            if not target_channels:
+                await processing_message.edit_text(
+                    f"❌ JSON文件中缺少target_channels字段\n"
+                    f"请在JSON中添加target_channels数组"
+                )
+                return
+
+            # 使用统一发送器发送消息
+            sender = UnifiedTelegramSender()
+            try:
+                # 发送到指定频道
+                success_count = 0
+                total_channels = len(target_channels)
+
+                for channel in target_channels:
+                    try:
+                        sent_messages = await sender.send_message(
+                            bot=context.bot,
+                            chat_id=channel,
+                            message=telegram_message
+                        )
+                        if sent_messages:
+                            success_count += 1
+                            logging.info(f"✅ 成功发送到频道: {channel}, 发送了{len(sent_messages)}条消息")
+                        else:
+                            logging.error(f"❌ 发送到频道失败: {channel}")
+                    except Exception as e:
+                        logging.error(f"❌ 发送到频道{channel}时发生错误: {str(e)}")
+
+                # 更新结果
+                await processing_message.edit_text(
+                    f"🎉 测试完成!\n\n"
+                    f"📄 文件处理: ✅ 成功\n"
+                    f"🔄 converter转换: ✅ 成功\n"
+                    f"📤 统一发送器: {success_count}/{total_channels} 成功\n\n"
+                    f"📊 消息详情:\n"
+                    f"  • 视频ID: {video_data.get('aweme_id', 'unknown')}\n"
+                    f"  • 文本长度: {len(telegram_message.text)} 字符\n"
+                    f"  • 媒体数量: {telegram_message.media_count}\n"
+                    f"  • 目标频道: {', '.join(target_channels)}\n\n"
+                    f"💡 converter和统一发送器测试完成"
+                )
+
+            except Exception as e:
+                logging.error(f"❌ 统一发送器发送失败: {e}", exc_info=True)
+                await processing_message.edit_text(
+                    f"❌ 统一发送器发送失败\n"
+                    f"🔄 converter转换: ✅ 成功\n"
+                    f"📤 统一发送器: ❌ 失败\n"
+                    f"错误: {str(e)}"
+                )
+
+        except Exception as e:
+            logging.error(f"❌ 处理文件失败: {e}", exc_info=True)
+            await processing_message.edit_text(
+                f"❌ 处理文件失败\n"
+                f"错误: {str(e)}"
+            )
+
+    except Exception as e:
+        logging.error(f"❌ 处理调试文件消息时发生错误: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ 处理文件时发生错误: {str(e)}")
+
+
 def register_debug_commands(application: Application) -> None:
     """
     注册调试命令处理器（动态生成命令名称）
@@ -133,5 +272,12 @@ def register_debug_commands(application: Application) -> None:
     # 注册debug show命令（使用动态生成的命令名称）
     application.add_handler(CommandHandler(command_names["debug_show"], handle_debug_show_command))
 
+    # 注册文档消息处理器，检测caption中的debug_file命令
+    document_handler = MessageHandler(filters.Document.ALL, handle_debug_file_message)
+    application.add_handler(document_handler)
+
+    debug_file_cmd = f"{MODULE_NAME}_debug_file"
+
     logging.info(f"{MODULE_DISPLAY_NAME}调试命令处理器注册完成")
     logging.info(f"📋 已注册调试命令: /{command_names['debug_show']}")
+    logging.info(f"🔧 已注册调试文件处理器: 检测caption中的{debug_file_cmd}")
