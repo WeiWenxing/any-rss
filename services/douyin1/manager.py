@@ -124,14 +124,14 @@ class ContentManager(UnifiedContentManager):
             content_list: 内容列表
 
         Returns:
-            List[Dict]: 排序后的内容列表（最新的在前）
+            List[Dict]: 排序后的内容列表（从旧到新）
         """
         try:
             # 按create_time字段排序（Unix时间戳）
             return sorted(
                 content_list,
                 key=lambda x: x.get('create_time', 0),
-                reverse=True  # 最新的在前
+                reverse=False  # 最旧的在前（从旧到新）
             )
         except Exception as e:
             self.logger.error(f"内容排序失败: {str(e)}", exc_info=True)
