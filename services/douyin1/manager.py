@@ -26,40 +26,7 @@ from services.common.unified_manager import UnifiedContentManager
 from services.common.message_converter import get_converter, ConverterType
 from . import MODULE_NAME, MODULE_DISPLAY_NAME, MODULE_DESCRIPTION, DATA_DIR_PREFIX
 from .fetcher import DouyinFetcher
-
-
-class MockMessageConverter:
-    """
-    消息转换器的模拟实现
-
-    暂时提供基本的接口实现，用于管理器的测试
-    实际的转换器将在后续步骤中实现
-    """
-
-    def __init__(self):
-        """初始化模拟转换器"""
-        self.logger = logging.getLogger(f"{MODULE_NAME}_mock_converter")
-        self.logger.info("消息转换器模拟实现初始化")
-
-    def convert(self, content_data: Dict) -> Dict:
-        """
-        转换内容为Telegram消息格式
-
-        Args:
-            content_data: 内容数据
-
-        Returns:
-            Dict: Telegram消息数据
-        """
-        self.logger.info(f"模拟转换内容: {content_data.get('title', 'Unknown')}")
-
-        # 模拟转换结果
-        return {
-            "text": f"🎵 {content_data.get('title', 'Unknown Title')}\n\n{content_data.get('description', '')}",
-            "media_url": content_data.get("cover_url"),
-            "video_url": content_data.get("video_url"),
-            "source_url": content_data.get("url")
-        }
+from .converter import DouyinConverter
 
 
 class ContentManager(UnifiedContentManager):
@@ -83,7 +50,7 @@ class ContentManager(UnifiedContentManager):
 
         # 初始化特定组件
         self.fetcher = DouyinFetcher()
-        self.message_converter = MockMessageConverter()
+        self.message_converter = DouyinConverter()
 
         self.logger.info(f"{MODULE_DISPLAY_NAME}管理器初始化完成")
 
