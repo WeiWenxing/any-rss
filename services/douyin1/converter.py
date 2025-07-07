@@ -143,7 +143,7 @@ class DouyinConverter(MessageConverter):
                 title = title[:max_title_length] + "..."
 
             safe_title = self._escape_markdown(title)
-            caption_parts.append(safe_title)
+            caption_parts.append(f"`{safe_title}`")
 
             # 第二行：统计信息 + 作者（用 • 分隔）
             stats_parts = []
@@ -160,6 +160,7 @@ class DouyinConverter(MessageConverter):
                 stats_parts.append(f"👤 {safe_nickname}")
 
             if stats_parts:
+                stats_parts = [f"`{part}`" for part in stats_parts]
                 caption_parts.append(" • ".join(stats_parts))
 
             # 第三行：音乐信息（如果有）
@@ -174,7 +175,7 @@ class DouyinConverter(MessageConverter):
                 # 添加音乐作者（如果与视频作者不同）
                 if music_author and music_author != author_nickname:
                     safe_music_author = self._escape_markdown(music_author)
-                    music_text += f" - {safe_music_author}"
+                    music_text += f"` - {safe_music_author}`"
 
                 # 将音乐信息设置为斜体
                 music_text = f"_{music_text}_"
@@ -193,7 +194,7 @@ class DouyinConverter(MessageConverter):
                 # 将日期拼接到最后一行
                 if create_time > 0:
                     time_str = datetime.fromtimestamp(create_time).strftime('%Y-%m-%d')
-                    last_line += f" • {time_str}"
+                    last_line += f" • `{time_str}`"
 
                 caption_parts.append(last_line)
 
