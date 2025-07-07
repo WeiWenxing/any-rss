@@ -143,6 +143,7 @@ async def scheduled_task(token):
     # 导入服务模块
     from services.rss.scheduler import run_scheduled_check as rss_run_scheduled_check
     from services.douyin.scheduler import run_scheduled_check as douyin_run_scheduled_check
+    from services.douyin1.scheduler import run_scheduled_check as douyin1_run_scheduled_check
     from services.rsshub.scheduler import run_scheduled_check as rsshub_run_scheduled_check
 
     while True:
@@ -151,7 +152,10 @@ async def scheduled_task(token):
             await rss_run_scheduled_check(bot)
 
             # 抖音订阅检查 - 使用抖音调度器
-            await douyin_run_scheduled_check(bot)
+            # await douyin_run_scheduled_check(bot)
+
+            # Douyin1订阅检查 - 使用Douyin1调度器
+            await douyin1_run_scheduled_check(bot)
 
             # RSSHub订阅检查 - 使用RSSHub调度器
             await rsshub_run_scheduled_check(bot)
