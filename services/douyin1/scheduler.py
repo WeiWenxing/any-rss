@@ -129,22 +129,98 @@ if __name__ == "__main__":
     import asyncio
 
     async def test_douyin1_scheduler():
-        """测试Douyin1调度器功能"""
+        """测试Douyin1调度器功能 - 使用真实数据但不处理URL"""
         print("🧪 Douyin1调度器模块测试")
+        print("=" * 80)
 
-        # 创建调度器
-        scheduler = create_douyin1_scheduler("test_data/douyin1")
+        # 创建调度器 - 使用真实数据目录
+        scheduler = douyin1_scheduler
         print(f"✅ 创建Douyin1调度器: {type(scheduler).__name__}")
+        print(f"📂 数据目录: storage/douyin1")
+        print()
 
-        # 测试统计信息
-        stats = scheduler.get_scheduler_statistics()
-        print(f"✅ 获取统计信息: {stats.get('total_sources', 0)} 个抖音账号")
+        # 获取真实订阅数据
+        try:
+            subscriptions = scheduler.manager.get_subscriptions()
+            print(f"✅ 获取真实订阅数据: {len(subscriptions)} 个订阅源")
 
-        # 测试数据清理
-        await scheduler.cleanup_old_files()
-        print("✅ 数据清理任务完成")
+            if subscriptions:
+                print("\n📋 订阅详情列表:")
+                print("=" * 80)
 
+                total_channels = 0
+                for i, (source_url, target_channels) in enumerate(subscriptions.items(), 1):
+                    print(f"📌 订阅 #{i}")
+                    print(f"   🔗 抖音URL: {source_url}")
+
+                    # 处理频道显示
+                    if isinstance(target_channels, list):
+                        channels_str = ', '.join(target_channels)
+                        channel_count = len(target_channels)
+                    else:
+                        # 兼容旧格式
+                        channels_str = str(target_channels)
+                        channel_count = 1
+
+                    print(f"   📺 目标频道: {channels_str}")
+                    print(f"   📊 频道数量: {channel_count} 个")
+                    total_channels += channel_count
+
+                    # 获取已知内容统计
+                    try:
+                        known_items = scheduler.manager.get_known_item_ids(source_url)
+                        print(f"   📦 已知内容: {len(known_items)} 个")
+                    except Exception as e:
+                        print(f"   📦 已知内容: 无法获取 - {str(e)}")
+
+                    print()
+
+                print("=" * 80)
+                print(f"📊 总体统计:")
+                print(f"   📈 订阅源总数: {len(subscriptions)} 个")
+                print(f"   📺 频道总数: {total_channels} 个")
+                print(f"   📋 平均每源频道数: {total_channels / len(subscriptions):.1f} 个")
+
+            else:
+                print("📋 当前没有订阅数据")
+                print("💡 提示: 可能数据在服务器上，本地为空")
+
+        except Exception as e:
+            print(f"❌ 获取订阅数据失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        print()
+
+        # 测试调度器统计信息
+        try:
+            stats = scheduler.get_scheduler_statistics()
+            print(f"✅ 调度器统计信息:")
+            for key, value in stats.items():
+                print(f"   📊 {key}: {value}")
+        except Exception as e:
+            print(f"❌ 获取统计信息失败: {str(e)}")
+
+        print()
+
+        # 测试数据清理功能
+        try:
+            print("🧹 开始数据清理任务...")
+            await scheduler.cleanup_old_files()
+            print("✅ 数据清理任务完成")
+        except Exception as e:
+            print(f"❌ 数据清理失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        print()
         print("🎉 Douyin1调度器模块测试完成")
+        print("=" * 80)
+        print("📝 测试说明:")
+        print("   - 使用真实数据目录 storage/douyin1")
+        print("   - 仅读取和显示订阅信息")
+        print("   - 不实际处理抖音URL")
+        print("   - 不发送实际请求")
 
     # 运行测试
     asyncio.run(test_douyin1_scheduler())

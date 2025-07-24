@@ -42,7 +42,7 @@ class UnifiedScheduler(ABC):
         self.module_name = module_name
         self.manager = manager
         self.logger = logging.getLogger(f"{module_name}_scheduler")
-        
+
         self.logger.info(f"{module_name}统一调度器初始化完成")
 
     # ==================== 抽象接口（子类可选实现）====================
@@ -88,6 +88,10 @@ class UnifiedScheduler(ABC):
             bot: Telegram Bot实例
         """
         try:
+            # 刷新订阅缓存，确保获取最新数据
+            self.manager._load_subscriptions()
+            self.logger.debug(f"刷新{self.module_name}订阅缓存")
+
             subscriptions = self.manager.get_subscriptions()
             display_name = self.get_module_display_name()
             self.logger.info(f"定时任务开始检查{display_name}订阅更新，共 {len(subscriptions)} 个URL")
@@ -202,7 +206,7 @@ class UnifiedScheduler(ABC):
                 "display_name": self.get_module_display_name(),
                 "subscription_count": self.get_subscription_count(),
             }
-            
+
             # 合并管理器统计信息
             scheduler_stats.update(manager_stats)
             return scheduler_stats
@@ -243,4 +247,4 @@ if __name__ == "__main__":
         print("🎉 统一调度器模块测试完成")
 
     # 运行测试
-    test_unified_scheduler() 
+    test_unified_scheduler()
