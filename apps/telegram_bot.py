@@ -145,6 +145,7 @@ async def scheduled_task(token):
     from services.douyin.scheduler import run_scheduled_check as douyin_run_scheduled_check
     from services.douyin1.scheduler import run_scheduled_check as douyin1_run_scheduled_check
     from services.rsshub.scheduler import run_scheduled_check as rsshub_run_scheduled_check
+    from services.sitemap.scheduler import run_scheduled_check as sitemap_run_scheduled_check
 
     while True:
         try:
@@ -159,6 +160,9 @@ async def scheduled_task(token):
 
             # RSSHub订阅检查 - 使用RSSHub调度器
             await rsshub_run_scheduled_check(bot)
+
+            # Sitemap订阅检查 - 使用Sitemap调度器
+            await sitemap_run_scheduled_check(bot)
 
             logging.info("所有订阅源检查完成，等待下一次检查")
             await asyncio.sleep(3600)  # 保持1小时检查间隔
