@@ -183,8 +183,8 @@ class DouyinConverter(MessageConverter):
 
             # 第四行：标签
             if author_nickname:
-                clean_author = author_nickname.replace('@', '').replace('#', '')
-                caption_parts.append(f"`#{clean_author}`")
+                clean_author = author_nickname.replace('@', '').replace('#', '').replace('_', '').replace(' ', '')
+                caption_parts.append(f"#{clean_author}")
 
             # 最后一行：查看原视频链接 + 日期
             if aweme_id:
