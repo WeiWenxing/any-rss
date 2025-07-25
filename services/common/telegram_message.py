@@ -118,7 +118,7 @@ class TelegramMessage:
     text: str                                    # 消息文本内容
     caption: Optional[str] = None                # 媒体组的caption（用于媒体组发送时的简短描述）
     media_group: List[MediaItem] = field(default_factory=list)  # 媒体组列表
-    parse_mode: Optional[str] = "Markdown"        # 解析模式
+    parse_mode: Optional[str] = "Markdown"        # 解析模式 (None=普通文本, "Markdown", "HTML", "MarkdownV2")
     disable_web_page_preview: bool = False       # 是否禁用链接预览
     reply_markup: Optional[Dict[str, Any]] = None # 可选的键盘标记
 
@@ -131,7 +131,7 @@ class TelegramMessage:
         if self.parse_mode is not None:
             valid_modes = ["Markdown", "HTML", "MarkdownV2"]
             if self.parse_mode not in valid_modes:
-                raise ValueError(f"无效的解析模式: {self.parse_mode}，支持的模式: {valid_modes}")
+                raise ValueError(f"无效的解析模式: {self.parse_mode}，支持的模式: {valid_modes} 或 None (普通文本)")
 
         # 验证媒体组
         if self.media_group:
@@ -271,10 +271,26 @@ class TelegramMessage:
             parse_mode=parse_mode or "Markdown"
         )
 
+    @classmethod
+    def create_plain_text_message(cls, text: str, caption: Optional[str] = None,
+                                 disable_web_page_preview: bool = False) -> 'TelegramMessage':
+        """创建普通文本消息的便捷方法（不使用任何格式化）"""
+        return cls(
+            text=text,
+            caption=caption,
+            parse_mode=None,  # 普通文本模式
+            disable_web_page_preview=disable_web_page_preview
+        )
+
 
 def create_simple_text_message(text: str, caption: Optional[str] = None) -> TelegramMessage:
     """创建简单文本消息的快捷函数"""
     return TelegramMessage.create_text_message(text, caption)
+
+
+def create_plain_text_message(text: str, caption: Optional[str] = None) -> TelegramMessage:
+    """创建普通文本消息的快捷函数（不使用任何格式化）"""
+    return TelegramMessage.create_plain_text_message(text, caption)
 
 
 def create_single_photo_message(text: str, photo_url: str, caption: Optional[str] = None,

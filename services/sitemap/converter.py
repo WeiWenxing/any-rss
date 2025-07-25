@@ -46,15 +46,13 @@ class SitemapConverter(MessageConverter):
                 raise ValueError("内容数据缺少URL")
 
             # 构建消息文本
-            message_text = f"链接： `{url}`"
+            message_text = f"链接： {url}"
             if last_modified:
-                message_text += f"\n\n更新时间: `{last_modified.strftime('%Y-%m-%d %H:%M:%S')}`"
+                message_text += f"\n更新时间: {last_modified.strftime('%Y-%m-%d %H:%M:%S')}"
 
             # 创建消息
-            return TelegramMessage.create_text_message(
+            return TelegramMessage.create_plain_text_message(
                 text=message_text,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
             )
 
         except Exception as e:
