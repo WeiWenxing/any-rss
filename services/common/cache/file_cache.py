@@ -73,6 +73,10 @@ class FileCache(CacheInterface):
         Returns:
             dict: 缓存数据字典
         """
+        # 处理bytes类型数据
+        if isinstance(value, bytes):
+            value = value.decode('utf-8')
+
         current_time = time.time()
         return {
             "data": value,
@@ -128,14 +132,22 @@ class FileCache(CacheInterface):
                 json.dump(cache_data, temp_file, ensure_ascii=False, indent=2)
                 temp_file_path = temp_file.name
 
+            # Windows下先删除目标文件再重命名
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
             # 原子重命名
             os.rename(temp_file_path, cache_file)
 
             self.logger.debug(f"缓存设置成功: {key}, TTL: {effective_ttl}秒")
             return True
 
-        except (OSError, json.JSONEncodeError) as e:
-            self.logger.error(f"设置缓存失败: {key}, 错误: {str(e)}")
+        except (OSError, TypeError, json.JSONEncodeError) as e:
+            # 清理临时文件
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
+            self.logger.error(f"设置缓存失败: {key}, 错误: {str(e)}", exc_info=True)
             return False
 
     def delete(self, key: str) -> bool:
